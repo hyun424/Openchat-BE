@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>OpenChat - 메인</title>
+</head>
+<body>
+
+<h1>채팅방 목록</h1>
+
+<ul>
+    <li th:each="room : ${chatRooms}">
+        <span th:text="${room.name}">채팅방 이름</span>
+        (
+        <span th:text="${room.currentCount}">0</span> /
+        <span th:text="${room.maxCount}">0</span>
+        )
+        <form th:action="@{'/chatrooms/' + ${room.id} + '/enter'}" method="post">
+            <button type="submit">입장</button>
+        </form>
+
+    </li>
+</ul>
+
+</body>
+</html>
