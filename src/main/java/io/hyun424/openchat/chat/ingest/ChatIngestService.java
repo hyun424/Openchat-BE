@@ -1,7 +1,7 @@
 package io.hyun424.openchat.chat.ingest;
 
-import io.hyun424.openchat.chat.publish.ChatPublishService;
 import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
+import io.hyun424.openchat.chat.publish.ChatMessagePublisher;
 import io.hyun424.openchat.infra.time.BucketKeyUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,7 +16,8 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class ChatIngestService {
 
-    private final ChatPublishService chatPublishService;
+    private final ChatMessagePublisher publisher;
+
     private final StringRedisTemplate redisTemplate;
 
     public void ingest(ChatMessageDto message) {
@@ -55,6 +56,6 @@ public class ChatIngestService {
         }
 
         // ✅ fan-out (Redis Pub/Sub)
-        chatPublishService.publish(message);
+        publisher.publish(message);
     }
 }

@@ -121,4 +121,21 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         }
         throw new IllegalStateException("Missing roomId");
     }
+    public void broadcast(Long roomId, ChatMessageDto message) {
+        try {
+            String payload = objectMapper.writeValueAsString(message);
+
+            for (WebSocketSession session : roomSessionRegistry.getSesstions(roomId)) {
+                if (session.isOpen()) {
+                    session.sendMessage(new TextMessage(payload));
+                }
+            }
+
+        } catch (Exception e) {
+            log.error("[WS BROADCAST FAIL] roomId={} messageId={}",
+                    roomId, message.getMessageId(), e);
+        }
+    }
+
+
 }

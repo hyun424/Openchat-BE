@@ -30,11 +30,11 @@ public class RoomSessionRegistry {
         }
     }
 
-    public Set<WebSocketSession> get(Long roomId) {
+    public Set<WebSocketSession> getSesstions(Long roomId) {
         return roomSessions.getOrDefault(roomId, Collections.emptySet());
     }
 
     public int count(Long roomId) {
-        return get(roomId).size();
+        return getSesstions(roomId).size();
     }
 }

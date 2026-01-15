@@ -32,7 +32,7 @@ public class ChatRedisSubscriber {
             log.info("[Redis SUBSCRIBE] channel={} messageId={}",
                     channel, message.getMessageId());
 
-            chatFanoutService.fanout(roomId, message);
+            chatFanoutService.fanout(message);
 
         } catch (Exception e) {
             log.error("[Redis SUBSCRIBE ERROR]", e);
