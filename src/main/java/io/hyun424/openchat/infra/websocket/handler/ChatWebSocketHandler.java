@@ -121,19 +121,33 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         }
         throw new IllegalStateException("Missing roomId");
     }
+
     public void broadcast(Long roomId, ChatMessageDto message) {
+        String payload;
         try {
-            String payload = objectMapper.writeValueAsString(message);
-
-            for (WebSocketSession session : roomSessionRegistry.getSesstions(roomId)) {
-                if (session.isOpen()) {
-                    session.sendMessage(new TextMessage(payload));
-                }
-            }
-
+            payload = objectMapper.writeValueAsString(message);
         } catch (Exception e) {
-            log.error("[WS BROADCAST FAIL] roomId={} messageId={}",
+            log.error("[WS BROADCAST SERIALIZE FAIL] roomId={} messageId={}",
                     roomId, message.getMessageId(), e);
+            return;
+        }
+
+        for (WebSocketSession session : roomSessionRegistry.getSesstions(roomId)) {
+            try {
+                if (!session.isOpen()) {
+                    roomSessionRegistry.remove(roomId, session);
+                    continue;
+                }
+
+                session.sendMessage(new TextMessage(payload));
+
+            } catch (Exception e) {
+                log.warn("[WS SEND FAIL] roomId={} sessionId={} → removing session",
+                        roomId, session.getId(), e);
+
+                // 🔥 핵심: 실패 세션 즉시 제거
+                roomSessionRegistry.remove(roomId, session);
+            }
         }
     }
 
