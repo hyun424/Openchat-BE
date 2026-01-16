@@ -11,6 +11,10 @@ public class RedisHealthState {
 
     private final AtomicBoolean available = new AtomicBoolean(true);
 
+    public boolean isUp() {
+        return isAvailable();
+    }
+
     public boolean isAvailable() {
         return available.get();
     }
