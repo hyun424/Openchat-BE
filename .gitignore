@@ -1,4 +1,7 @@
 HELP.md
+WORK_LOG*.md
+data/
+*.rdb
 .gradle
 build/
 !gradle/wrapper/gradle-wrapper.jar

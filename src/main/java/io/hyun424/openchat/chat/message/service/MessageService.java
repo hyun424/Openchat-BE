@@ -7,50 +7,59 @@ import io.hyun424.openchat.chat.message.repository.MessageRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Instant;
-import java.util.Collections;
 import java.util.List;
 
-@Slf4j
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class MessageService {
 
     private final MessageRepository messageRepository;
     private final RoomMemberService roomMemberService;
 
-    /** 메시지 저장 */
-    public Message save(Long roomId, String senderId, String senderNickname, String content) {
+    /** 🔥 ingest 전용 저장 */
+    public Message save(
+            Long roomId,
+            String senderId,
+            String nickname,
+            String content,
+            String messageId,
+            Long createdAt
+    ) {
         Message message = Message.builder()
+                .messageId(messageId)
                 .roomId(roomId)
                 .senderId(senderId)
-                .senderNickname(senderNickname)
+                .senderNickname(nickname)
                 .content(content)
+                .createdAt(createdAt)
                 .build();
 
         return messageRepository.save(message);
     }
 
-    /** 방 입장 시 최근 메시지 50개 조회 */
-    public List<ChatMessageDto> getRecentMessages(Long roomId) {
-        List<Message> messages =
-                messageRepository.findTop50ByRoomIdOrderByCreatedAtDesc(roomId);
 
-        Collections.reverse(messages);
+    @Transactional(readOnly = true)
+    public List<ChatMessageDto> getMessagesForUser(Long roomId, String userId) {
+        long joinedAt = roomMemberService.getJoinedAtMillis(roomId, userId);
+
+        // Compound sort (createdAt, id) ensures stable ordering
+        // even when multiple messages share the same millisecond
+        List<Message> messages = messageRepository
+                .findByRoomIdAndCreatedAtGreaterThanEqualOrderByCreatedAtAscIdAsc(
+                        roomId,
+                        joinedAt
+                );
+
+        log.debug("[GET MESSAGES] roomId={} userId={} joinedAt={} count={}",
+                roomId, userId, joinedAt, messages.size());
 
         return messages.stream()
                 .map(ChatMessageDto::from)
                 .toList();
     }
-
-    /** 유저별 "입장 이후" 메시지 조회 */
-    public List<Message> getMessagesForUser(Long roomId, String userId) {
-        Instant joinedAt = roomMemberService.getJoinedAtOrThrow(roomId, userId);
-
-        List<Message> messages =
-                messageRepository.findByRoomIdAndCreatedAtAfterOrderByCreatedAtAsc(roomId, joinedAt);
-
-        return messages;
-    }
 }
+
+

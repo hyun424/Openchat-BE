@@ -1,51 +1,75 @@
 package io.hyun424.openchat.chat.fanout;
 
 import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
-import io.hyun424.openchat.infra.websocket.handler.ChatWebSocketHandler;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.time.Duration;
-
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class ChatFanoutService {
 
     private final ChatOutboundSender outboundSender;
-    private final StringRedisTemplate redisTemplate;
 
+    @Value("${app.instance-id:local}")
+    private String instanceId;
+
+    // In-memory dedupe cache (per-instance, no Redis dependency)
+    private final ConcurrentHashMap<String, Long> dedupeCache = new ConcurrentHashMap<>();
+    private static final long DEDUPE_TTL_MS = 60_000; // 1 minute
+
+    public ChatFanoutService(ChatOutboundSender outboundSender) {
+        this.outboundSender = outboundSender;
+        startCacheCleaner();
+    }
+
+    /**
+     * Fan-out message to local WebSocket sessions.
+     * Uses in-memory dedupe to prevent duplicate processing within the same instance.
+     */
     public void fanout(ChatMessageDto message) {
-        String dedupeKey = "dedupe:chat:" + message.getMessageId();
+        String messageId = message.getMessageId();
 
-        // 🔥 서버 dedupe (1분 TTL)
-        Boolean first = redisTemplate.opsForValue()
-                .setIfAbsent(dedupeKey, "1", Duration.ofMinutes(1));
-
-        if (Boolean.FALSE.equals(first)) {
-            log.debug("[DEDUPED] messageId={}", message.getMessageId());
+        // In-memory dedupe check (per-instance)
+        Long previous = dedupeCache.putIfAbsent(messageId, System.currentTimeMillis());
+        if (previous != null) {
+            log.debug("[DEDUPE][{}] messageId={} - already processed locally", instanceId, messageId);
             return;
         }
 
-        try {
-            outboundSender.send(message.getRoomId(), message);
+        outboundSender.send(message);
 
-            log.info(
-                    "[FANOUT] roomId={} messageId={}",
-                    message.getRoomId(),
-                    message.getMessageId()
-            );
+        log.info("[FANOUT][{}] roomId={} messageId={}",
+                instanceId, message.getRoomId(), message.getMessageId());
+    }
 
-        } catch (Exception e) {
-            log.error(
-                    "[FANOUT FAIL] roomId={} messageId={}",
-                    message.getRoomId(),
-                    message.getMessageId(),
-                    e
-            );
-        }
+    /**
+     * Periodic cleanup of expired dedupe entries to prevent memory leak.
+     */
+    private void startCacheCleaner() {
+        ScheduledExecutorService cleaner = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "dedupe-cleaner");
+            t.setDaemon(true);
+            return t;
+        });
+
+        cleaner.scheduleAtFixedRate(() -> {
+            long now = System.currentTimeMillis();
+            int removed = 0;
+            for (var entry : dedupeCache.entrySet()) {
+                if (now - entry.getValue() > DEDUPE_TTL_MS) {
+                    dedupeCache.remove(entry.getKey());
+                    removed++;
+                }
+            }
+            if (removed > 0) {
+                log.debug("[DEDUPE CLEANUP][{}] removed {} expired entries", instanceId, removed);
+            }
+        }, 1, 1, TimeUnit.MINUTES);
     }
 }

@@ -33,6 +33,17 @@ public class RoomMemberService {
                 );
     }
 
+    public long getJoinedAtMillis(Long roomId, String userId) {
+        RoomMember member = roomMemberRepository
+                .findByRoomIdAndUserIdAndLeftAtIsNull(roomId, userId)
+                .orElseThrow(() ->
+                        new IllegalStateException("ROOM_MEMBER_NOT_FOUND")
+                );
+
+        return member.getJoinedAt().toEpochMilli();
+    }
+
+
     /**
      * 방 입장 (REST 전용)
      */

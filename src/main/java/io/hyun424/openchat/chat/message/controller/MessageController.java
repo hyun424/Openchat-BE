@@ -1,6 +1,7 @@
 package io.hyun424.openchat.chat.message.controller;
 
 import io.hyun424.openchat.auth.resolver.AuthUserResolver;
+import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
 import io.hyun424.openchat.chat.message.entity.Message;
 import io.hyun424.openchat.chat.message.service.MessageService;
 import lombok.RequiredArgsConstructor;
@@ -17,7 +18,7 @@ public class MessageController {
     private final AuthUserResolver authUserResolver;
 
     @GetMapping("/{roomId}/messages")
-    public List<Message> getMessages(
+    public List<ChatMessageDto> getMessages(
             @RequestHeader("Authorization") String authorization,
             @PathVariable Long roomId
     ) {
