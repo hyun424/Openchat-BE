@@ -1,27 +1,42 @@
 package io.hyun424.openchat.hotchat;
 
 import io.hyun424.openchat.hotchat.dto.HotChatResult;
+import io.hyun424.openchat.infra.redis.health.RedisHealthState;
 import io.hyun424.openchat.infra.time.BucketKeyUtil;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.stereotype.Service;
 
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 
+@Slf4j
 @RequiredArgsConstructor
 @Service
 public class HotChatService {
 
     private final StringRedisTemplate redisTemplate;
+    private final RedisHealthState redisHealthState;
 
     private static final int CANDIDATE_MULTIPLIER = 3;
 
     public List<HotChatResult> getHotChats(int windowMinutes, int limit) {
+        // Skip if Redis is down
+        if (!redisHealthState.isUp()) {
+            return List.of();
+        }
 
+        try {
+            return fetchHotChats(windowMinutes, limit);
+        } catch (Exception e) {
+            redisHealthState.markDown();
+            log.warn("[HOTCHAT] Redis operation failed, marking down", e);
+            return List.of();
+        }
+    }
+
+    private List<HotChatResult> fetchHotChats(int windowMinutes, int limit) {
         int topK = limit * CANDIDATE_MULTIPLIER;
         Map<String, Double> scoreMap = new HashMap<>();
 

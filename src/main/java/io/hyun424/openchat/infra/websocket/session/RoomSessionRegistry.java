@@ -5,9 +5,11 @@ import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
+import java.io.IOException;
 import java.util.Collections;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -94,5 +96,30 @@ public class RoomSessionRegistry {
 
         log.debug("[WS BROADCAST] roomId={} messageId={} sent={} dead={}",
                 roomId, message.getMessageId(), successCount, deadSessions.size());
+    }
+
+    /**
+     * 방 종료 시 해당 방의 모든 WebSocket 세션 강제 종료
+     */
+    public void closeAllSessionsInRoom(Long roomId) {
+        Set<WebSocketSession> sessions = roomSessions.remove(roomId);
+        if (sessions == null || sessions.isEmpty()) {
+            log.debug("[WS CLOSE ALL] roomId={} - no sessions", roomId);
+            return;
+        }
+
+        int closedCount = 0;
+        for (WebSocketSession session : sessions) {
+            try {
+                if (session.isOpen()) {
+                    session.close(new CloseStatus(4001, "Room has been ended"));
+                    closedCount++;
+                }
+            } catch (IOException e) {
+                log.warn("[WS CLOSE FAIL] roomId={} sessionId={}", roomId, session.getId(), e);
+            }
+        }
+
+        log.info("[WS CLOSE ALL] roomId={} closed {} sessions", roomId, closedCount);
     }
 }

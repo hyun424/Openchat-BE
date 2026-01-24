@@ -1,26 +1,47 @@
 package io.hyun424.openchat.chat.message.repository;
 
 import io.hyun424.openchat.chat.message.entity.Message;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 
 public interface MessageRepository extends JpaRepository<Message, Long> {
 
     /**
-     * Recent messages (newest first) - for initial load with lazy scroll
-     * Compound sort: createdAt DESC, id DESC guarantees stable ordering
+     * Initial load: Latest N messages (newest first by id, then reversed for display)
+     * Uses id as primary sort key for consistent ordering across real-time and refresh
      */
-    List<Message> findTop50ByRoomIdOrderByCreatedAtDescIdDesc(Long roomId);
+    @Query("SELECT m FROM Message m WHERE m.roomId = :roomId AND m.createdAt >= :joinedAt " +
+           "ORDER BY m.id DESC")
+    List<Message> findLatestMessages(
+            @Param("roomId") Long roomId,
+            @Param("joinedAt") Long joinedAt,
+            Pageable pageable
+    );
 
     /**
-     * Messages since user joined (oldest first) - for chat display
-     * Compound sort: createdAt ASC, id ASC guarantees stable ordering
-     * even when multiple messages have the same millisecond timestamp
+     * Infinite scroll: Load older messages before cursor (by id)
+     * Cursor = id for stable, consistent pagination
      */
-    List<Message> findByRoomIdAndCreatedAtGreaterThanEqualOrderByCreatedAtAscIdAsc(
+    @Query("SELECT m FROM Message m WHERE m.roomId = :roomId " +
+           "AND m.createdAt >= :joinedAt " +
+           "AND m.id < :cursorId " +
+           "ORDER BY m.id DESC")
+    List<Message> findMessagesBeforeCursor(
+            @Param("roomId") Long roomId,
+            @Param("joinedAt") Long joinedAt,
+            @Param("cursorId") Long cursorId,
+            Pageable pageable
+    );
+
+    /**
+     * Legacy: All messages since joined (for backward compatibility)
+     */
+    List<Message> findByRoomIdAndCreatedAtGreaterThanEqualOrderByIdAsc(
             Long roomId,
             Long joinedAt
     );
 }
-

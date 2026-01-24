@@ -2,6 +2,7 @@ package io.hyun424.openchat.chat.publish;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
+import io.hyun424.openchat.infra.redis.health.RedisHealthState;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -23,6 +24,7 @@ public class ChatCompositePublisher implements ChatMessagePublisher {
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
     private final KafkaTemplate<String, ChatMessageDto> kafkaTemplate;
+    private final RedisHealthState redisHealthState;
 
     @Value("${app.instance-id:local}")
     private String instanceId;
@@ -30,11 +32,13 @@ public class ChatCompositePublisher implements ChatMessagePublisher {
     public ChatCompositePublisher(
             StringRedisTemplate redisTemplate,
             ObjectMapper objectMapper,
-            KafkaTemplate<String, ChatMessageDto> kafkaTemplate
+            KafkaTemplate<String, ChatMessageDto> kafkaTemplate,
+            RedisHealthState redisHealthState
     ) {
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper;
         this.kafkaTemplate = kafkaTemplate;
+        this.redisHealthState = redisHealthState;
         log.info("ChatCompositePublisher initialized (Redis + Kafka)");
     }
 
@@ -48,6 +52,12 @@ public class ChatCompositePublisher implements ChatMessagePublisher {
     }
 
     private void publishToRedis(ChatMessageDto message) {
+        // Skip if Redis is known to be down
+        if (!redisHealthState.isUp()) {
+            log.debug("[REDIS PUB SKIP][{}] Redis down, roomId={}", instanceId, message.getRoomId());
+            return;
+        }
+
         String channel = "chat:room:" + message.getRoomId();
         try {
             String payload = objectMapper.writeValueAsString(message);
@@ -55,9 +65,10 @@ public class ChatCompositePublisher implements ChatMessagePublisher {
             log.debug("[REDIS PUB][{}] channel={} messageId={}",
                     instanceId, channel, message.getMessageId());
         } catch (Exception e) {
-            // Redis failure is non-critical for durability (Kafka is the backup)
-            log.warn("[REDIS PUB FAIL][{}] roomId={} messageId={} - Kafka will handle durability",
-                    instanceId, message.getRoomId(), message.getMessageId(), e);
+            // Mark Redis as down, Kafka will handle durability
+            redisHealthState.markDown();
+            log.warn("[REDIS PUB FAIL][{}] roomId={} messageId={} - marking Redis down",
+                    instanceId, message.getRoomId(), message.getMessageId());
         }
     }
 
@@ -68,7 +79,6 @@ public class ChatCompositePublisher implements ChatMessagePublisher {
                     if (ex != null) {
                         log.error("[KAFKA PUB FAIL][{}] roomId={} messageId={}",
                                 instanceId, message.getRoomId(), message.getMessageId(), ex);
-                        // TODO: Local buffer or DLQ for retry
                     } else {
                         log.debug("[KAFKA PUB][{}] partition={} offset={} messageId={}",
                                 instanceId,

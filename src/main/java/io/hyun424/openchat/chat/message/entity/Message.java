@@ -9,9 +9,11 @@ import lombok.*;
 @Table(
         name = "chat_message",
         indexes = {
-                // Compound index for ordered message retrieval: (roomId, createdAt, id)
-                // Supports: findByRoomIdAndCreatedAtGreaterThanEqualOrderByCreatedAtAscIdAsc
-                @Index(name = "idx_room_created_id", columnList = "roomId, createdAt, id"),
+                // Compound index for ordered message retrieval by id
+                // Supports: findLatestMessages, findMessagesBeforeCursor
+                @Index(name = "idx_room_id", columnList = "roomId, id"),
+                // For joinedAt filtering
+                @Index(name = "idx_room_created", columnList = "roomId, createdAt"),
                 @Index(name = "uk_message_id", columnList = "messageId", unique = true)
         }
 )

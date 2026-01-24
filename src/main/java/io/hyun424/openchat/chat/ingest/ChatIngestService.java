@@ -4,6 +4,8 @@ import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
 import io.hyun424.openchat.chat.message.entity.Message;
 import io.hyun424.openchat.chat.message.service.MessageService;
 import io.hyun424.openchat.chat.publish.ChatMessagePublisher;
+import io.hyun424.openchat.chat.room.service.RoomService;
+import io.hyun424.openchat.infra.redis.health.RedisHealthState;
 import io.hyun424.openchat.infra.time.BucketKeyUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -30,6 +32,8 @@ public class ChatIngestService {
     private final ChatMessagePublisher publisher;
     private final StringRedisTemplate redisTemplate;
     private final MessageService messageService;
+    private final RoomService roomService;
+    private final RedisHealthState redisHealthState;
 
     @Value("${app.instance-id:local}")
     private String instanceId;
@@ -60,6 +64,9 @@ public class ChatIngestService {
                     createdAt
             );
             log.debug("[DB SAVED][{}] messageId={} dbId={}", instanceId, messageId, saved.getId());
+
+            // Update room's last message info for "My Chats" feature
+            roomService.updateLastMessage(roomId, createdAt, content, nickname);
         } catch (Exception e) {
             log.error("[DB SAVE FAIL][{}] roomId={} senderId={} messageId={}",
                     instanceId, roomId, senderId, messageId, e);
@@ -89,14 +96,20 @@ public class ChatIngestService {
     }
 
     private void updateHotChatBucket(Long roomId, String messageId) {
+        // Skip if Redis is down - HotChat is non-critical
+        if (!redisHealthState.isUp()) {
+            return;
+        }
+
         try {
             String bucketKey = BucketKeyUtil.currentBucketKey();
             redisTemplate.opsForZSet()
                     .incrementScore(bucketKey, "room:" + roomId, 1);
             redisTemplate.expire(bucketKey, Duration.ofMinutes(7));
         } catch (Exception e) {
-            log.warn("[HOTCHAT FAIL][{}] roomId={} messageId={}", instanceId, roomId, messageId, e);
-            // Non-critical: HotChat is auxiliary feature, don't block main flow
+            redisHealthState.markDown();
+            log.warn("[HOTCHAT FAIL][{}] roomId={} messageId={} - marking Redis down",
+                    instanceId, roomId, messageId);
         }
     }
 }

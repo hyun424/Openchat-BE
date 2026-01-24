@@ -2,6 +2,7 @@ package io.hyun424.openchat.global.exception;
 
 import io.hyun424.openchat.global.response.ApiResponse;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -13,6 +14,21 @@ public class GlobalExceptionHandler {
         return ResponseEntity
                 .status(e.getErrorCode().getStatus())
                 .body(ApiResponse.fail(e.getMessage()));
+    }
+
+    /**
+     * @Valid 검증 실패 시
+     */
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<ApiResponse<?>> handleValidation(MethodArgumentNotValidException e) {
+        String message = e.getBindingResult().getFieldErrors().stream()
+                .findFirst()
+                .map(error -> error.getDefaultMessage())
+                .orElse("입력값이 올바르지 않습니다.");
+
+        return ResponseEntity
+                .badRequest()
+                .body(ApiResponse.fail(message));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)
