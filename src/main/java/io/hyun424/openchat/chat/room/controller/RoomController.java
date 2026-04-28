@@ -9,8 +9,11 @@ import io.hyun424.openchat.chat.room.dto.RoomListResponse;
 import io.hyun424.openchat.chat.room.dto.RoomMapResponse;
 import io.hyun424.openchat.chat.room.dto.RoomResponse;
 import io.hyun424.openchat.chat.room.service.RoomService;
+import io.hyun424.openchat.global.exception.ApiException;
+import io.hyun424.openchat.global.exception.ErrorCode;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
@@ -32,7 +35,7 @@ public class RoomController {
             @Valid @RequestBody RoomCreateRequest request
     ) {
         if (authentication == null || !authentication.isAuthenticated()) {
-            throw new IllegalStateException("Unauthenticated request");
+            throw new ApiException(ErrorCode.UNAUTHORIZED);
         }
 
         String userId = authentication.getName();
@@ -51,7 +54,7 @@ public class RoomController {
             Authentication authentication
     ) {
         if (authentication == null || !authentication.isAuthenticated()) {
-            throw new IllegalStateException("Unauthenticated request");
+            throw new ApiException(ErrorCode.UNAUTHORIZED);
         }
 
         String userId = authentication.getName();
@@ -71,7 +74,7 @@ public class RoomController {
             Authentication authentication
     ) {
         if (authentication == null || !authentication.isAuthenticated()) {
-            throw new IllegalStateException("Unauthenticated request");
+            throw new ApiException(ErrorCode.UNAUTHORIZED);
         }
 
         String userId = authentication.getName();
@@ -85,11 +88,16 @@ public class RoomController {
 
 
     /**
-     * 방 목록 조회 (현재 인원수 포함)
+     * 방 목록 조회 (현재 인원수 포함, 페이지네이션)
      */
     @GetMapping
-    public ResponseEntity<List<RoomListResponse>> getRooms() {
-        return ResponseEntity.ok(roomService.getRoomsWithMemberCount());
+    public ResponseEntity<Page<RoomListResponse>> getRooms(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size
+    ) {
+        page = Math.max(page, 0);
+        size = Math.max(1, Math.min(size, 50));
+        return ResponseEntity.ok(roomService.getRoomsWithMemberCount(page, size));
     }
 
     /**
@@ -141,11 +149,16 @@ public class RoomController {
     }
 
     /**
-     * 지도용 방 목록 (위치 정보가 있는 방만)
+     * 지도용 방 목록 (위치 정보가 있는 방만, bounding box 필터)
      */
     @GetMapping("/map")
-    public ResponseEntity<List<RoomMapResponse>> getRoomsForMap() {
-        return ResponseEntity.ok(roomService.getRoomsForMap());
+    public ResponseEntity<List<RoomMapResponse>> getRoomsForMap(
+            @RequestParam java.math.BigDecimal swLat,
+            @RequestParam java.math.BigDecimal swLng,
+            @RequestParam java.math.BigDecimal neLat,
+            @RequestParam java.math.BigDecimal neLng
+    ) {
+        return ResponseEntity.ok(roomService.getRoomsForMap(swLat, swLng, neLat, neLng));
     }
 
     /**
@@ -156,7 +169,7 @@ public class RoomController {
     @GetMapping("/my")
     public ResponseEntity<List<MyRoomResponse>> getMyRooms(Authentication authentication) {
         if (authentication == null || !authentication.isAuthenticated()) {
-            throw new IllegalStateException("Unauthenticated request");
+            throw new ApiException(ErrorCode.UNAUTHORIZED);
         }
 
         String userId = authentication.getName();

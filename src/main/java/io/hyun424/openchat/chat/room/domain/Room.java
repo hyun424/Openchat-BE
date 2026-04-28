@@ -10,6 +10,12 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 
 @Entity
+@Table(
+        name = "room",
+        indexes = {
+                @Index(name = "idx_room_status_created", columnList = "status, created_at")
+        }
+)
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor

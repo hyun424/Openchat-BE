@@ -10,6 +10,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 
 import java.util.Collections;
 import java.util.List;
@@ -29,6 +30,7 @@ public class MessageService {
             String senderId,
             String nickname,
             String content,
+            String clientMessageId,
             String messageId,
             Long createdAt
     ) {
@@ -36,12 +38,23 @@ public class MessageService {
                 .messageId(messageId)
                 .roomId(roomId)
                 .senderId(senderId)
+                .clientMessageId(StringUtils.hasText(clientMessageId) ? clientMessageId : null)
                 .senderNickname(nickname)
                 .content(content)
                 .createdAt(createdAt)
                 .build();
 
         return messageRepository.save(message);
+    }
+
+    @Transactional(readOnly = true)
+    public Message findByClientMessageId(Long roomId, String senderId, String clientMessageId) {
+        if (!StringUtils.hasText(clientMessageId)) {
+            return null;
+        }
+        return messageRepository
+                .findByRoomIdAndSenderIdAndClientMessageId(roomId, senderId, clientMessageId)
+                .orElse(null);
     }
 
     /**

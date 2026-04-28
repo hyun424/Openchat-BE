@@ -27,7 +27,7 @@ public class SecurityConfig {
     private final JwtProvider jwtProvider;
     private final OAuth2SuccessHandler oAuth2SuccessHandler;
 
-    @Value("${GOOGLE_CLIENT_ID:}")
+    @Value("${spring.security.oauth2.client.registration.google.client-id:}")
     private String googleClientId;
 
     @Bean
@@ -63,20 +63,20 @@ public class SecurityConfig {
                         // CORS preflight 허용 (필수)
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
 
-                        // Actuator 보안: health만 허용, 나머지 차단
-                        .requestMatchers("/actuator/health").permitAll()
+                        // Actuator 보안: health, prometheus만 허용, 나머지 차단
+                        .requestMatchers("/actuator/health", "/actuator/prometheus").permitAll()
                         .requestMatchers("/actuator/**").denyAll()
 
                         // 인증 없이 허용
                         .requestMatchers(
                                 "/api/auth/**",   // 로그인, 닉네임 체크
-                                "/api/rooms", // 방 목록
                                 "/api/hotchat/**",
                                 "/ws/**",
-                                "/h2-console/**",
                                 "/oauth2/**",     // OAuth2 로그인
                                 "/login/**"       // OAuth2 로그인 페이지
                         ).permitAll()
+                        .requestMatchers("/api/rooms/my").authenticated()
+                        .requestMatchers(HttpMethod.GET, "/api/rooms", "/api/rooms/map", "/api/rooms/*").permitAll()
 
                         // 인증 필요
                         .requestMatchers("/api/**").authenticated()
@@ -90,14 +90,15 @@ public class SecurityConfig {
             http.oauth2Login(oauth2 -> oauth2
                     .successHandler(oAuth2SuccessHandler)
                     .failureHandler((request, response, exception) -> {
+                        log.warn("[OAUTH2] Login failed: {}", exception.getMessage());
                         response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
                         response.setContentType("application/json");
                         response.getWriter()
-                                .write("{\"message\":\"OAuth2 login failed: " + exception.getMessage() + "\"}");
+                                .write("{\"message\":\"OAuth2 login failed\"}");
                     })
             );
         } else {
-            log.warn("[SECURITY] OAuth2 disabled - GOOGLE_CLIENT_ID not configured");
+            log.warn("[SECURITY] OAuth2 disabled - google client-id not configured");
         }
 
         http

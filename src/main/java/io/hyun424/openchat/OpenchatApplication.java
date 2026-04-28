@@ -1,5 +1,6 @@
 package io.hyun424.openchat;
 
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -9,6 +10,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 
 import java.util.Arrays;
 
+@Slf4j
 @SpringBootApplication
 @EnableScheduling
 public class OpenchatApplication {
@@ -20,11 +22,11 @@ public class OpenchatApplication {
     @Bean
     public ApplicationRunner runner(Environment env) {
         return args -> {
-            System.out.println("===== DEBUG PROPERTIES =====");
-            System.out.println("app.instance-id = " + env.getProperty("app.instance-id"));
-            System.out.println("server.port     = " + env.getProperty("server.port"));
-            System.out.println("active profiles = " + Arrays.toString(env.getActiveProfiles()));
-            System.out.println("============================");
+            log.info("===== APPLICATION PROPERTIES =====");
+            log.info("app.instance-id = {}", env.getProperty("app.instance-id"));
+            log.info("server.port     = {}", env.getProperty("server.port"));
+            log.info("active profiles = {}", Arrays.toString(env.getActiveProfiles()));
+            log.info("==================================");
         };
     }
 }

@@ -44,6 +44,10 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
 
+networks:
+  default:
+    name: openchat-network
+
 volumes:
   mysql_data:
   redis_data:

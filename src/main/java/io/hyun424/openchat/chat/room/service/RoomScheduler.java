@@ -1,6 +1,7 @@
 package io.hyun424.openchat.chat.room.service;
 
 import io.hyun424.openchat.chat.room.domain.Room;
+import io.hyun424.openchat.chat.room.lifecycle.RoomLifecyclePublisher;
 import io.hyun424.openchat.chat.room.repository.RoomRepository;
 import io.hyun424.openchat.infra.websocket.session.RoomSessionRegistry;
 import lombok.RequiredArgsConstructor;
@@ -20,6 +21,7 @@ public class RoomScheduler {
 
     private final RoomRepository roomRepository;
     private final RoomSessionRegistry roomSessionRegistry;
+    private final RoomLifecyclePublisher roomLifecyclePublisher;
 
     /**
      * 매 10분마다 만료된 방 자동 종료
@@ -47,6 +49,7 @@ public class RoomScheduler {
 
             // 해당 방의 모든 WebSocket 세션 종료
             roomSessionRegistry.closeAllSessionsInRoom(room.getId());
+            roomLifecyclePublisher.publishRoomEnded(room.getId(), "SCHEDULED_EXPIRED");
         }
     }
 }

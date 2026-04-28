@@ -18,7 +18,7 @@ import org.springframework.web.bind.annotation.*;
 @RestController
 @RequestMapping("/api/auth")
 @RequiredArgsConstructor
-@Profile({"dev", "local"})  // Security: "default" 제거 - prod에서 비활성화
+@Profile({"dev", "local", "loadtest"})
 public class DevAuthController {
 
     private final JwtProvider jwtProvider;

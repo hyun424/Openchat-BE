@@ -13,6 +13,8 @@ import io.hyun424.openchat.global.ratelimit.RateLimiter;
 import io.hyun424.openchat.infra.websocket.session.RoomSessionRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.owasp.html.PolicyFactory;
+import org.owasp.html.Sanitizers;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.*;
@@ -58,6 +60,9 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
 
     // Security: 세션 최대 유지 시간 (4시간)
     private static final long MAX_SESSION_DURATION_MS = 4 * 60 * 60 * 1000;
+
+    // Security: OWASP HTML Sanitizer (모든 HTML을 strip, 텍스트만 허용)
+    private static final PolicyFactory SANITIZER = Sanitizers.FORMATTING;
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
@@ -117,13 +122,6 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
             if (!validateTokenPeriodically(session)) {
                 log.warn("[WS_TOKEN_EXPIRED] roomId={} senderId={}", roomId, senderId);
                 session.close(new CloseStatus(4001, "Token expired"));
-                return;
-            }
-
-            // 종료된 방 체크
-            Room room = roomService.getRoomOrThrow(roomId);
-            if (!room.isAccessible()) {
-                session.close(new CloseStatus(4001, "Room has been ended"));
                 return;
             }
 
@@ -191,26 +189,11 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
     }
 
     /**
-     * Security: XSS 방지를 위한 컨텐츠 sanitization
-     * HTML 태그, 스크립트, 이벤트 핸들러 제거
+     * Security: XSS 방지를 위한 컨텐츠 sanitization (OWASP HTML Sanitizer)
      */
     private String sanitizeContent(String content) {
         if (content == null) return null;
-
-        // HTML 태그 제거 (malformed 태그 포함)
-        content = content.replaceAll("<[^>]*>?", "");
-
-        // JavaScript 프로토콜 제거
-        content = content.replaceAll("(?i)javascript:", "");
-
-        // 이벤트 핸들러 제거
-        content = content.replaceAll("(?i)on\\w+\\s*=", "");
-
-        // Unicode 이스케이프 처리
-        content = content.replaceAll("\\\\u003[cC]", "<");
-        content = content.replaceAll("\\\\u003[eE]", ">");
-
-        return content;
+        return SANITIZER.sanitize(content);
     }
 
     /**

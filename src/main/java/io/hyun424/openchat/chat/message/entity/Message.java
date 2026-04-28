@@ -8,6 +8,12 @@ import lombok.*;
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @Table(
         name = "chat_message",
+        uniqueConstraints = {
+                @UniqueConstraint(
+                        name = "uk_room_sender_client_message_id",
+                        columnNames = {"room_id", "sender_id", "client_message_id"}
+                )
+        },
         indexes = {
                 // Compound index for ordered message retrieval by id
                 // Supports: findLatestMessages, findMessagesBeforeCursor
@@ -33,6 +39,10 @@ public class Message {
     @Column(nullable = false)
     private String senderId;
 
+    // Client-generated idempotency key (nullable for legacy clients)
+    @Column(length = 100)
+    private String clientMessageId;
+
     @Column(nullable = false)
     private String senderNickname;
 
@@ -48,6 +58,7 @@ public class Message {
             String messageId,
             Long roomId,
             String senderId,
+            String clientMessageId,
             String senderNickname,
             String content,
             Long createdAt
@@ -55,6 +66,7 @@ public class Message {
         this.messageId = messageId;
         this.roomId = roomId;
         this.senderId = senderId;
+        this.clientMessageId = clientMessageId;
         this.senderNickname = senderNickname;
         this.content = content;
         this.createdAt = createdAt;

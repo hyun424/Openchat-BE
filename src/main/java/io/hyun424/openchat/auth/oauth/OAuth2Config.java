@@ -13,16 +13,16 @@ import org.springframework.util.StringUtils;
 
 /**
  * OAuth2 설정 (선택적)
- * GOOGLE_CLIENT_ID가 설정된 경우에만 활성화
+ * OAuth client-id/client-secret이 설정된 경우에만 활성화
  */
 @Slf4j
 @Configuration
 public class OAuth2Config {
 
-    @Value("${GOOGLE_CLIENT_ID:}")
+    @Value("${spring.security.oauth2.client.registration.google.client-id:}")
     private String clientId;
 
-    @Value("${GOOGLE_CLIENT_SECRET:}")
+    @Value("${spring.security.oauth2.client.registration.google.client-secret:}")
     private String clientSecret;
 
     @Bean

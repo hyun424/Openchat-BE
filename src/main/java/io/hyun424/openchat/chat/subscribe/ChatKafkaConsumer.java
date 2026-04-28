@@ -18,7 +18,7 @@ import org.springframework.stereotype.Service;
  * - Redis UP: Skip fan-out (Redis subscriber handles it)
  * - Redis DOWN: Handle fan-out as fallback
  *
- * This ensures real-time delivery continues even when Redis is unavailable.
+ * Fanout 실패 시 ack하지 않아 DefaultErrorHandler가 재시도/DLQ 처리.
  */
 @Slf4j
 @Service
@@ -29,21 +29,19 @@ public class ChatKafkaConsumer {
     private final ChatFanoutService fanoutService;
     private final RedisHealthState redisHealthState;
 
-    @KafkaListener(topics = "chat-message", groupId = "chat-fanout-group")
+    @KafkaListener(topics = "chat-message")
     public void consume(ChatMessageDto message, Acknowledgment ack) {
-        try {
-            if (redisHealthState.isUp()) {
-                // Redis is handling fan-out, just consume for durability
-                log.debug("[KAFKA CONSUME] Redis UP, skip fanout. roomId={} messageId={}",
-                        message.getRoomId(), message.getMessageId());
-            } else {
-                // Redis is down, Kafka handles fan-out as fallback
-                log.info("[KAFKA FANOUT] Redis DOWN, handling fanout. roomId={} messageId={}",
-                        message.getRoomId(), message.getMessageId());
-                fanoutService.fanout(message);
-            }
-        } finally {
-            ack.acknowledge();
+        if (redisHealthState.isUp()) {
+            // Redis is handling fan-out, just consume for durability
+            log.debug("[KAFKA CONSUME] Redis UP, skip fanout. roomId={} messageId={}",
+                    message.getRoomId(), message.getMessageId());
+        } else {
+            // Redis is down, Kafka handles fan-out as fallback
+            log.info("[KAFKA FANOUT] Redis DOWN, handling fanout. roomId={} messageId={}",
+                    message.getRoomId(), message.getMessageId());
+            fanoutService.fanout(message);
         }
+        // Only ack after successful processing; exceptions propagate to DefaultErrorHandler
+        ack.acknowledge();
     }
 }

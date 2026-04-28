@@ -25,6 +25,12 @@ public class RoomListResponse {
     private String locationName;
     private int currentMembers;
 
+    public static RoomListResponse from(Object[] row) {
+        Room room = (Room) row[0];
+        int currentMembers = ((Long) row[1]).intValue();
+        return from(room, currentMembers);
+    }
+
     public static RoomListResponse from(Room room, int currentMembers) {
         return RoomListResponse.builder()
                 .id(room.getId())

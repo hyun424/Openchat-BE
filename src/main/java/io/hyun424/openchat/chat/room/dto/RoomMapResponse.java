@@ -20,6 +20,12 @@ public class RoomMapResponse {
     private String meetingDate;
     private String meetingTime;
 
+    public static RoomMapResponse from(Object[] row) {
+        Room room = (Room) row[0];
+        int currentMembers = ((Long) row[1]).intValue();
+        return from(room, currentMembers);
+    }
+
     public static RoomMapResponse from(Room room, int currentMembers) {
         return RoomMapResponse.builder()
                 .id(room.getId())

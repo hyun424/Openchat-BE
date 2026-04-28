@@ -3,12 +3,13 @@ package io.hyun424.openchat.global.ratelimit;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 사용자별 Rate Limiting
@@ -71,6 +72,29 @@ public class RateLimiter {
     }
 
     /**
+     * 5분마다 10분 이상 미사용된 로컬 버킷 정리 (메모리 누수 방지)
+     */
+    @Scheduled(fixedRate = 300_000)
+    public void cleanupStaleBuckets() {
+        long now = System.currentTimeMillis();
+        long staleThreshold = 10 * 60 * 1000L; // 10분
+        int removed = 0;
+
+        Iterator<Map.Entry<String, TokenBucket>> it = localBuckets.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<String, TokenBucket> entry = it.next();
+            if (now - entry.getValue().getLastAccessTime() > staleThreshold) {
+                it.remove();
+                removed++;
+            }
+        }
+
+        if (removed > 0) {
+            log.debug("[RATE_LIMIT] Cleaned up {} stale local buckets, remaining: {}", removed, localBuckets.size());
+        }
+    }
+
+    /**
      * 간단한 Token Bucket 구현
      */
     private static class TokenBucket {
@@ -78,21 +102,28 @@ public class RateLimiter {
         private final double refillRatePerSecond;
         private double tokens;
         private long lastRefillTime;
+        private volatile long lastAccessTime;
 
         TokenBucket(int capacity, int windowSeconds) {
             this.capacity = capacity;
             this.refillRatePerSecond = (double) capacity / windowSeconds;
             this.tokens = capacity;
             this.lastRefillTime = System.currentTimeMillis();
+            this.lastAccessTime = System.currentTimeMillis();
         }
 
         synchronized boolean tryAcquire() {
             refill();
+            lastAccessTime = System.currentTimeMillis();
             if (tokens >= 1) {
                 tokens -= 1;
                 return true;
             }
             return false;
+        }
+
+        long getLastAccessTime() {
+            return lastAccessTime;
         }
 
         private void refill() {

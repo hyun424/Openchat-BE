@@ -70,7 +70,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
         int limit = getLimitForPath(path);
         int windowSeconds = getWindowSecondsForPath(path);
 
-        if (!rateLimiter.tryAcquire("api:" + key + ":" + path, limit, windowSeconds)) {
+        String normalizedPath = normalizePath(path);
+        if (!rateLimiter.tryAcquire("api:" + key + ":" + normalizedPath, limit, windowSeconds)) {
             log.warn("[RATE_LIMIT] API limit exceeded: key={} path={}", key, path);
             response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
             response.setContentType(MediaType.APPLICATION_JSON_VALUE);
@@ -81,9 +82,19 @@ public class RateLimitFilter extends OncePerRequestFilter {
         filterChain.doFilter(request, response);
     }
 
+    /**
+     * path 변수 부분을 정규화하여 같은 엔드포인트를 하나의 rate limit 키로 통합
+     * 예: /api/rooms/123 → /api/rooms/_
+     */
+    private static final java.util.regex.Pattern PATH_VAR_PATTERN =
+            java.util.regex.Pattern.compile("/\\d+");
+
+    private String normalizePath(String path) {
+        return PATH_VAR_PATTERN.matcher(path).replaceAll("/_");
+    }
+
     private boolean shouldSkip(String path) {
         return path.startsWith("/ws") ||
-               path.startsWith("/h2-console") ||
                path.startsWith("/actuator") ||
                path.contains(".");  // 정적 파일
     }

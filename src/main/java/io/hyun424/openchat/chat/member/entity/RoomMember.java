@@ -12,10 +12,15 @@ import java.time.Instant;
                 @Index(
                         name = "idx_room_user_active",
                         columnList = "room_id, user_id, left_at"
+                ),
+                @Index(
+                        name = "idx_room_member_count",
+                        columnList = "room_id, left_at, status"
                 )
         },
-        // Security: Race condition 방지 - 동일 사용자 중복 입장 방지
-        // left_at이 NULL인 경우에만 유니크 (활성 멤버십)
+        // NOTE:
+        // MySQL에서 NULL 포함 유니크 제약은 완전한 활성 멤버십 중복 방지 수단이 아니므로
+        // 실제 join 경합 제어는 RoomMemberService의 advisory lock(GET_LOCK)으로 보강한다.
         uniqueConstraints = {
                 @UniqueConstraint(
                         name = "uk_room_user_active_member",

@@ -1,7 +1,5 @@
 package io.hyun424.openchat.chat.member.service;
 
-import io.hyun424.openchat.auth.entity.User;
-import io.hyun424.openchat.auth.repository.UserRepository;
 import io.hyun424.openchat.chat.member.entity.MemberStatus;
 import io.hyun424.openchat.chat.member.entity.RoomMember;
 import io.hyun424.openchat.chat.member.repository.RoomMemberRepository;
@@ -24,9 +22,10 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class RoomMemberService {
 
+    private static final int JOIN_LOCK_TIMEOUT_SECONDS = 3;
+
     private final RoomMemberRepository roomMemberRepository;
     private final RoomRepository roomRepository;
-    private final UserRepository userRepository;
 
     /**
      * 메시지 접근 기준 시점 조회
@@ -61,53 +60,57 @@ public class RoomMemberService {
      */
     @Transactional
     public JoinResult join(Long roomId, String userId) {
-        Room room = roomRepository.findById(roomId)
-                .orElseThrow(() -> new ApiException(ErrorCode.ROOM_NOT_FOUND));
-
-        // 종료된 방 체크
-        if (!room.isAccessible()) {
-            throw new ApiException(ErrorCode.ROOM_ENDED);
-        }
-
-        // 방장은 무조건 입장
-        if (userId.equals(room.getOwnerId())) {
-            return joinAsOwner(roomId, userId);
-        }
-
-        // 이미 입장했는지 확인
-        Optional<RoomMember> existing = roomMemberRepository
-                .findByRoomIdAndUserIdAndLeftAtIsNull(roomId, userId);
-
-        if (existing.isPresent()) {
-            RoomMember member = existing.get();
-            if (member.getStatus() == MemberStatus.PENDING) {
-                throw new ApiException(ErrorCode.PENDING_APPROVAL);
-            }
-            throw new ApiException(ErrorCode.ALREADY_JOINED);
-        }
-
-        // 인원수 체크 (승인된 멤버만 카운트)
-        if (room.getMaxMembers() != null) {
-            int currentCount = roomMemberRepository
-                    .countByRoomIdAndLeftAtIsNullAndStatus(roomId, MemberStatus.APPROVED);
-            if (currentCount >= room.getMaxMembers()) {
-                throw new ApiException(ErrorCode.ROOM_FULL);
-            }
-        }
-
-        // 입장 처리
-        // Security: Race condition 방지 - DB unique constraint로 중복 입장 차단
-        boolean requiresApproval = Boolean.TRUE.equals(room.getRequiresApproval());
+        acquireJoinLockOrThrow(roomId, userId);
         try {
-            RoomMember member = roomMemberRepository.save(
-                    RoomMember.join(roomId, userId, requiresApproval)
-            );
-            log.info("JOIN roomId={}, userId={}, status={}", roomId, userId, member.getStatus());
-            return new JoinResult(member.getStatus(), requiresApproval);
-        } catch (DataIntegrityViolationException e) {
-            // 동시 요청으로 인한 중복 - 이미 입장한 것으로 처리
-            log.warn("[RACE_CONDITION] Duplicate join attempt: roomId={}, userId={}", roomId, userId);
-            throw new ApiException(ErrorCode.ALREADY_JOINED);
+            Room room = roomRepository.findById(roomId)
+                    .orElseThrow(() -> new ApiException(ErrorCode.ROOM_NOT_FOUND));
+
+            // 종료된 방 체크
+            if (!room.isAccessible()) {
+                throw new ApiException(ErrorCode.ROOM_ENDED);
+            }
+
+            // 방장은 무조건 입장
+            if (userId.equals(room.getOwnerId())) {
+                return joinAsOwner(roomId, userId);
+            }
+
+            // 이미 입장했는지 확인
+            Optional<RoomMember> existing = roomMemberRepository
+                    .findByRoomIdAndUserIdAndLeftAtIsNull(roomId, userId);
+
+            if (existing.isPresent()) {
+                RoomMember member = existing.get();
+                if (member.getStatus() == MemberStatus.PENDING) {
+                    throw new ApiException(ErrorCode.PENDING_APPROVAL);
+                }
+                throw new ApiException(ErrorCode.ALREADY_JOINED);
+            }
+
+            // 인원수 체크 (승인된 멤버만 카운트)
+            if (room.getMaxMembers() != null) {
+                int currentCount = roomMemberRepository
+                        .countByRoomIdAndLeftAtIsNullAndStatus(roomId, MemberStatus.APPROVED);
+                if (currentCount >= room.getMaxMembers()) {
+                    throw new ApiException(ErrorCode.ROOM_FULL);
+                }
+            }
+
+            // 입장 처리
+            // Security: user+room 단위 advisory lock으로 동시 입장 경합 직렬화
+            boolean requiresApproval = Boolean.TRUE.equals(room.getRequiresApproval());
+            try {
+                RoomMember member = roomMemberRepository.save(
+                        RoomMember.join(roomId, userId, requiresApproval)
+                );
+                log.info("JOIN roomId={}, userId={}, status={}", roomId, userId, member.getStatus());
+                return new JoinResult(member.getStatus(), requiresApproval);
+            } catch (DataIntegrityViolationException e) {
+                log.warn("[RACE_CONDITION] Duplicate join attempt: roomId={}, userId={}", roomId, userId);
+                throw new ApiException(ErrorCode.ALREADY_JOINED);
+            }
+        } finally {
+            releaseJoinLock(roomId, userId);
         }
     }
 
@@ -198,14 +201,12 @@ public class RoomMemberService {
             throw new ApiException(ErrorCode.NOT_ROOM_OWNER);
         }
 
-        List<RoomMember> members = roomMemberRepository
-                .findByRoomIdAndLeftAtIsNullAndStatus(roomId, MemberStatus.PENDING);
-
-        return members.stream()
-                .map(m -> {
-                    String nickname = userRepository.findById(m.getUserId())
-                            .map(User::getNickname)
-                            .orElse("알 수 없음");
+        return roomMemberRepository
+                .findPendingMembersWithNickname(roomId, MemberStatus.PENDING)
+                .stream()
+                .map(row -> {
+                    RoomMember m = (RoomMember) row[0];
+                    String nickname = row[1] != null ? (String) row[1] : "알 수 없음";
                     return new PendingMember(m.getUserId(), nickname, m.getJoinedAt());
                 })
                 .toList();
@@ -240,14 +241,19 @@ public class RoomMemberService {
      */
     @Transactional
     public JoinResult joinIfNotExists(Long roomId, String userId) {
-        Optional<RoomMember> existing = roomMemberRepository
-                .findByRoomIdAndUserIdAndLeftAtIsNull(roomId, userId);
-
-        if (existing.isPresent()) {
-            return new JoinResult(existing.get().getStatus(), false);
+        try {
+            return join(roomId, userId);
+        } catch (ApiException e) {
+            if (e.getErrorCode() == ErrorCode.ALREADY_JOINED || e.getErrorCode() == ErrorCode.PENDING_APPROVAL) {
+                Optional<RoomMember> existing = roomMemberRepository
+                        .findByRoomIdAndUserIdAndLeftAtIsNull(roomId, userId);
+                if (existing.isPresent()) {
+                    RoomMember member = existing.get();
+                    return new JoinResult(member.getStatus(), member.getStatus() == MemberStatus.PENDING);
+                }
+            }
+            throw e;
         }
-
-        return join(roomId, userId);
     }
 
     /**
@@ -260,6 +266,21 @@ public class RoomMemberService {
 
         public boolean isPending() {
             return status == MemberStatus.PENDING;
+        }
+    }
+
+    private void acquireJoinLockOrThrow(Long roomId, String userId) {
+        Integer acquired = roomMemberRepository.acquireJoinLock(roomId, userId, JOIN_LOCK_TIMEOUT_SECONDS);
+        if (acquired == null || acquired != 1) {
+            throw new ApiException(ErrorCode.INVALID_REQUEST, "요청이 몰려 잠시 처리할 수 없습니다. 다시 시도해주세요.");
+        }
+    }
+
+    private void releaseJoinLock(Long roomId, String userId) {
+        try {
+            roomMemberRepository.releaseJoinLock(roomId, userId);
+        } catch (Exception e) {
+            log.warn("[LOCK] Failed to release join lock: roomId={}, userId={}", roomId, userId, e);
         }
     }
 }

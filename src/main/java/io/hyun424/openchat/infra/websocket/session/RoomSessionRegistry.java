@@ -2,33 +2,81 @@ package io.hyun424.openchat.infra.websocket.session;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
-import lombok.RequiredArgsConstructor;
+import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
+import org.springframework.web.socket.handler.ConcurrentWebSocketSessionDecorator;
+
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class RoomSessionRegistry {
 
     private final ObjectMapper objectMapper;
+    private final ExecutorService broadcastExecutor;
 
     private final ConcurrentMap<Long, Set<WebSocketSession>> roomSessions =
             new ConcurrentHashMap<>();
 
+    private final AtomicBoolean acceptingConnections = new AtomicBoolean(true);
+
+    private static final int SEND_TIME_LIMIT_MS = 5000;
+    private static final int BUFFER_SIZE_LIMIT = 64 * 1024;
+    private static final int BROADCAST_POOL_CORE = 4;
+    private static final int BROADCAST_POOL_MAX = 32;
+
+    public RoomSessionRegistry(ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
+        AtomicInteger threadCounter = new AtomicInteger(0);
+        this.broadcastExecutor = new ThreadPoolExecutor(
+                BROADCAST_POOL_CORE, BROADCAST_POOL_MAX,
+                60L, TimeUnit.SECONDS,
+                new LinkedBlockingQueue<>(2048),
+                r -> {
+                    Thread t = new Thread(r, "ws-broadcast-" + threadCounter.incrementAndGet());
+                    t.setDaemon(true);
+                    return t;
+                },
+                new ThreadPoolExecutor.CallerRunsPolicy()
+        );
+    }
+
+    public boolean isAcceptingConnections() {
+        return acceptingConnections.get();
+    }
+
+    public void stopAcceptingConnections() {
+        acceptingConnections.set(false);
+        log.info("[WS REGISTRY] Stopped accepting new connections");
+    }
+
     public void add(Long roomId, WebSocketSession session) {
+        if (!acceptingConnections.get()) {
+            try {
+                session.close(new CloseStatus(1001, "Server shutting down"));
+            } catch (IOException e) {
+                log.warn("[WS REJECT] Failed to close rejected session", e);
+            }
+            return;
+        }
+        WebSocketSession decorated = new ConcurrentWebSocketSessionDecorator(
+                session, SEND_TIME_LIMIT_MS, BUFFER_SIZE_LIMIT);
         roomSessions
                 .computeIfAbsent(roomId, k -> ConcurrentHashMap.newKeySet())
-                .add(session);
+                .add(decorated);
     }
 
     public void remove(Long roomId, WebSocketSession session) {
@@ -50,7 +98,7 @@ public class RoomSessionRegistry {
     }
 
     /**
-     * Broadcast message to all sessions in a room.
+     * Broadcast message to all sessions in a room using parallel sends.
      * Dead sessions are collected and removed AFTER iteration to avoid
      * ConcurrentModification issues that could skip live sessions.
      */
@@ -71,31 +119,36 @@ public class RoomSessionRegistry {
             return;
         }
 
-        // Collect dead sessions separately to avoid modifying set during iteration
+        TextMessage textMessage = new TextMessage(payload);
         Set<WebSocketSession> deadSessions = ConcurrentHashMap.newKeySet();
-        int successCount = 0;
+        AtomicInteger successCount = new AtomicInteger(0);
 
+        List<CompletableFuture<Void>> futures = new ArrayList<>();
         for (WebSocketSession session : sessions) {
-            try {
-                if (!session.isOpen()) {
+            futures.add(CompletableFuture.runAsync(() -> {
+                try {
+                    if (!session.isOpen()) {
+                        deadSessions.add(session);
+                        return;
+                    }
+                    session.sendMessage(textMessage);
+                    successCount.incrementAndGet();
+                } catch (Exception e) {
+                    log.warn("[WS SEND FAIL] roomId={} sessionId={}", roomId, session.getId(), e);
                     deadSessions.add(session);
-                    continue;
                 }
-                session.sendMessage(new TextMessage(payload));
-                successCount++;
-            } catch (Exception e) {
-                log.warn("[WS SEND FAIL] roomId={} sessionId={}", roomId, session.getId(), e);
-                deadSessions.add(session);
-            }
+            }, broadcastExecutor));
         }
 
-        // Clean up dead sessions after iteration
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+
+        // Clean up dead sessions after all sends complete
         for (WebSocketSession dead : deadSessions) {
             remove(roomId, dead);
         }
 
         log.debug("[WS BROADCAST] roomId={} messageId={} sent={} dead={}",
-                roomId, message.getMessageId(), successCount, deadSessions.size());
+                roomId, message.getMessageId(), successCount.get(), deadSessions.size());
     }
 
     /**
@@ -121,5 +174,50 @@ public class RoomSessionRegistry {
         }
 
         log.info("[WS CLOSE ALL] roomId={} closed {} sessions", roomId, closedCount);
+    }
+
+    /**
+     * 전체 WebSocket 세션 종료 (Graceful Shutdown용)
+     */
+    public void closeAllSessions() {
+        int totalClosed = 0;
+        for (Map.Entry<Long, Set<WebSocketSession>> entry : roomSessions.entrySet()) {
+            Long roomId = entry.getKey();
+            Set<WebSocketSession> sessions = entry.getValue();
+            for (WebSocketSession session : sessions) {
+                try {
+                    if (session.isOpen()) {
+                        session.close(new CloseStatus(1001, "Server shutting down"));
+                        totalClosed++;
+                    }
+                } catch (IOException e) {
+                    log.warn("[WS SHUTDOWN CLOSE FAIL] roomId={} sessionId={}", roomId, session.getId(), e);
+                }
+            }
+        }
+        roomSessions.clear();
+        log.info("[WS SHUTDOWN] Closed {} sessions across all rooms", totalClosed);
+    }
+
+    public int getTotalSessionCount() {
+        return roomSessions.values().stream().mapToInt(Set::size).sum();
+    }
+
+    public int getRoomCount() {
+        return roomSessions.size();
+    }
+
+    @PreDestroy
+    public void shutdownExecutor() {
+        log.info("[WS REGISTRY] Shutting down broadcast executor");
+        broadcastExecutor.shutdown();
+        try {
+            if (!broadcastExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                broadcastExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            broadcastExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 }

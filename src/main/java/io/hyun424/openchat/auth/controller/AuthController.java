@@ -27,6 +27,9 @@ public class AuthController {
         return userService.isNicknameAvailable(nickname);
     }
 
+
+
+
     /**
      * 닉네임 설정 + 회원가입 완료
      * 임시 토큰을 정식 JWT로 교환
