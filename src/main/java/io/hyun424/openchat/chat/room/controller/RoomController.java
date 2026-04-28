@@ -12,15 +12,20 @@ import io.hyun424.openchat.chat.room.service.RoomService;
 import io.hyun424.openchat.global.exception.ApiException;
 import io.hyun424.openchat.global.exception.ErrorCode;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Positive;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
 import java.util.List;
 
+@Validated
 @RestController
 @RequestMapping("/api/rooms")
 @RequiredArgsConstructor
@@ -29,16 +34,19 @@ public class RoomController {
     private final RoomService roomService;
     private final RoomMemberService roomMemberService;
 
+    private static final int DEFAULT_PAGE = 0;
+    private static final int MAX_PAGE_SIZE = 50;
+
+    /**
+     * 방 생성은 인증된 사용자만 가능하다.
+     * 인증 확인을 controller 경계에서 끝내면 service는 도메인 규칙에 집중할 수 있다.
+     */
     @PostMapping
     public ResponseEntity<RoomResponse> createRoom(
             Authentication authentication,
             @Valid @RequestBody RoomCreateRequest request
     ) {
-        if (authentication == null || !authentication.isAuthenticated()) {
-            throw new ApiException(ErrorCode.UNAUTHORIZED);
-        }
-
-        String userId = authentication.getName();
+        String userId = authenticatedUserId(authentication);
         Room room = roomService.createRoom(userId, request);
 
         return ResponseEntity.ok(RoomResponse.from(room));
@@ -50,14 +58,10 @@ public class RoomController {
      */
     @DeleteMapping("/{roomId}")
     public ResponseEntity<Void> deleteRoom(
-            @PathVariable Long roomId,
+            @PathVariable @Positive Long roomId,
             Authentication authentication
     ) {
-        if (authentication == null || !authentication.isAuthenticated()) {
-            throw new ApiException(ErrorCode.UNAUTHORIZED);
-        }
-
-        String userId = authentication.getName();
+        String userId = authenticatedUserId(authentication);
         roomService.deleteRoom(roomId, userId);
         return ResponseEntity.noContent().build();
     }
@@ -70,14 +74,10 @@ public class RoomController {
      */
     @PostMapping("/{roomId}/enter")
     public ResponseEntity<JoinResponse> enterRoom(
-            @PathVariable Long roomId,
+            @PathVariable @Positive Long roomId,
             Authentication authentication
     ) {
-        if (authentication == null || !authentication.isAuthenticated()) {
-            throw new ApiException(ErrorCode.UNAUTHORIZED);
-        }
-
-        String userId = authentication.getName();
+        String userId = authenticatedUserId(authentication);
         JoinResult result = roomMemberService.joinIfNotExists(roomId, userId);
 
         return ResponseEntity.ok(new JoinResponse(result.status().name(), result.requiresApproval()));
@@ -95,16 +95,15 @@ public class RoomController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size
     ) {
-        page = Math.max(page, 0);
-        size = Math.max(1, Math.min(size, 50));
-        return ResponseEntity.ok(roomService.getRoomsWithMemberCount(page, size));
+        PageRequestOption pageRequest = normalizePageRequest(page, size);
+        return ResponseEntity.ok(roomService.getRoomsWithMemberCount(pageRequest.page(), pageRequest.size()));
     }
 
     /**
      * 방 상세 조회 (현재 인원수 포함)
      */
     @GetMapping("/{roomId}")
-    public ResponseEntity<RoomDetailResponse> getRoom(@PathVariable Long roomId) {
+    public ResponseEntity<RoomDetailResponse> getRoom(@PathVariable @Positive Long roomId) {
         Room room = roomService.getRoomOrThrow(roomId);
         int currentMembers = roomMemberService.getApprovedMemberCount(roomId);
         return ResponseEntity.ok(RoomDetailResponse.from(room, currentMembers));
@@ -153,10 +152,10 @@ public class RoomController {
      */
     @GetMapping("/map")
     public ResponseEntity<List<RoomMapResponse>> getRoomsForMap(
-            @RequestParam java.math.BigDecimal swLat,
-            @RequestParam java.math.BigDecimal swLng,
-            @RequestParam java.math.BigDecimal neLat,
-            @RequestParam java.math.BigDecimal neLng
+            @RequestParam @DecimalMin("-90.0") @DecimalMax("90.0") BigDecimal swLat,
+            @RequestParam @DecimalMin("-180.0") @DecimalMax("180.0") BigDecimal swLng,
+            @RequestParam @DecimalMin("-90.0") @DecimalMax("90.0") BigDecimal neLat,
+            @RequestParam @DecimalMin("-180.0") @DecimalMax("180.0") BigDecimal neLng
     ) {
         return ResponseEntity.ok(roomService.getRoomsForMap(swLat, swLng, neLat, neLng));
     }
@@ -168,11 +167,22 @@ public class RoomController {
      */
     @GetMapping("/my")
     public ResponseEntity<List<MyRoomResponse>> getMyRooms(Authentication authentication) {
+        String userId = authenticatedUserId(authentication);
+        return ResponseEntity.ok(roomService.getMyRooms(userId));
+    }
+
+    private String authenticatedUserId(Authentication authentication) {
         if (authentication == null || !authentication.isAuthenticated()) {
             throw new ApiException(ErrorCode.UNAUTHORIZED);
         }
-
-        String userId = authentication.getName();
-        return ResponseEntity.ok(roomService.getMyRooms(userId));
+        return authentication.getName();
     }
+
+    private PageRequestOption normalizePageRequest(int page, int size) {
+        int normalizedPage = Math.max(DEFAULT_PAGE, page);
+        int normalizedSize = Math.max(1, Math.min(size, MAX_PAGE_SIZE));
+        return new PageRequestOption(normalizedPage, normalizedSize);
+    }
+
+    private record PageRequestOption(int page, int size) {}
 }

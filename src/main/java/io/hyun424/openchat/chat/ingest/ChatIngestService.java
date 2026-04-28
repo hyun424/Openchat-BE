@@ -23,12 +23,9 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Single entry point for all incoming chat messages.
- * Responsibilities:
- * 1. Generate server-side messageId (idempotency key)
- * 2. Persist to DB (durability)
- * 3. Publish to message bus (fan-out)
- * 4. Update HotChat metrics (non-critical side effect)
+ * 모든 채팅 메시지가 처음 들어오는 단일 진입점.
+ * 메시지는 반드시 DB에 먼저 저장한 뒤 publish한다. 실시간 전송보다 영속성을 우선해야
+ * "사용자가 본 메시지가 새로고침 후 사라지는" 상황을 막을 수 있기 때문이다.
  */
 @Service
 @Slf4j
@@ -41,9 +38,8 @@ public class ChatIngestService {
     private final RoomService roomService;
     private final RedisHealthState redisHealthState;
 
-    // In-memory cache: "roomId:senderId:clientMessageId" → timestamp
     private final ConcurrentHashMap<String, Long> clientMessageIdCache = new ConcurrentHashMap<>();
-    private static final long CLIENT_MSG_CACHE_TTL_MS = 60_000; // 1 minute
+    private static final long CLIENT_MSG_CACHE_TTL_MS = 60_000;
     private final ScheduledExecutorService cacheCleaner;
 
     @Value("${app.instance-id:local}")
@@ -97,73 +93,101 @@ public class ChatIngestService {
             String content,
             String clientMessageId
     ) {
-        String normalizedClientMessageId = StringUtils.hasText(clientMessageId) ? clientMessageId.trim() : null;
+        String normalizedClientMessageId = normalizeClientMessageId(clientMessageId);
 
-        // Idempotency: L1 in-memory cache check (avoids DB query for common case)
-        if (normalizedClientMessageId != null) {
-            String cacheKey = roomId + ":" + senderId + ":" + normalizedClientMessageId;
-            if (clientMessageIdCache.containsKey(cacheKey)) {
-                log.info("[INGEST DEDUPE CACHE][{}] roomId={} senderId={} clientMessageId={}",
-                        instanceId, roomId, senderId, normalizedClientMessageId);
-                return;
-            }
-        }
-
-        // Idempotency: L2 DB check (catches duplicates after cache eviction or restart)
-        Message existing = messageService.findByClientMessageId(roomId, senderId, normalizedClientMessageId);
-        if (existing != null) {
-            // Populate cache for future fast-path lookups
-            if (normalizedClientMessageId != null) {
-                clientMessageIdCache.put(
-                        roomId + ":" + senderId + ":" + normalizedClientMessageId,
-                        System.currentTimeMillis());
-            }
-            log.info("[INGEST DEDUPE][{}] roomId={} senderId={} clientMessageId={} messageId={}",
-                    instanceId, roomId, senderId, normalizedClientMessageId, existing.getMessageId());
+        if (isDuplicateClientMessage(roomId, senderId, normalizedClientMessageId)) {
             return;
         }
 
-        // 1. Generate server-side messageId (prevents duplicate processing)
         String messageId = UUID.randomUUID().toString();
         long createdAt = System.currentTimeMillis();
 
         log.info("[INGEST START][{}] roomId={} senderId={} clientMessageId={}",
                 instanceId, roomId, senderId, clientMessageId);
 
-        // 2. DB persistence (durability first)
-        Message saved;
+        Message saved = saveMessageFirst(
+                roomId, senderId, nickname, content, normalizedClientMessageId, messageId, createdAt);
+        rememberClientMessageId(roomId, senderId, normalizedClientMessageId);
+        updateRoomLastMessage(roomId, createdAt, content, nickname);
+
+        ChatMessageDto dto = buildMessageDto(saved, normalizedClientMessageId);
+        publishOrBuffer(dto, roomId, messageId);
+        updateHotChatBucket(roomId, messageId);
+
+        log.info("[INGEST DONE][{}] roomId={} messageId={} latency={}ms",
+                instanceId, roomId, messageId, System.currentTimeMillis() - createdAt);
+    }
+
+    private String normalizeClientMessageId(String clientMessageId) {
+        return StringUtils.hasText(clientMessageId) ? clientMessageId.trim() : null;
+    }
+
+    private boolean isDuplicateClientMessage(Long roomId, String senderId, String clientMessageId) {
+        if (clientMessageId == null) {
+            return false;
+        }
+
+        String cacheKey = clientMessageCacheKey(roomId, senderId, clientMessageId);
+        if (clientMessageIdCache.containsKey(cacheKey)) {
+            log.info("[INGEST DEDUPE CACHE][{}] roomId={} senderId={} clientMessageId={}",
+                    instanceId, roomId, senderId, clientMessageId);
+            return true;
+        }
+
+        Message existing = messageService.findByClientMessageId(roomId, senderId, clientMessageId);
+        if (existing == null) {
+            return false;
+        }
+
+        rememberClientMessageId(roomId, senderId, clientMessageId);
+        log.info("[INGEST DEDUPE][{}] roomId={} senderId={} clientMessageId={} messageId={}",
+                instanceId, roomId, senderId, clientMessageId, existing.getMessageId());
+        return true;
+    }
+
+    private Message saveMessageFirst(Long roomId,
+                                     String senderId,
+                                     String nickname,
+                                     String content,
+                                     String clientMessageId,
+                                     String messageId,
+                                     long createdAt) {
         try {
-            saved = messageService.save(
-                    roomId,
-                    senderId,
-                    nickname,
-                    content,
-                    normalizedClientMessageId,
-                    messageId,
-                    createdAt
-            );
+            Message saved = messageService.save(
+                    roomId, senderId, nickname, content, clientMessageId, messageId, createdAt);
             log.debug("[DB SAVED][{}] messageId={} dbId={}", instanceId, messageId, saved.getId());
-
-            // Populate in-memory cache after successful save
-            if (normalizedClientMessageId != null) {
-                clientMessageIdCache.put(
-                        roomId + ":" + senderId + ":" + normalizedClientMessageId,
-                        System.currentTimeMillis());
-            }
-
-            // Update room's last message info for "My Chats" feature
-            roomService.updateLastMessage(roomId, createdAt, content, nickname);
+            return saved;
         } catch (Exception e) {
             log.error("[DB SAVE FAIL][{}] roomId={} senderId={} messageId={}",
                     instanceId, roomId, senderId, messageId, e);
-            throw e; // DB fail = critical, abort entire flow
+            throw e;
         }
+    }
 
-        // 3. Build DTO from persisted entity (ensures consistency)
+    private void rememberClientMessageId(Long roomId, String senderId, String clientMessageId) {
+        if (clientMessageId == null) {
+            return;
+        }
+        clientMessageIdCache.put(
+                clientMessageCacheKey(roomId, senderId, clientMessageId),
+                System.currentTimeMillis());
+    }
+
+    private String clientMessageCacheKey(Long roomId, String senderId, String clientMessageId) {
+        return roomId + ":" + senderId + ":" + clientMessageId;
+    }
+
+    private void updateRoomLastMessage(Long roomId, long createdAt, String content, String nickname) {
+        roomService.updateLastMessage(roomId, createdAt, content, nickname);
+    }
+
+    private ChatMessageDto buildMessageDto(Message saved, String normalizedClientMessageId) {
         ChatMessageDto dto = ChatMessageDto.from(saved);
         dto.setClientMessageId(normalizedClientMessageId);
+        return dto;
+    }
 
-        // 4. Publish to message bus (Redis Pub/Sub or Kafka)
+    private void publishOrBuffer(ChatMessageDto dto, Long roomId, String messageId) {
         try {
             publisher.publish(dto);
             log.info("[PUBLISH OK][{}] roomId={} messageId={}", instanceId, roomId, messageId);
@@ -172,16 +196,13 @@ public class ChatIngestService {
                     instanceId, roomId, messageId, e);
             retryBuffer.enqueue(dto);
         }
-
-        // 5. HotChat bucket update (non-critical, fire-and-forget)
-        updateHotChatBucket(roomId, messageId);
-
-        log.info("[INGEST DONE][{}] roomId={} messageId={} latency={}ms",
-                instanceId, roomId, messageId, System.currentTimeMillis() - createdAt);
     }
 
+    /**
+     * HotChat은 채팅 전송의 핵심 경로가 아니다.
+     * Redis가 흔들리더라도 메시지 저장과 전달을 막지 않도록 실패 시 Redis down 상태만 기록한다.
+     */
     private void updateHotChatBucket(Long roomId, String messageId) {
-        // Skip if Redis is down - HotChat is non-critical
         if (!redisHealthState.isUp()) {
             return;
         }

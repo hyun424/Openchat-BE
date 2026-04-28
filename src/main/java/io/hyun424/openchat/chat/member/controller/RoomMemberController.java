@@ -3,12 +3,16 @@ package io.hyun424.openchat.chat.member.controller;
 import io.hyun424.openchat.chat.member.service.RoomMemberService;
 import io.hyun424.openchat.chat.member.service.RoomMemberService.JoinResult;
 import io.hyun424.openchat.global.response.ApiResponse;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Positive;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
+@Validated
 @RestController
 @RequestMapping("/api/rooms")
 @RequiredArgsConstructor
@@ -22,7 +26,7 @@ public class RoomMemberController {
      */
     @PostMapping("/{roomId}/join")
     public ApiResponse<JoinResponse> join(
-            @PathVariable Long roomId,
+            @PathVariable @Positive Long roomId,
             Authentication authentication
     ) {
         String userId = authentication.getName();
@@ -33,7 +37,7 @@ public class RoomMemberController {
     /** 방 퇴장 */
     @PostMapping("/{roomId}/leave")
     public ApiResponse<Void> leave(
-            @PathVariable Long roomId,
+            @PathVariable @Positive Long roomId,
             Authentication authentication
     ) {
         String userId = authentication.getName();
@@ -44,8 +48,8 @@ public class RoomMemberController {
     /** 멤버 승인 (방장만) */
     @PostMapping("/{roomId}/members/{userId}/approve")
     public ApiResponse<Void> approveMember(
-            @PathVariable Long roomId,
-            @PathVariable String userId,
+            @PathVariable @Positive Long roomId,
+            @PathVariable @NotBlank String userId,
             Authentication authentication
     ) {
         String requesterId = authentication.getName();
@@ -56,8 +60,8 @@ public class RoomMemberController {
     /** 멤버 거절 (방장만) */
     @PostMapping("/{roomId}/members/{userId}/reject")
     public ApiResponse<Void> rejectMember(
-            @PathVariable Long roomId,
-            @PathVariable String userId,
+            @PathVariable @Positive Long roomId,
+            @PathVariable @NotBlank String userId,
             Authentication authentication
     ) {
         String requesterId = authentication.getName();
@@ -68,7 +72,7 @@ public class RoomMemberController {
     /** 대기 중인 멤버 목록 (방장만) */
     @GetMapping("/{roomId}/pending-members")
     public ApiResponse<List<PendingMemberResponse>> getPendingMembers(
-            @PathVariable Long roomId,
+            @PathVariable @Positive Long roomId,
             Authentication authentication
     ) {
         String requesterId = authentication.getName();
@@ -81,7 +85,7 @@ public class RoomMemberController {
 
     /** 현재 인원수 */
     @GetMapping("/{roomId}/member-count")
-    public ApiResponse<Integer> getMemberCount(@PathVariable Long roomId) {
+    public ApiResponse<Integer> getMemberCount(@PathVariable @Positive Long roomId) {
         int count = roomMemberService.getApprovedMemberCount(roomId);
         return ApiResponse.ok(count);
     }
@@ -89,7 +93,7 @@ public class RoomMemberController {
     /** 내 멤버십 상태 확인 */
     @GetMapping("/{roomId}/membership")
     public ApiResponse<MembershipResponse> getMembership(
-            @PathVariable Long roomId,
+            @PathVariable @Positive Long roomId,
             Authentication authentication
     ) {
         String userId = authentication.getName();

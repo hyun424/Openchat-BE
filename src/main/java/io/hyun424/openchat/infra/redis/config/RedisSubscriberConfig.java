@@ -15,7 +15,7 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 @Slf4j
 @Configuration
 @RequiredArgsConstructor
-@ConditionalOnProperty(name = "spring.data.redis.host")
+@ConditionalOnProperty(name = "app.redis.subscriber.enabled", havingValue = "true", matchIfMissing = true)
 public class RedisSubscriberConfig {
 
     private final ChatRedisSubscriber subscriber;

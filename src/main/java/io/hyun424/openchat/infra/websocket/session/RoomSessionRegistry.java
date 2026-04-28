@@ -30,6 +30,8 @@ public class RoomSessionRegistry {
 
     private final ConcurrentMap<Long, Set<WebSocketSession>> roomSessions =
             new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, WebSocketSession> sessionsById =
+            new ConcurrentHashMap<>();
 
     private final AtomicBoolean acceptingConnections = new AtomicBoolean(true);
 
@@ -65,15 +67,16 @@ public class RoomSessionRegistry {
 
     public void add(Long roomId, WebSocketSession session) {
         if (!acceptingConnections.get()) {
-            try {
-                session.close(new CloseStatus(1001, "Server shutting down"));
-            } catch (IOException e) {
-                log.warn("[WS REJECT] Failed to close rejected session", e);
-            }
+            closeSession(session, new CloseStatus(1001, "Server shutting down"), "[WS REJECT]");
             return;
         }
         WebSocketSession decorated = new ConcurrentWebSocketSessionDecorator(
                 session, SEND_TIME_LIMIT_MS, BUFFER_SIZE_LIMIT);
+        /*
+         * 저장은 decorator로 하지만 제거 요청은 원본 WebSocketSession으로 들어온다.
+         * 객체 동일성 대신 session id로 찾아 제거해야 닫힌 세션이 registry에 남지 않는다.
+         */
+        sessionsById.put(session.getId(), decorated);
         roomSessions
                 .computeIfAbsent(roomId, k -> ConcurrentHashMap.newKeySet())
                 .add(decorated);
@@ -82,7 +85,8 @@ public class RoomSessionRegistry {
     public void remove(Long roomId, WebSocketSession session) {
         Set<WebSocketSession> set = roomSessions.get(roomId);
         if (set != null) {
-            set.remove(session);
+            WebSocketSession storedSession = sessionsById.remove(session.getId());
+            set.remove(storedSession != null ? storedSession : session);
             if (set.isEmpty()) {
                 roomSessions.remove(roomId);
             }
@@ -98,9 +102,8 @@ public class RoomSessionRegistry {
     }
 
     /**
-     * Broadcast message to all sessions in a room using parallel sends.
-     * Dead sessions are collected and removed AFTER iteration to avoid
-     * ConcurrentModification issues that could skip live sessions.
+     * 방에 연결된 세션으로 메시지를 병렬 전송한다.
+     * 전송 중 Set을 직접 수정하면 살아있는 세션을 건너뛸 수 있으므로, 죽은 세션은 전송이 끝난 뒤 정리한다.
      */
     public void sendToRoom(Long roomId, ChatMessageDto message) {
         Set<WebSocketSession> sessions = getSessions(roomId);
@@ -110,45 +113,67 @@ public class RoomSessionRegistry {
             return;
         }
 
-        String payload;
-        try {
-            payload = objectMapper.writeValueAsString(message);
-        } catch (Exception e) {
-            log.error("[WS SERIALIZE FAIL] roomId={} messageId={}",
-                    roomId, message.getMessageId(), e);
+        TextMessage textMessage = serializeMessage(roomId, message);
+        if (textMessage == null) {
             return;
         }
 
-        TextMessage textMessage = new TextMessage(payload);
         Set<WebSocketSession> deadSessions = ConcurrentHashMap.newKeySet();
         AtomicInteger successCount = new AtomicInteger(0);
 
-        List<CompletableFuture<Void>> futures = new ArrayList<>();
-        for (WebSocketSession session : sessions) {
-            futures.add(CompletableFuture.runAsync(() -> {
-                try {
-                    if (!session.isOpen()) {
-                        deadSessions.add(session);
-                        return;
-                    }
-                    session.sendMessage(textMessage);
-                    successCount.incrementAndGet();
-                } catch (Exception e) {
-                    log.warn("[WS SEND FAIL] roomId={} sessionId={}", roomId, session.getId(), e);
-                    deadSessions.add(session);
-                }
-            }, broadcastExecutor));
-        }
-
-        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
-
-        // Clean up dead sessions after all sends complete
-        for (WebSocketSession dead : deadSessions) {
-            remove(roomId, dead);
-        }
+        waitAllSends(roomId, sessions, textMessage, deadSessions, successCount);
+        removeDeadSessions(roomId, deadSessions);
 
         log.debug("[WS BROADCAST] roomId={} messageId={} sent={} dead={}",
                 roomId, message.getMessageId(), successCount.get(), deadSessions.size());
+    }
+
+    private TextMessage serializeMessage(Long roomId, ChatMessageDto message) {
+        try {
+            return new TextMessage(objectMapper.writeValueAsString(message));
+        } catch (Exception e) {
+            log.error("[WS SERIALIZE FAIL] roomId={} messageId={}",
+                    roomId, message.getMessageId(), e);
+            return null;
+        }
+    }
+
+    private void waitAllSends(Long roomId,
+                              Set<WebSocketSession> sessions,
+                              TextMessage textMessage,
+                              Set<WebSocketSession> deadSessions,
+                              AtomicInteger successCount) {
+        List<CompletableFuture<Void>> futures = new ArrayList<>();
+        for (WebSocketSession session : sessions) {
+            futures.add(CompletableFuture.runAsync(
+                    () -> sendToSingleSession(roomId, session, textMessage, deadSessions, successCount),
+                    broadcastExecutor));
+        }
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+    }
+
+    private void sendToSingleSession(Long roomId,
+                                     WebSocketSession session,
+                                     TextMessage textMessage,
+                                     Set<WebSocketSession> deadSessions,
+                                     AtomicInteger successCount) {
+        try {
+            if (!session.isOpen()) {
+                deadSessions.add(session);
+                return;
+            }
+            session.sendMessage(textMessage);
+            successCount.incrementAndGet();
+        } catch (Exception e) {
+            log.warn("[WS SEND FAIL] roomId={} sessionId={}", roomId, session.getId(), e);
+            deadSessions.add(session);
+        }
+    }
+
+    private void removeDeadSessions(Long roomId, Set<WebSocketSession> deadSessions) {
+        for (WebSocketSession dead : deadSessions) {
+            remove(roomId, dead);
+        }
     }
 
     /**
@@ -163,13 +188,9 @@ public class RoomSessionRegistry {
 
         int closedCount = 0;
         for (WebSocketSession session : sessions) {
-            try {
-                if (session.isOpen()) {
-                    session.close(new CloseStatus(4001, "Room has been ended"));
-                    closedCount++;
-                }
-            } catch (IOException e) {
-                log.warn("[WS CLOSE FAIL] roomId={} sessionId={}", roomId, session.getId(), e);
+            sessionsById.remove(session.getId());
+            if (closeSession(session, new CloseStatus(4001, "Room has been ended"), "[WS CLOSE FAIL]")) {
+                closedCount++;
             }
         }
 
@@ -182,21 +203,29 @@ public class RoomSessionRegistry {
     public void closeAllSessions() {
         int totalClosed = 0;
         for (Map.Entry<Long, Set<WebSocketSession>> entry : roomSessions.entrySet()) {
-            Long roomId = entry.getKey();
             Set<WebSocketSession> sessions = entry.getValue();
             for (WebSocketSession session : sessions) {
-                try {
-                    if (session.isOpen()) {
-                        session.close(new CloseStatus(1001, "Server shutting down"));
-                        totalClosed++;
-                    }
-                } catch (IOException e) {
-                    log.warn("[WS SHUTDOWN CLOSE FAIL] roomId={} sessionId={}", roomId, session.getId(), e);
+                if (closeSession(session, new CloseStatus(1001, "Server shutting down"), "[WS SHUTDOWN CLOSE FAIL]")) {
+                    totalClosed++;
                 }
             }
         }
         roomSessions.clear();
+        sessionsById.clear();
         log.info("[WS SHUTDOWN] Closed {} sessions across all rooms", totalClosed);
+    }
+
+    private boolean closeSession(WebSocketSession session, CloseStatus status, String logPrefix) {
+        try {
+            if (!session.isOpen()) {
+                return false;
+            }
+            session.close(status);
+            return true;
+        } catch (IOException e) {
+            log.warn("{} sessionId={}", logPrefix, session.getId(), e);
+            return false;
+        }
     }
 
     public int getTotalSessionCount() {
