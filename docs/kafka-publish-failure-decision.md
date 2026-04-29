@@ -216,7 +216,132 @@ DB 저장 성공
 
 timeout은 부하테스트로 조정한다. 정상 상황 p95 latency가 크게 흔들리면 더 짧게 잡고, 실패 오탐이 많으면 늘린다.
 
-## 5. 실험 설계
+## 5. 수정 전 장애 재현 기록
+
+수정 전 상태를 먼저 재현해 before/after 비교 기준으로 남긴다.
+
+### 단위 테스트 관찰
+
+추가한 테스트:
+
+- `ChatCompositePublisherTest.publish_kafkaAsyncFailure_isNotPropagatedToCaller`
+- `ChatIngestServiceTest.ingest_publisherReturnsNormally_retryBufferNotUsed`
+
+관찰 결과:
+
+```text
+Kafka send future 실패
+-> ChatCompositePublisher.publish()는 예외를 던지지 않음
+-> ChatIngestService는 publish 실패를 알 수 없음
+-> retryBuffer.enqueue() 호출 조건이 성립하지 않음
+```
+
+의미:
+
+- `ChatIngestService`에는 publish 예외를 retry buffer로 넘기는 방어 로직이 있다.
+- 하지만 실제 `ChatCompositePublisher`는 Kafka 실패를 비동기 callback 로그로만 처리한다.
+- 따라서 현재 구조에서는 "Kafka publish 실패를 retry buffer로 재시도한다"고 말할 수 없다.
+
+### 로컬 수동 재현 시나리오
+
+절차:
+
+1. `docker-compose up -d`로 MySQL, Redis, Kafka 실행
+2. 애플리케이션 실행
+3. WebSocket 메시지 정상 전송
+4. `docker-compose stop kafka`
+5. 메시지 재전송
+6. 애플리케이션 로그 확인
+7. `docker-compose start kafka`
+
+수정 전 기대 로그:
+
+```text
+[KAFKA PUB FAIL] 발생
+[PUBLISH FAIL] ... enqueuing for retry 미발생
+[RETRY BUFFER] Drained ... 미발생
+```
+
+장애 조건:
+
+- Kafka broker 중단
+- Redis가 정상인 경우 같은 인스턴스/Redis 경로에서는 겉으로 메시지가 전달될 수 있음
+- Redis 장애와 Kafka 장애가 겹치면 DB 저장 이후 cross-instance 전달이 조용히 누락될 수 있음
+
+원인:
+
+- `kafkaTemplate.send(...).whenComplete(...)`는 callback 안에서 실패를 관찰하지만, 호출자인 `ChatIngestService`로 실패를 전파하지 않는다.
+
+### 실제 재현 결과
+
+실행 일시:
+
+- 2026-04-28 20:16~20:22 KST
+
+실행 조건:
+
+- 애플리케이션 프로필: `dev,loadtest`
+- 인프라: `docker-compose.yml`의 MySQL, Redis, Kafka
+- 부하: k6 WebSocket stress 시나리오를 짧게 축소 실행
+- 명령:
+
+```bash
+k6 run \
+  -e BASE_URL=http://127.0.0.1:8080 \
+  -e WS_BASE_URL=ws://127.0.0.1:8080 \
+  --stage 10s:5 \
+  --stage 20s:5 \
+  --stage 5s:0 \
+  k6/scenarios/02-websocket-stress.js
+```
+
+정상 Kafka 상태 기준선:
+
+| 지표 | 결과 |
+| --- | ---: |
+| HTTP error rate | 0.00% |
+| WebSocket connect success | 100.00% |
+| WebSocket connect p95 | 25.19ms |
+| WebSocket message round-trip p50 | 11ms |
+| WebSocket message round-trip p95 | 20.74ms |
+| WebSocket message round-trip p99 | 31.94ms |
+| WebSocket sent / received | 1407 / 1406 |
+
+Kafka 중단 상태:
+
+1. `docker-compose stop kafka`로 Kafka broker 중단
+2. 같은 k6 WebSocket 부하 재실행
+3. Redis가 살아 있어 클라이언트 관점 WebSocket 지표는 거의 정상 유지
+
+| 지표 | 결과 |
+| --- | ---: |
+| HTTP error rate | 0.00% |
+| WebSocket connect success | 100.00% |
+| WebSocket connect p95 | 24.59ms |
+| WebSocket message round-trip p50 | 14ms |
+| WebSocket message round-trip p95 | 22ms |
+| WebSocket message round-trip p99 | 27.94ms |
+| WebSocket sent / received | 1406 / 1406 |
+
+관찰 로그:
+
+```text
+20:19:33 Kafka broker stopped
+20:19:46 Kafka 중단 상태 k6 WebSocket 부하 시작
+20:21:56 [KAFKA PUB FAIL] 발생
+20:21:56 TimeoutException: Expiring 48 record(s) for chat-message-0:120002 ms has passed since batch creation
+```
+
+해석:
+
+- Kafka publish 실패는 실제로 발생했다.
+- 실패 callback은 즉시 발생하지 않고, 현재 producer 기본 설정 기준 약 120초 뒤 timeout으로 관찰됐다.
+- k6 실행 중 WebSocket 지표가 정상에 가깝게 나온 이유는 Redis Pub/Sub 경로가 살아 있었기 때문이다.
+- 이 결과는 사용자 체감 경로와 내구성/fallback 경로가 다르게 깨질 수 있음을 보여준다.
+- 현재 구조에서는 Kafka 실패가 callback 로그로만 남고, `ChatIngestService`의 `[PUBLISH FAIL] ... enqueuing for retry` 경로로 즉시 연결되지 않는다.
+- 따라서 수정 전 상태는 "겉으로는 채팅이 정상처럼 보이지만 Kafka fallback 내구성은 조용히 깨질 수 있는 상태"다.
+
+## 6. 실험 설계
 
 ### 실험 1. Kafka 정상 상태
 
@@ -273,13 +398,13 @@ timeout은 부하테스트로 조정한다. 정상 상황 p95 latency가 크게 
 - dedupe hit 수
 - 중복 표시 수
 
-## 6. 포트폴리오 설명 문장
+## 7. 포트폴리오 설명 문장
 
 아래 문장을 기준으로 정리할 수 있다.
 
 > 기존 구조에서는 Kafka publish 실패가 비동기 callback 로그로만 남아, 메시지를 저장한 ingest 계층이 실패를 인지하지 못했다. 이 상태에서는 Redis 장애 시 Kafka가 fallback 역할을 한다고 설명하기 어렵다고 판단했다. 대안으로 비동기 인터페이스 변경, callback 기반 retry, outbox 패턴, producer 설정 보강을 비교했고, 현재 프로젝트 규모에서는 짧은 timeout 기반 Kafka publish 확인과 retry buffer 연결을 선택했다. 이 선택은 outbox보다 보장 수준은 낮지만, 구조 복잡도를 크게 늘리지 않으면서 publish 실패를 관측 가능하고 재시도 가능한 상태로 만든다.
 
-## 7. 남은 한계
+## 8. 남은 한계
 
 - 짧은 timeout 기반 동기 확인은 장기 장애에 대한 완전한 해법은 아니다.
 - retry buffer가 인메모리이므로 서버가 죽으면 buffer 안의 메시지는 사라질 수 있다.

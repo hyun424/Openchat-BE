@@ -150,4 +150,34 @@ class ChatIngestServiceTest {
         verify(retryBuffer).enqueue(any());
         verify(roomService).updateLastMessage(eq(ROOM_ID), anyLong(), eq(CONTENT), eq(NICKNAME));
     }
+
+    @Test
+    @DisplayName("수정 전 경계 확인: publisher가 실패를 숨기고 정상 반환하면 retryBuffer에 들어가지 않는다")
+    void ingest_publisherReturnsNormally_retryBufferNotUsed() {
+        // given
+        when(messageService.findByClientMessageId(eq(ROOM_ID), eq(SENDER_ID), eq(CLIENT_MSG_ID)))
+                .thenReturn(null);
+
+        Message saved = Message.builder()
+                .messageId("uuid-3")
+                .roomId(ROOM_ID)
+                .senderId(SENDER_ID)
+                .senderNickname(NICKNAME)
+                .content(CONTENT)
+                .clientMessageId(CLIENT_MSG_ID)
+                .createdAt(System.currentTimeMillis())
+                .build();
+
+        when(messageService.save(eq(ROOM_ID), eq(SENDER_ID), eq(NICKNAME), eq(CONTENT),
+                eq(CLIENT_MSG_ID), anyString(), anyLong()))
+                .thenReturn(saved);
+
+        // when
+        chatIngestService.ingest(ROOM_ID, SENDER_ID, NICKNAME, CONTENT, CLIENT_MSG_ID);
+
+        // then
+        verify(publisher).publish(any());
+        verify(retryBuffer, never()).enqueue(any());
+        verify(roomService).updateLastMessage(eq(ROOM_ID), anyLong(), eq(CONTENT), eq(NICKNAME));
+    }
 }
