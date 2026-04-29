@@ -60,6 +60,7 @@ public class JwtHandshakeInterceptor implements HandshakeInterceptor {
 
             attributes.put("userId", userId);
             attributes.put("nickname", nickname);
+            attributes.put("token", token);
 
             return true;
         } catch (Exception e) {

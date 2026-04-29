@@ -1,0 +1,64 @@
+package io.hyun424.openchat.chat.publish;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
+import io.hyun424.openchat.infra.redis.health.RedisHealthState;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.stereotype.Service;
+
+/**
+ * Redis-only publisher: Active when Redis is configured but Kafka is not.
+ * Gracefully degrades when Redis is unavailable - messages are still saved to DB.
+ */
+@Slf4j
+@Service
+@ConditionalOnProperty(name = "spring.data.redis.host")
+@ConditionalOnMissingBean(ChatCompositePublisher.class)
+public class ChatRedisOnlyPublisher implements ChatMessagePublisher {
+
+    private final StringRedisTemplate redisTemplate;
+    private final ObjectMapper objectMapper;
+    private final RedisHealthState redisHealthState;
+
+    @Value("${app.instance-id:local}")
+    private String instanceId;
+
+    public ChatRedisOnlyPublisher(
+            StringRedisTemplate redisTemplate,
+            ObjectMapper objectMapper,
+            RedisHealthState redisHealthState
+    ) {
+        this.redisTemplate = redisTemplate;
+        this.objectMapper = objectMapper;
+        this.redisHealthState = redisHealthState;
+        log.info("ChatRedisOnlyPublisher initialized (Redis only, no Kafka)");
+    }
+
+    @Override
+    public void publish(ChatMessageDto message) {
+        // Skip if Redis is known to be down - message already saved to DB
+        if (!redisHealthState.isUp()) {
+            log.debug("[REDIS PUB SKIP][{}] Redis is down, roomId={} messageId={}",
+                    instanceId, message.getRoomId(), message.getMessageId());
+            return;
+        }
+
+        String channel = "chat:room:" + message.getRoomId();
+        try {
+            String payload = objectMapper.writeValueAsString(message);
+            redisTemplate.convertAndSend(channel, payload);
+            log.info("[REDIS PUB][{}] channel={} roomId={} messageId={}",
+                    instanceId, channel, message.getRoomId(), message.getMessageId());
+        } catch (Exception e) {
+            // Mark Redis as down for future requests
+            redisHealthState.markDown();
+            log.error("[REDIS PUB FAIL][{}] roomId={} messageId={} - marking Redis down",
+                    instanceId, message.getRoomId(), message.getMessageId(), e);
+            // Message is already saved in DB, polling can recover it
+        }
+    }
+}

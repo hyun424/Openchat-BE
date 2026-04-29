@@ -1,0 +1,266 @@
+{
+    "root_group": {
+        "checks": {
+            "login status 200": {
+                "name": "login status 200",
+                "path": "::login status 200",
+                "id": "a9f04e9f501317c68a9f824e04811bea",
+                "passes": 3075,
+                "fails": 0
+            },
+            "login has token": {
+                "fails": 0,
+                "name": "login has token",
+                "path": "::login has token",
+                "id": "76fad3378234b1d9b3859991679a6c46",
+                "passes": 3075
+            },
+            "listRooms ok": {
+                "id": "20c1cb35081a161a549756c13240ea98",
+                "passes": 2315,
+                "fails": 757,
+                "name": "listRooms ok",
+                "path": "::listRooms ok"
+            },
+            "getRoom ok": {
+                "name": "getRoom ok",
+                "path": "::getRoom ok",
+                "id": "9daf1eae0061bdb536cb5b1fdf486a8e",
+                "passes": 2303,
+                "fails": 9
+            },
+            "createRoom ok": {
+                "name": "createRoom ok",
+                "path": "::createRoom ok",
+                "id": "e3bf03b95ed5659c060cdf384ccaef3c",
+                "passes": 3064,
+                "fails": 1
+            },
+            "enterRoom ok": {
+                "fails": 6,
+                "name": "enterRoom ok",
+                "path": "::enterRoom ok",
+                "id": "0c68510a8624a8ea9c336c8dbe0c5220",
+                "passes": 3056
+            },
+            "getMessages ok": {
+                "name": "getMessages ok",
+                "path": "::getMessages ok",
+                "id": "a0a33c751ed07795f192c99abac1355f",
+                "passes": 3051,
+                "fails": 9
+            },
+            "getMyRooms ok": {
+                "passes": 3057,
+                "fails": 2,
+                "name": "getMyRooms ok",
+                "path": "::getMyRooms ok",
+                "id": "7af48c4ec066f12119c9729cf937a404"
+            },
+            "getHotChats ok": {
+                "passes": 3057,
+                "fails": 0,
+                "name": "getHotChats ok",
+                "path": "::getHotChats ok",
+                "id": "8cda9d39d67d9a4d67c773dd55b05924"
+            }
+        },
+        "name": "",
+        "path": "",
+        "id": "d41d8cd98f00b204e9800998ecf8427e",
+        "groups": {}
+    },
+    "metrics": {
+        "data_sent": {
+            "count": 8062483,
+            "rate": 9560.811740372857
+        },
+        "http_req_sending": {
+            "avg": 0.02220263445837777,
+            "min": 0.002,
+            "med": 0.014,
+            "max": 7.826,
+            "p(90)": 0.033,
+            "p(95)": 0.049
+        },
+        "http_req_receiving": {
+            "p(90)": 1.6717000000000015,
+            "p(95)": 4.778,
+            "avg": 0.7890595909435191,
+            "min": 0.006,
+            "med": 0.124,
+            "max": 96.299
+        },
+        "http_reqs": {
+            "rate": 28.17792094256073,
+            "count": 23762
+        },
+        "rest_login_duration_ms": {
+            "avg": 2.5500328455284533,
+            "min": 0.387,
+            "med": 1.406,
+            "max": 134.592,
+            "p(90)": 3.4048000000000003,
+            "p(95)": 6.493799999999999
+        },
+        "vus": {
+            "value": 2,
+            "min": 1,
+            "max": 200
+        },
+        "rest_get_messages_duration_ms": {
+            "max": 30051.841,
+            "p(90)": 507.1166000000001,
+            "p(95)": 911.8898499999995,
+            "avg": 324.95723202614425,
+            "min": 2.778,
+            "med": 7.6105
+        },
+        "rest_get_my_rooms_duration_ms": {
+            "p(90)": 196.9616,
+            "p(95)": 491.3455999999999,
+            "avg": 284.2298185681588,
+            "min": 3.134,
+            "med": 7.379,
+            "max": 30007.514
+        },
+        "http_req_waiting": {
+            "p(90)": 12501.735100000009,
+            "p(95)": 25356.059849999983,
+            "avg": 3312.487515991914,
+            "min": 0.34,
+            "med": 13.754,
+            "max": 34910.02
+        },
+        "rest_list_rooms_duration_ms": {
+            "avg": 16352.149913085943,
+            "min": 1111.197,
+            "med": 14347.811,
+            "max": 34916.373,
+            "p(90)": 30006.7661,
+            "p(95)": 30040.1052
+        },
+        "rest_get_room_duration_ms": {
+            "min": 3.675,
+            "med": 5155.3279999999995,
+            "max": 30029.72,
+            "p(90)": 22247.420700000002,
+            "p(95)": 25775.180099999998,
+            "avg": 8257.591442041517
+        },
+        "data_received": {
+            "count": 3628138778,
+            "rate": 4302390.693339067
+        },
+        "http_error_rate": {
+            "passes": 784,
+            "fails": 22978,
+            "thresholds": {
+                "rate<0.01": true
+            },
+            "value": 0.032993855736049155
+        },
+        "http_req_duration": {
+            "med": 14.0015,
+            "max": 34916.373,
+            "p(90)": 12505.046400000008,
+            "p(95)": 25356.90749999999,
+            "avg": 3313.2987782173063,
+            "min": 0.387,
+            "thresholds": {
+                "p(99)<1000": true,
+                "p(95)<500": true
+            }
+        },
+        "rest_get_hotchat_duration_ms": {
+            "avg": 3.2625462872096778,
+            "min": 1.025,
+            "med": 2.483,
+            "max": 58.745,
+            "p(90)": 4.9042,
+            "p(95)": 7.425399999999992,
+            "thresholds": {
+                "p(95)<100": false,
+                "p(99)<300": false
+            }
+        },
+        "http_req_failed": {
+            "passes": 784,
+            "fails": 22978,
+            "thresholds": {
+                "rate<0.01": true
+            },
+            "value": 0.032993855736049155
+        },
+        "http_req_tls_handshaking": {
+            "avg": 0,
+            "min": 0,
+            "med": 0,
+            "max": 0,
+            "p(90)": 0,
+            "p(95)": 0
+        },
+        "rest_create_room_duration_ms": {
+            "min": 3.528,
+            "med": 863.151,
+            "max": 30006.964,
+            "p(90)": 4133.6528,
+            "p(95)": 8554.9798,
+            "avg": 1692.6643559543259
+        },
+        "http_req_connecting": {
+            "p(90)": 0,
+            "p(95)": 0,
+            "avg": 0.008904595572763241,
+            "min": 0,
+            "med": 0,
+            "max": 3.097
+        },
+        "checks": {
+            "passes": 26053,
+            "fails": 784,
+            "value": 0.9707866005887394
+        },
+        "vus_max": {
+            "value": 200,
+            "min": 200,
+            "max": 200
+        },
+        "iteration_duration": {
+            "avg": 28588.818264853264,
+            "min": 4179.592417,
+            "med": 34285.6052295,
+            "max": 71101.8215,
+            "p(90)": 48754.5995167,
+            "p(95)": 49974.919
+        },
+        "http_req_duration{expected_response:true}": {
+            "max": 34916.373,
+            "p(90)": 8555.5073,
+            "p(95)": 16670.169399999995,
+            "avg": 2409.7583232657257,
+            "min": 0.387,
+            "med": 11.213000000000001
+        },
+        "iterations": {
+            "count": 3054,
+            "rate": 3.6215541856148667
+        },
+        "http_req_blocked": {
+            "med": 0.004,
+            "max": 7.076,
+            "p(90)": 0.01,
+            "p(95)": 0.04,
+            "avg": 0.019547975759615113,
+            "min": 0
+        },
+        "rest_enter_room_duration_ms": {
+            "min": 4.6,
+            "med": 180.303,
+            "max": 30009.689,
+            "p(90)": 2402.876800000007,
+            "p(95)": 3893.808049999999,
+            "avg": 762.7662540823004
+        }
+    }
+}

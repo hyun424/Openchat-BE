@@ -2,34 +2,58 @@ package io.hyun424.openchat.infra.redis.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import io.hyun424.openchat.infra.redis.health.RedisHealthState;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.scheduling.annotation.EnableScheduling;
+import org.springframework.scheduling.annotation.Scheduled;
 
+@Slf4j
 @Configuration
+@EnableScheduling
+@ConditionalOnProperty(name = "spring.data.redis.host")
 public class RedisConfig {
 
-    /**
-     * Redis publish / subscribe 용 템플릿
-     * - key: String
-     * - value: JSON(String)
-     */
-    @Bean
-    public StringRedisTemplate stringRedisTemplate(
-            RedisConnectionFactory connectionFactory
-    ) {
-        return new StringRedisTemplate(connectionFactory);
+    private final RedisHealthState redisHealthState;
+    private RedisConnectionFactory connectionFactory;
+
+    public RedisConfig(RedisHealthState redisHealthState) {
+        this.redisHealthState = redisHealthState;
     }
 
-    /**
-     * ChatMessageDto 직렬화/역직렬화 기준 ObjectMapper
-     * (WS / Redis / fan-out 공용)
-     */
+    @Bean
+    public StringRedisTemplate stringRedisTemplate(RedisConnectionFactory connectionFactory) {
+        this.connectionFactory = connectionFactory;
+        StringRedisTemplate template = new StringRedisTemplate(connectionFactory);
+
+        // Initial health check
+        checkRedisHealth();
+
+        return template;
+    }
+
     @Bean(name = "redisObjectMapper")
     public ObjectMapper redisObjectMapper() {
         ObjectMapper mapper = new ObjectMapper();
         mapper.registerModule(new JavaTimeModule());
         return mapper;
+    }
+
+    // Periodic health check - recovers when Redis comes back up
+    @Scheduled(fixedRate = 30000)
+    public void checkRedisHealth() {
+        if (connectionFactory == null) return;
+
+        try {
+            connectionFactory.getConnection().ping();
+            redisHealthState.markUp();
+        } catch (Exception e) {
+            redisHealthState.markDown();
+            log.warn("[REDIS HEALTH] connection failed: {}", e.getMessage());
+        }
     }
 }

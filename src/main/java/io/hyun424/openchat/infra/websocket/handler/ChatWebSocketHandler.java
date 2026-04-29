@@ -1,118 +1,205 @@
 package io.hyun424.openchat.infra.websocket.handler;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.hyun424.openchat.auth.jwt.JwtProvider;
 import io.hyun424.openchat.chat.ingest.ChatIngestService;
-import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
-import io.hyun424.openchat.chat.message.entity.Message;
-import io.hyun424.openchat.chat.message.service.MessageService;
 import io.hyun424.openchat.chat.member.service.RoomMemberService;
+import io.hyun424.openchat.chat.room.domain.Room;
+import io.hyun424.openchat.chat.room.service.RoomService;
+import io.hyun424.openchat.global.ratelimit.RateLimiter;
 import io.hyun424.openchat.infra.websocket.session.RoomSessionRegistry;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
-import org.springframework.web.socket.CloseStatus;
-import org.springframework.web.socket.TextMessage;
-import org.springframework.web.socket.WebSocketSession;
+import org.springframework.web.socket.*;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
+import java.nio.charset.StandardCharsets;
+
+
+/**
+ * 채팅 WebSocket 연결과 메시지 처리의 진입점.
+ * 실제 검증/파싱/에러 응답은 helper로 분리해, 이 클래스에서는 처리 순서가 먼저 보이도록 유지한다.
+ */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class ChatWebSocketHandler extends TextWebSocketHandler {
 
-    private final ObjectMapper objectMapper;
-    private final MessageService messageService;
     private final RoomMemberService roomMemberService;
-
-    /**
-     * roomId -> sessions
-     * TODO: (확장) 서버 다중 인스턴스/오토스케일링 시 Redis Pub/Sub로 대체
-     */
     private final RoomSessionRegistry roomSessionRegistry;
     private final ChatIngestService chatIngestService;
+    private final RoomService roomService;
+    private final RateLimiter rateLimiter;
+    private final ChatWebSocketMessageParser messageParser;
+    private final WebSocketErrorSender errorSender;
+    private final WebSocketSessionGuard sessionGuard;
 
-    @Override
-    public void afterConnectionEstablished(WebSocketSession session) {
-        Long roomId = extractRoomId(session);
+    @Value("${ratelimit.ws.message-limit:10}")
+    private int wsMessageLimit;
 
-        String userId = (String) session.getAttributes().get("userId");
-        String nickname = (String) session.getAttributes().get("nickname");
+    @Value("${ratelimit.ws.window-seconds:1}")
+    private int wsWindowSeconds;
 
-        if (userId == null) {
-            throw new IllegalStateException("WebSocket user not authenticated (missing userId)");
-        }
-        if (nickname == null || nickname.isBlank()) {
-            // ✅ 최선: nickname은 서버(JWT)에서 확정되어야 한다. 없으면 연결 자체를 막는다.
-            throw new IllegalStateException("WebSocket user not initialized (missing nickname)");
-        }
+    private static final int MAX_MESSAGE_SIZE_BYTES = 10 * 1024;
+    private static final int MAX_CONTENT_LENGTH = 500;
 
-        // 방 입장 검증 (이미 네가 해두었던 흐름 유지)
-        roomMemberService.getJoinedAtOrThrow(roomId, userId);
-
-        roomSessionRegistry.add(roomId, session);
-
-
-        log.info("[ChatWebSocket] CONNECT roomId={}, userId={}, nickname={}, sessionId={}",
-                roomId, userId, nickname, session.getId());
+    public ChatWebSocketHandler(ObjectMapper objectMapper,
+                                RoomMemberService roomMemberService,
+                                RoomSessionRegistry roomSessionRegistry,
+                                ChatIngestService chatIngestService,
+                                RoomService roomService,
+                                RateLimiter rateLimiter,
+                                JwtProvider jwtProvider) {
+        this.roomMemberService = roomMemberService;
+        this.roomSessionRegistry = roomSessionRegistry;
+        this.chatIngestService = chatIngestService;
+        this.roomService = roomService;
+        this.rateLimiter = rateLimiter;
+        this.messageParser = new ChatWebSocketMessageParser(objectMapper);
+        this.errorSender = new WebSocketErrorSender(objectMapper);
+        this.sessionGuard = new WebSocketSessionGuard(jwtProvider);
     }
 
     @Override
-    protected void handleTextMessage(WebSocketSession session, TextMessage message) {
+    public void afterConnectionEstablished(WebSocketSession session) throws Exception {
         Long roomId = extractRoomId(session);
-
-        String senderId = (String) session.getAttributes().get("userId");
+        String userId = (String) session.getAttributes().get("userId");
         String nickname = (String) session.getAttributes().get("nickname");
 
-        if (senderId == null || nickname == null || nickname.isBlank()) {
-            log.warn("WS_MSG_REJECT invalid session={}", session.getId());
+        validateAuthenticatedSession(userId, nickname);
+        if (!closeIfRoomEnded(session, roomId)) {
             return;
         }
 
-        try {
-            JsonNode node = objectMapper.readTree(message.getPayload());
-            JsonNode contentNode = node.get("content");
+        roomMemberService.getJoinedAtOrThrow(roomId, userId);
+        sessionGuard.markConnected(session);
+        roomSessionRegistry.add(roomId, session);
 
-            if (contentNode == null || contentNode.asText().isBlank()) {
+        log.info("[WS CONNECT] roomId={} userId={} session={}",
+                roomId, userId, session.getId());
+    }
+
+    @Override
+    protected void handleTextMessage(WebSocketSession session, TextMessage textMessage) {
+        Long roomId = extractRoomId(session);
+        String senderId = (String) session.getAttributes().get("userId");
+        String nickname = (String) session.getAttributes().get("nickname");
+
+        try {
+            if (!validateMessageSize(session, textMessage, roomId, senderId)) {
+                return;
+            }
+            if (!validateSessionState(session, roomId, senderId)) {
+                return;
+            }
+            if (!validateRateLimit(session, senderId, roomId)) {
                 return;
             }
 
-            String content = contentNode.asText();
+            ChatWebSocketMessage message = messageParser.parse(textMessage);
+            if (!validateContent(session, message, roomId, senderId)) {
+                return;
+            }
 
-            // ✅ 1) DB 저장 (여기서 saved가 생김)
-            Message saved = messageService.save(roomId, senderId, nickname, content);
-
-            // ✅ 2) DTO 생성
-            ChatMessageDto dto = ChatMessageDto.from(saved);
-
-            // ✅ 3) Redis로만 보냄 (fan-out은 subscriber가 담당)
-            chatIngestService.ingest(dto);
-
-            log.debug("WS_MSG_INGESTED roomId={}, senderId={}, messageId={}",
-                    roomId, senderId, dto.getMessageId());
+            /*
+             * DB 저장, 메시지 버스 발행, fan-out은 모두 Ingest 계층이 책임진다.
+             * WebSocket 핸들러는 연결/입력 검증만 담당해야 장애 대응 흐름을 추적하기 쉽다.
+             */
+            chatIngestService.ingest(
+                    roomId,
+                    senderId,
+                    nickname,
+                    message.content(),
+                    message.clientMessageId()
+            );
 
         } catch (Exception e) {
-            log.error("WS_MSG_ERROR session={}", session.getId(), e);
+            log.error("[WS_MSG_ERROR]", e);
         }
+    }
+
+    private void validateAuthenticatedSession(String userId, String nickname) {
+        if (userId == null || nickname == null || nickname.isBlank()) {
+            throw new IllegalStateException("Invalid WebSocket authentication");
+        }
+    }
+
+    private boolean closeIfRoomEnded(WebSocketSession session, Long roomId) throws Exception {
+        Room room = roomService.getRoomOrThrow(roomId);
+        if (!room.isAccessible()) {
+            session.close(new CloseStatus(4001, "Room has been ended"));
+            return false;
+        }
+        return true;
+    }
+
+    private boolean validateMessageSize(WebSocketSession session,
+                                        TextMessage textMessage,
+                                        Long roomId,
+                                        String senderId) {
+        int messageSize = textMessage.getPayload().getBytes(StandardCharsets.UTF_8).length;
+        if (messageSize <= MAX_MESSAGE_SIZE_BYTES) {
+            return true;
+        }
+        log.warn("[WS_MSG_TOO_LARGE] roomId={} senderId={} size={}bytes", roomId, senderId, messageSize);
+        errorSender.sendError(session, "Message too large (max 10KB)");
+        return false;
+    }
+
+    private boolean validateSessionState(WebSocketSession session, Long roomId, String senderId) throws Exception {
+        if (sessionGuard.isSessionExpired(session)) {
+            log.warn("[WS_SESSION_TIMEOUT] roomId={} senderId={}", roomId, senderId);
+            session.close(new CloseStatus(4002, "Session timeout"));
+            return false;
+        }
+        if (!sessionGuard.isTokenValid(session)) {
+            log.warn("[WS_TOKEN_EXPIRED] roomId={} senderId={}", roomId, senderId);
+            session.close(new CloseStatus(4001, "Token expired"));
+            return false;
+        }
+        return true;
+    }
+
+    private boolean validateRateLimit(WebSocketSession session, String senderId, Long roomId) {
+        if (rateLimiter.tryAcquire("ws:" + senderId, wsMessageLimit, wsWindowSeconds)) {
+            return true;
+        }
+        log.warn("[WS_RATE_LIMIT] roomId={} senderId={}", roomId, senderId);
+        errorSender.sendError(session, "Rate limit exceeded");
+        return false;
+    }
+
+    private boolean validateContent(WebSocketSession session,
+                                    ChatWebSocketMessage message,
+                                    Long roomId,
+                                    String senderId) {
+        String content = message.content();
+        if (content == null || content.isBlank()) {
+            log.warn("[WS_MSG_EMPTY] roomId={} senderId={}", roomId, senderId);
+            return false;
+        }
+        if (content.length() <= MAX_CONTENT_LENGTH) {
+            return true;
+        }
+        log.warn("[WS_MSG_TOO_LONG] roomId={} senderId={} length={}", roomId, senderId, content.length());
+        errorSender.sendError(session, "Message too long (max 500 chars)");
+        return false;
     }
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
         Long roomId = extractRoomId(session);
-
         roomSessionRegistry.remove(roomId, session);
 
-        log.info("[ChatWebSocket] DISCONNECT roomId={}, sessionId={}, status={}",
-                roomId, session.getId(), status);
+        log.info("[WS DISCONNECT] roomId={} session={}", roomId, session.getId());
     }
 
     private Long extractRoomId(WebSocketSession session) {
-        // 네 프로젝트가 이미 query param roomId를 쓰고 있으니 그대로 간다.
-        // ws://.../ws/chat?token=JWT&roomId=xxx
         String query = session.getUri() != null ? session.getUri().getQuery() : null;
-        if (query == null) throw new IllegalStateException("Missing query string");
+        if (query == null) {
+            throw new IllegalStateException("Missing query");
+        }
 
-        // 아주 단순 파싱 (MVP). TODO: UriComponentsBuilder로 교체 가능
         for (String kv : query.split("&")) {
             String[] parts = kv.split("=");
             if (parts.length == 2 && parts[0].equals("roomId")) {
@@ -121,35 +208,4 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         }
         throw new IllegalStateException("Missing roomId");
     }
-
-    public void broadcast(Long roomId, ChatMessageDto message) {
-        String payload;
-        try {
-            payload = objectMapper.writeValueAsString(message);
-        } catch (Exception e) {
-            log.error("[WS BROADCAST SERIALIZE FAIL] roomId={} messageId={}",
-                    roomId, message.getMessageId(), e);
-            return;
-        }
-
-        for (WebSocketSession session : roomSessionRegistry.getSesstions(roomId)) {
-            try {
-                if (!session.isOpen()) {
-                    roomSessionRegistry.remove(roomId, session);
-                    continue;
-                }
-
-                session.sendMessage(new TextMessage(payload));
-
-            } catch (Exception e) {
-                log.warn("[WS SEND FAIL] roomId={} sessionId={} → removing session",
-                        roomId, session.getId(), e);
-
-                // 🔥 핵심: 실패 세션 즉시 제거
-                roomSessionRegistry.remove(roomId, session);
-            }
-        }
-    }
-
-
 }

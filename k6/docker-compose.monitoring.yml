@@ -1,0 +1,91 @@
+version: '3.8'
+
+services:
+  # ── InfluxDB: k6 결과 저장소 ──
+  influxdb:
+    image: influxdb:1.8
+    container_name: openchat-influxdb
+    ports:
+      - "8086:8086"
+    environment:
+      INFLUXDB_DB: k6
+      INFLUXDB_HTTP_AUTH_ENABLED: "false"
+    volumes:
+      - influxdb_data:/var/lib/influxdb
+
+  # ── Prometheus: 메트릭 수집 ──
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: openchat-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=7d'
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # ── Grafana: 대시보드 시각화 ──
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: openchat-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+      - influxdb
+
+  # ── MySQL Exporter: MySQL 메트릭 → Prometheus ──
+  mysql-exporter:
+    image: prom/mysqld-exporter:v0.15.1
+    container_name: openchat-mysql-exporter
+    ports:
+      - "9104:9104"
+    environment:
+      DATA_SOURCE_NAME: "openchat:openchat@(host.docker.internal:3306)/openchat"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # ── Redis Exporter: Redis 메트릭 → Prometheus ──
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.58.0
+    container_name: openchat-redis-exporter
+    ports:
+      - "9121:9121"
+    environment:
+      REDIS_ADDR: "host.docker.internal:6379"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # ── cAdvisor: 컨테이너 리소스 모니터링 ──
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: openchat-cadvisor
+    ports:
+      - "8081:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    privileged: true
+
+networks:
+  default:
+    name: openchat-network
+    external: true
+
+volumes:
+  influxdb_data:
+  prometheus_data:
+  grafana_data:
