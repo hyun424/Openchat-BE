@@ -1,0 +1,10 @@
+CONTAINER ID   NAME                      CPU %     MEM USAGE / LIMIT     MEM %     NET I/O           BLOCK I/O       PIDS
+62e41bd56c9a   openchat-grafana          0.06%     73.17MiB / 7.653GiB   0.93%     19.1kB / 6.58kB   684kB / 188kB   20
+108f167b665c   openchat-prometheus       0.04%     46.81MiB / 7.653GiB   0.60%     10.1MB / 196kB    242kB / 553kB   17
+16ae7b126a61   openchat-influxdb         0.08%     48.34MiB / 7.653GiB   0.62%     9.65kB / 3.02kB   471kB / 229kB   21
+c95978e5a396   openchat-cadvisor         0.04%     23.55MiB / 7.653GiB   0.30%     15.3kB / 181kB    0B / 0B         19
+a8dde808c6a1   openchat-redis-exporter   0.00%     11.39MiB / 7.653GiB   0.15%     291kB / 125kB     0B / 0B         14
+359630397cf2   openchat-lb-up-small      0.00%     3.848MiB / 256MiB     1.50%     2.36GB / 2.22GB   0B / 12.3kB     2
+c2291e0f7308   openchat-app-up-small     1.08%     740.3MiB / 4GiB       18.07%    345MB / 2.21GB    0B / 483kB      235
+0994480d980a   openchat-loadtest-redis   0.89%     9.93MiB / 7.653GiB    0.13%     34.5MB / 24.6MB   0B / 0B         6
+cfb598c5f78d   openchat-loadtest-mysql   0.97%     469.4MiB / 7.653GiB   5.99%     78MB / 62.2MB     131kB / 814MB   68

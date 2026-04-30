@@ -1,0 +1,244 @@
+x-app-env: &app-env
+  SPRING_PROFILES_ACTIVE: loadtest
+  DB_HOST: mysql
+  DB_PORT: 3306
+  DB_NAME: openchat
+  DB_USERNAME: openchat
+  DB_PASSWORD: openchat
+  SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/openchat?useSSL=false&serverTimezone=Asia/Seoul&allowPublicKeyRetrieval=true
+  SPRING_DATASOURCE_USERNAME: openchat
+  SPRING_DATASOURCE_PASSWORD: openchat
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  SPRING_DATA_REDIS_HOST: redis
+  SPRING_DATA_REDIS_PORT: 6379
+  APP_KAFKA_ENABLED: "false"
+  KAFKA_SERVERS: kafka:9092
+  JWT_SECRET: loadtest-secret-key-minimum-32-characters
+  CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+  JAVA_OPTS: -XX:MaxRAMPercentage=70 -XX:+UseG1GC -Djava.security.egd=file:/dev/./urandom
+
+x-app-common: &app-common
+  build:
+    context: .
+    dockerfile: Dockerfile
+  environment:
+    <<: *app-env
+  depends_on:
+    mysql:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  networks:
+    - openchat-loadtest
+
+x-lb-common: &lb-common
+  image: nginx:1.27-alpine
+  ports:
+    - "8080:8080"
+  depends_on:
+    - mysql
+    - redis
+  networks:
+    - openchat-loadtest
+  cpus: "0.50"
+  mem_limit: 256m
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: openchat-loadtest-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: openchat
+      MYSQL_USER: openchat
+      MYSQL_PASSWORD: openchat
+    volumes:
+      - loadtest_mysql_data:/var/lib/mysql
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks:
+      - openchat-loadtest
+
+  redis:
+    image: redis:7-alpine
+    container_name: openchat-loadtest-redis
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks:
+      - openchat-loadtest
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: openchat-loadtest-zookeeper
+    profiles: ["kafka"]
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 2181"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks:
+      - openchat-loadtest
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: openchat-loadtest-kafka
+    profiles: ["kafka"]
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    networks:
+      - openchat-loadtest
+
+  openchat-app-up-small:
+    <<: *app-common
+    container_name: openchat-app-up-small
+    profiles: ["scale-up-small"]
+    environment:
+      <<: *app-env
+      INSTANCE_ID: app-up-small
+      APP_INSTANCE_ID: app-up-small
+    cpus: "2.00"
+    mem_limit: 4g
+    labels:
+      openchat.loadtest.role: app
+      openchat.loadtest.profile: scale-up-small
+
+  openchat-lb-up-small:
+    <<: *lb-common
+    container_name: openchat-lb-up-small
+    profiles: ["scale-up-small"]
+    volumes:
+      - ./docker/nginx/loadtest-scale-up-small.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - openchat-app-up-small
+
+  openchat-app-out-small-1:
+    <<: *app-common
+    container_name: openchat-app-out-small-1
+    profiles: ["scale-out-small"]
+    environment:
+      <<: *app-env
+      INSTANCE_ID: app-out-small-1
+      APP_INSTANCE_ID: app-out-small-1
+    cpus: "1.00"
+    mem_limit: 2g
+    labels:
+      openchat.loadtest.role: app
+      openchat.loadtest.profile: scale-out-small
+
+  openchat-app-out-small-2:
+    <<: *app-common
+    container_name: openchat-app-out-small-2
+    profiles: ["scale-out-small"]
+    environment:
+      <<: *app-env
+      INSTANCE_ID: app-out-small-2
+      APP_INSTANCE_ID: app-out-small-2
+    cpus: "1.00"
+    mem_limit: 2g
+    labels:
+      openchat.loadtest.role: app
+      openchat.loadtest.profile: scale-out-small
+
+  openchat-lb-out-small:
+    <<: *lb-common
+    container_name: openchat-lb-out-small
+    profiles: ["scale-out-small"]
+    volumes:
+      - ./docker/nginx/loadtest-scale-out-small.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - openchat-app-out-small-1
+      - openchat-app-out-small-2
+
+  openchat-app-up-large:
+    <<: *app-common
+    container_name: openchat-app-up-large
+    profiles: ["scale-up-large"]
+    environment:
+      <<: *app-env
+      INSTANCE_ID: app-up-large
+      APP_INSTANCE_ID: app-up-large
+    cpus: "4.00"
+    mem_limit: 8g
+    labels:
+      openchat.loadtest.role: app
+      openchat.loadtest.profile: scale-up-large
+
+  openchat-lb-up-large:
+    <<: *lb-common
+    container_name: openchat-lb-up-large
+    profiles: ["scale-up-large"]
+    volumes:
+      - ./docker/nginx/loadtest-scale-up-large.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - openchat-app-up-large
+
+  openchat-app-out-large-1:
+    <<: *app-common
+    container_name: openchat-app-out-large-1
+    profiles: ["scale-out-large"]
+    environment:
+      <<: *app-env
+      INSTANCE_ID: app-out-large-1
+      APP_INSTANCE_ID: app-out-large-1
+    cpus: "2.00"
+    mem_limit: 4g
+    labels:
+      openchat.loadtest.role: app
+      openchat.loadtest.profile: scale-out-large
+
+  openchat-app-out-large-2:
+    <<: *app-common
+    container_name: openchat-app-out-large-2
+    profiles: ["scale-out-large"]
+    environment:
+      <<: *app-env
+      INSTANCE_ID: app-out-large-2
+      APP_INSTANCE_ID: app-out-large-2
+    cpus: "2.00"
+    mem_limit: 4g
+    labels:
+      openchat.loadtest.role: app
+      openchat.loadtest.profile: scale-out-large
+
+  openchat-lb-out-large:
+    <<: *lb-common
+    container_name: openchat-lb-out-large
+    profiles: ["scale-out-large"]
+    volumes:
+      - ./docker/nginx/loadtest-scale-out-large.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - openchat-app-out-large-1
+      - openchat-app-out-large-2
+
+networks:
+  openchat-loadtest:
+    name: openchat-loadtest-network
+
+volumes:
+  loadtest_mysql_data:

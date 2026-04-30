@@ -1,0 +1,3 @@
+CONTAINER ID   NAME                    CPU %     MEM USAGE / LIMIT   MEM %     NET I/O           BLOCK I/O     PIDS
+0b4d444aaf8c   openchat-lb-up-small    0.00%     3.781MiB / 256MiB   1.48%     5.5kB / 3.85kB    0B / 12.3kB   2
+77c9124b403f   openchat-app-up-small   7.71%     450.3MiB / 4GiB     10.99%    38.3kB / 39.6kB   0B / 49.2kB   94

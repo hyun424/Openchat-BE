@@ -1,0 +1,301 @@
+{
+    "root_group": {
+        "name": "",
+        "path": "",
+        "id": "d41d8cd98f00b204e9800998ecf8427e",
+        "groups": {
+            "setup": {
+                "name": "setup",
+                "path": "::setup",
+                "id": "5c0f8025f7e0b6654089e5b00e950f1a",
+                "groups": {},
+                "checks": {
+                        "login status 200": {
+                            "name": "login status 200",
+                            "path": "::setup::login status 200",
+                            "id": "17a4a3f3d5dbad586fefc48e40f4a9ab",
+                            "passes": 1,
+                            "fails": 0
+                        },
+                        "login has token": {
+                            "id": "2a64ccc0036069b6bf05082925ff90b6",
+                            "passes": 1,
+                            "fails": 0,
+                            "name": "login has token",
+                            "path": "::setup::login has token"
+                        },
+                        "createHotRoom status 2xx": {
+                            "name": "createHotRoom status 2xx",
+                            "path": "::setup::createHotRoom status 2xx",
+                            "id": "10c9b790bc1e8fa1eb683cf21d6b0eb4",
+                            "passes": 1,
+                            "fails": 0
+                        },
+                        "createHotRoom has id": {
+                            "name": "createHotRoom has id",
+                            "path": "::setup::createHotRoom has id",
+                            "id": "0cbb72f67146f8c18e781a2c35f5d779",
+                            "passes": 1,
+                            "fails": 0
+                        }
+                    }
+            }
+        },
+        "checks": {
+            "login status 200": {
+                "id": "a9f04e9f501317c68a9f824e04811bea",
+                "passes": 200,
+                "fails": 0,
+                "name": "login status 200",
+                "path": "::login status 200"
+            },
+            "login has token": {
+                "id": "76fad3378234b1d9b3859991679a6c46",
+                "passes": 200,
+                "fails": 0,
+                "name": "login has token",
+                "path": "::login has token"
+            },
+            "enterRoom ok": {
+                "name": "enterRoom ok",
+                "path": "::enterRoom ok",
+                "id": "0c68510a8624a8ea9c336c8dbe0c5220",
+                "passes": 200,
+                "fails": 0
+            },
+            "ws connected": {
+                "passes": 200,
+                "fails": 0,
+                "name": "ws connected",
+                "path": "::ws connected",
+                "id": "b890c791400ee254856ecce8133edded"
+            }
+        }
+    },
+    "metrics": {
+        "rest_create_room_duration_ms": {
+            "p(95)": 39.4,
+            "avg": 39.4,
+            "min": 39.4,
+            "med": 39.4,
+            "max": 39.4,
+            "p(90)": 39.4
+        },
+        "http_req_blocked": {
+            "p(95)": 2.5229,
+            "avg": 0.8752860696517376,
+            "min": 0,
+            "med": 0.082,
+            "max": 2.701,
+            "p(90)": 2.4679
+        },
+        "vus_max": {
+            "min": 200,
+            "max": 200,
+            "value": 200
+        },
+        "hot_room_broadcast_received_total": {
+            "count": 4764922,
+            "rate": 38972.880205808964
+        },
+        "ws_connect_duration_ms": {
+            "avg": 158.765,
+            "min": 3,
+            "med": 99,
+            "max": 961,
+            "p(90)": 303.50000000000006,
+            "p(95)": 657.8999999999996,
+            "thresholds": {
+                "p(95)<5000": false,
+                "p(99)<10000": false
+            }
+        },
+        "ws_message_roundtrip_ms": {
+            "med": 18,
+            "max": 993,
+            "p(90)": 44,
+            "p(95)": 112.04999999999895,
+            "avg": 35.47495798319328,
+            "min": 5,
+            "thresholds": {
+                "p(50)<5000": false,
+                "p(95)<60000": false,
+                "p(99)<120000": false
+            }
+        },
+        "http_req_duration{expected_response:true}": {
+            "avg": 573.7700820895524,
+            "min": 11.283,
+            "med": 495.166,
+            "max": 1796.422,
+            "p(90)": 1196.5546,
+            "p(95)": 1296.0257
+        },
+        "ws_msgs_received": {
+            "count": 4764922,
+            "rate": 38972.880205808964
+        },
+        "http_req_waiting": {
+            "avg": 568.1081616915423,
+            "min": 11.115,
+            "med": 494.155,
+            "max": 1796.374,
+            "p(90)": 1195.0141,
+            "p(95)": 1293.1283999999998
+        },
+        "http_req_failed": {
+            "passes": 0,
+            "fails": 402,
+            "value": 0
+        },
+        "ws_messages_sent_total": {
+            "count": 23853,
+            "rate": 195.0966063136314
+        },
+        "iterations": {
+            "count": 200,
+            "rate": 1.6358244775385187
+        },
+        "ws_sessions": {
+            "rate": 1.6358244775385187,
+            "count": 200
+        },
+        "http_req_duration": {
+            "p(95)": 1296.0257,
+            "avg": 573.7700820895524,
+            "min": 11.283,
+            "med": 495.166,
+            "max": 1796.422,
+            "p(90)": 1196.5546
+        },
+        "http_error_rate": {
+            "passes": 0,
+            "fails": 402,
+            "thresholds": {
+                "rate<0.01": false
+            },
+            "value": 0
+        },
+        "data_sent": {
+            "count": 2579162,
+            "rate": 21095.281655686005
+        },
+        "rest_login_duration_ms": {
+            "med": 221.398,
+            "max": 1300.588,
+            "p(90)": 494.953,
+            "p(95)": 616.543,
+            "avg": 269.0046069651741,
+            "min": 11.283
+        },
+        "rest_enter_room_duration_ms": {
+            "p(90)": 1294.6946,
+            "p(95)": 1392.3929,
+            "avg": 882.7312349999997,
+            "min": 215.156,
+            "med": 902.3125,
+            "max": 1796.422
+        },
+        "vus": {
+            "value": 9,
+            "min": 9,
+            "max": 200
+        },
+        "checks": {
+            "fails": 0,
+            "passes": 804,
+            "value": 1
+        },
+        "iteration_duration": {
+            "max": 122206.644917,
+            "p(90)": 121894.7077791,
+            "p(95)": 121921.8286146,
+            "avg": 121515.09692293996,
+            "min": 120718.142667,
+            "med": 121601.256979
+        },
+        "http_req_sending": {
+            "med": 0.010499999999999999,
+            "max": 0.247,
+            "p(90)": 0.06590000000000001,
+            "p(95)": 0.12274999999999991,
+            "avg": 0.027584577114427817,
+            "min": 0.002
+        },
+        "http_req_receiving": {
+            "avg": 5.63433582089552,
+            "min": 0.008,
+            "med": 0.059,
+            "max": 117.121,
+            "p(90)": 3.4680999999999997,
+            "p(95)": 67.63390000000001
+        },
+        "http_req_tls_handshaking": {
+            "min": 0,
+            "med": 0,
+            "max": 0,
+            "p(90)": 0,
+            "p(95)": 0,
+            "avg": 0
+        },
+        "hot_room_own_echo_received_total": {
+            "count": 23800,
+            "rate": 194.66311282708372
+        },
+        "ws_connect_success_rate": {
+            "passes": 200,
+            "fails": 0,
+            "thresholds": {
+                "rate>0.99": false
+            },
+            "value": 1
+        },
+        "http_reqs": {
+            "count": 402,
+            "rate": 3.2880071998524225
+        },
+        "data_received": {
+            "rate": 11107801.233846786,
+            "count": 1358067615
+        },
+        "ws_messages_received_total": {
+            "count": 4764922,
+            "rate": 38972.880205808964
+        },
+        "ws_msgs_sent": {
+            "count": 23853,
+            "rate": 195.0966063136314
+        },
+        "hot_room_unique_received_total": {
+            "count": 4764922,
+            "rate": 38972.880205808964
+        },
+        "ws_session_duration": {
+            "med": 120099.67525,
+            "max": 120961.123083,
+            "p(90)": 120303.6324881,
+            "p(95)": 120659.35905865,
+            "avg": 120159.39550352003,
+            "min": 120003.313375
+        },
+        "http_req_connecting": {
+            "max": 2.68,
+            "p(90)": 2.4542,
+            "p(95)": 2.503,
+            "avg": 0.8635398009950249,
+            "min": 0,
+            "med": 0.066
+        },
+        "ws_connecting": {
+            "avg": 158.70906417500012,
+            "min": 3.136458,
+            "med": 98.9885835,
+            "max": 960.886792,
+            "p(90)": 303.21268360000005,
+            "p(95)": 658.0562152499996
+        }
+    },
+    "setup_data": {
+        "roomId": 2
+    }
+}

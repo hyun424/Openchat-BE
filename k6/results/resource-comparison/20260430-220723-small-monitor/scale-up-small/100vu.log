@@ -1,0 +1,90 @@
+
+         /\      Grafana   /‾‾/  
+    /\  /  \     |\  __   /  /   
+   /  \/    \    | |/ /  /   ‾‾\ 
+  /          \   |   (  |  (‾)  |
+ / __________ \  |_|\_\  \_____/ 
+
+
+     execution: local
+        script: k6/scenarios/07-hot-room-fixed.js
+        output: InfluxDBv1 (http://127.0.0.1:8086)
+
+     scenarios: (100.00%) 1 scenario, 100 max VUs, 4m0s max duration (incl. graceful stop):
+              * hot_room_fixed: 1 iterations for each of 100 VUs (maxDuration: 3m30s, gracefulStop: 30s)
+
+
+running (0m01.0s), 100/100 VUs, 0 complete and 0 interrupted iterations
+hot_room_fixed   [   0% ] 100 VUs  0m00.9s/3m30s  000/100 iters, 1 per VU
+
+running (0m02.0s), 100/100 VUs, 0 complete and 0 interrupted iterations
+hot_room_fixed   [   0% ] 100 VUs  0m01.9s/3m30s  000/100 iters, 1 per VU
+
+running (0m03.0s), 100/100 VUs, 0 complete and 0 interrupted iterations
+hot_room_fixed   [   0% ] 100 VUs  0m02.9s/3m30s  000/100 iters, 1 per VU
+
+running (0m04.0s), 100/100 VUs, 0 complete and 0 interrupted iterations
+hot_room_fixed   [   0% ] 100 VUs  0m03.9s/3m30s  000/100 iters, 1 per VU
+
+running (0m05.0s), 100/100 VUs, 0 complete and 0 interrupted iterations
+hot_room_fixed   [   0% ] 100 VUs  0m04.9s/3m30s  000/100 iters, 1 per VU
+
+
+  █ THRESHOLDS 
+
+    http_error_rate
+    ✗ 'rate<0.01' rate=100.00%
+
+    ws_connect_duration_ms
+    ✓ 'p(95)<1000' p(95)=0s
+    ✓ 'p(99)<2000' p(99)=0s
+
+    ws_connect_success_rate
+    ✓ 'rate>0.99' rate=0.00%
+
+    ws_message_roundtrip_ms
+    ✓ 'p(50)<200' p(50)=0s
+    ✓ 'p(95)<500' p(95)=0s
+    ✓ 'p(99)<1000' p(99)=0s
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 2       0.393861/s
+    checks_succeeded...: 0.00%   0 out of 2
+    checks_failed......: 100.00% 2 out of 2
+
+    ✗ login status 200
+      ↳  0% — ✓ 0 / ✗ 1
+    ✗ login has token
+      ↳  0% — ✓ 0 / ✗ 1
+
+    CUSTOM
+    http_error_rate...........: 100.00% 1 out of 1
+    rest_login_duration_ms....: avg=68.85ms min=68.85ms med=68.85ms max=68.85ms p(90)=68.85ms p(95)=68.85ms
+
+    HTTP
+    http_req_duration.........: avg=68.85ms min=68.85ms med=68.85ms max=68.85ms p(90)=68.85ms p(95)=68.85ms
+    http_req_failed...........: 100.00% 1 out of 1
+    http_reqs.................: 1       0.19693/s
+
+    EXECUTION
+    iteration_duration........: avg=5s      min=5s      med=5s      max=5s      p(90)=5s      p(95)=5s     
+    iterations................: 100     19.693048/s
+    vus.......................: 100     min=100     max=100
+    vus_max...................: 100     min=100     max=100
+
+    NETWORK
+    data_received.............: 718 B   141 B/s
+    data_sent.................: 232 B   46 B/s
+
+    WEBSOCKET
+    ws_connect_duration_ms....: avg=0s      min=0s      med=0s      max=0s      p(90)=0s      p(95)=0s     
+    ws_connect_success_rate...: 0.00%   0 out of 0
+    ws_message_roundtrip_ms...: avg=0s      min=0s      med=0s      max=0s      p(90)=0s      p(95)=0s     
+
+
+
+
+running (0m05.1s), 000/100 VUs, 100 complete and 0 interrupted iterations
+hot_room_fixed ✓ [ 100% ] 100 VUs  0m05.0s/3m30s  100/100 iters, 1 per VU

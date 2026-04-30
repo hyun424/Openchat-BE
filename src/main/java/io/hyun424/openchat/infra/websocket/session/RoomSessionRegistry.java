@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -27,6 +29,7 @@ public class RoomSessionRegistry {
 
     private final ObjectMapper objectMapper;
     private final ExecutorService broadcastExecutor;
+    private final int broadcastPoolSize;
 
     private final ConcurrentMap<Long, Set<WebSocketSession>> roomSessions =
             new ConcurrentHashMap<>();
@@ -37,16 +40,24 @@ public class RoomSessionRegistry {
 
     private static final int SEND_TIME_LIMIT_MS = 5000;
     private static final int BUFFER_SIZE_LIMIT = 64 * 1024;
-    private static final int BROADCAST_POOL_CORE = 4;
-    private static final int BROADCAST_POOL_MAX = 32;
+    private static final int DEFAULT_BROADCAST_QUEUE_CAPACITY = 4096;
 
     public RoomSessionRegistry(ObjectMapper objectMapper) {
+        this(objectMapper, 0, DEFAULT_BROADCAST_QUEUE_CAPACITY);
+    }
+
+    @Autowired
+    public RoomSessionRegistry(ObjectMapper objectMapper,
+                               @Value("${app.websocket.broadcast.pool-size:0}") int configuredPoolSize,
+                               @Value("${app.websocket.broadcast.queue-capacity:4096}") int queueCapacity) {
         this.objectMapper = objectMapper;
+        this.broadcastPoolSize = resolveBroadcastPoolSize(configuredPoolSize);
+        int boundedQueueCapacity = Math.max(1, queueCapacity);
         AtomicInteger threadCounter = new AtomicInteger(0);
         this.broadcastExecutor = new ThreadPoolExecutor(
-                BROADCAST_POOL_CORE, BROADCAST_POOL_MAX,
+                broadcastPoolSize, broadcastPoolSize,
                 60L, TimeUnit.SECONDS,
-                new LinkedBlockingQueue<>(2048),
+                new LinkedBlockingQueue<>(boundedQueueCapacity),
                 r -> {
                     Thread t = new Thread(r, "ws-broadcast-" + threadCounter.incrementAndGet());
                     t.setDaemon(true);
@@ -54,6 +65,13 @@ public class RoomSessionRegistry {
                 },
                 new ThreadPoolExecutor.CallerRunsPolicy()
         );
+    }
+
+    private int resolveBroadcastPoolSize(int configuredPoolSize) {
+        if (configuredPoolSize > 0) {
+            return configuredPoolSize;
+        }
+        return Math.max(4, Runtime.getRuntime().availableProcessors() * 4);
     }
 
     public boolean isAcceptingConnections() {
@@ -121,7 +139,11 @@ public class RoomSessionRegistry {
         Set<WebSocketSession> deadSessions = ConcurrentHashMap.newKeySet();
         AtomicInteger successCount = new AtomicInteger(0);
 
-        waitAllSends(roomId, sessions, textMessage, deadSessions, successCount);
+        List<WebSocketSession> sessionSnapshot = new ArrayList<>(sessions);
+        if (sessionSnapshot.isEmpty()) {
+            return;
+        }
+        waitAllSends(roomId, sessionSnapshot, textMessage, deadSessions, successCount);
         removeDeadSessions(roomId, deadSessions);
 
         log.debug("[WS BROADCAST] roomId={} messageId={} sent={} dead={}",
@@ -139,17 +161,35 @@ public class RoomSessionRegistry {
     }
 
     private void waitAllSends(Long roomId,
-                              Set<WebSocketSession> sessions,
+                              List<WebSocketSession> sessions,
                               TextMessage textMessage,
                               Set<WebSocketSession> deadSessions,
                               AtomicInteger successCount) {
         List<CompletableFuture<Void>> futures = new ArrayList<>();
-        for (WebSocketSession session : sessions) {
+        int batchSize = calculateBatchSize(sessions.size());
+        for (int start = 0; start < sessions.size(); start += batchSize) {
+            int end = Math.min(start + batchSize, sessions.size());
+            List<WebSocketSession> batch = sessions.subList(start, end);
             futures.add(CompletableFuture.runAsync(
-                    () -> sendToSingleSession(roomId, session, textMessage, deadSessions, successCount),
+                    () -> sendBatch(roomId, batch, textMessage, deadSessions, successCount),
                     broadcastExecutor));
         }
         CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+    }
+
+    private int calculateBatchSize(int sessionCount) {
+        int workerCount = Math.min(broadcastPoolSize, sessionCount);
+        return Math.max(1, (int) Math.ceil((double) sessionCount / workerCount));
+    }
+
+    private void sendBatch(Long roomId,
+                           List<WebSocketSession> sessions,
+                           TextMessage textMessage,
+                           Set<WebSocketSession> deadSessions,
+                           AtomicInteger successCount) {
+        for (WebSocketSession session : sessions) {
+            sendToSingleSession(roomId, session, textMessage, deadSessions, successCount);
+        }
     }
 
     private void sendToSingleSession(Long roomId,

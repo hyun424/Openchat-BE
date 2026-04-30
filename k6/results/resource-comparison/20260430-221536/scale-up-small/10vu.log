@@ -1,0 +1,120 @@
+
+         /\      Grafana   /‾‾/  
+    /\  /  \     |\  __   /  /   
+   /  \/    \    | |/ /  /   ‾‾\ 
+  /          \   |   (  |  (‾)  |
+ / __________ \  |_|\_\  \_____/ 
+
+
+     execution: local
+        script: k6/scenarios/07-hot-room-fixed.js
+        output: -
+
+     scenarios: (100.00%) 1 scenario, 10 max VUs, 2m10s max duration (incl. graceful stop):
+              * hot_room_fixed: 1 iterations for each of 10 VUs (maxDuration: 1m40s, gracefulStop: 30s)
+
+
+running (0m01.0s), 10/10 VUs, 0 complete and 0 interrupted iterations
+hot_room_fixed   [   0% ] 10 VUs  0m00.9s/1m40s  00/10 iters, 1 per VU
+
+running (0m02.0s), 10/10 VUs, 0 complete and 0 interrupted iterations
+hot_room_fixed   [   0% ] 10 VUs  0m01.9s/1m40s  00/10 iters, 1 per VU
+
+running (0m03.0s), 10/10 VUs, 0 complete and 0 interrupted iterations
+hot_room_fixed   [   0% ] 10 VUs  0m02.9s/1m40s  00/10 iters, 1 per VU
+
+running (0m04.0s), 10/10 VUs, 0 complete and 0 interrupted iterations
+hot_room_fixed   [   0% ] 10 VUs  0m03.9s/1m40s  00/10 iters, 1 per VU
+
+running (0m05.0s), 10/10 VUs, 0 complete and 0 interrupted iterations
+hot_room_fixed   [   0% ] 10 VUs  0m04.9s/1m40s  00/10 iters, 1 per VU
+
+running (0m06.0s), 10/10 VUs, 0 complete and 0 interrupted iterations
+hot_room_fixed   [   0% ] 10 VUs  0m05.9s/1m40s  00/10 iters, 1 per VU
+
+running (0m07.0s), 10/10 VUs, 0 complete and 0 interrupted iterations
+hot_room_fixed   [   0% ] 10 VUs  0m06.9s/1m40s  00/10 iters, 1 per VU
+
+running (0m08.0s), 10/10 VUs, 0 complete and 0 interrupted iterations
+hot_room_fixed   [   0% ] 10 VUs  0m07.9s/1m40s  00/10 iters, 1 per VU
+
+running (0m09.0s), 10/10 VUs, 0 complete and 0 interrupted iterations
+hot_room_fixed   [   0% ] 10 VUs  0m08.9s/1m40s  00/10 iters, 1 per VU
+
+running (0m10.0s), 10/10 VUs, 0 complete and 0 interrupted iterations
+hot_room_fixed   [   0% ] 10 VUs  0m09.9s/1m40s  00/10 iters, 1 per VU
+
+
+  █ THRESHOLDS 
+
+    http_error_rate
+    ✓ 'rate<0.01' rate=0.00%
+
+    ws_connect_duration_ms
+    ✓ 'p(95)<1000' p(95)=23.55ms
+    ✓ 'p(99)<2000' p(99)=23.91ms
+
+    ws_connect_success_rate
+    ✓ 'rate>0.99' rate=100.00%
+
+    ws_message_roundtrip_ms
+    ✓ 'p(50)<200' p(50)=24.5ms
+    ✓ 'p(95)<500' p(95)=135.29ms
+    ✓ 'p(99)<1000' p(99)=163.22ms
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 44      4.126677/s
+    checks_succeeded...: 100.00% 44 out of 44
+    checks_failed......: 0.00%   0 out of 44
+
+    ✓ login status 200
+    ✓ login has token
+    ✓ createHotRoom status 2xx
+    ✓ createHotRoom has id
+    ✓ enterRoom ok
+    ✓ ws connected
+
+    CUSTOM
+    hot_room_broadcast_received_total...: 900     84.40931/s
+    hot_room_own_echo_received_total....: 90      8.440931/s
+    hot_room_unique_received_total......: 900     84.40931/s
+    http_error_rate.....................: 0.00%   0 out of 22
+    rest_create_room_duration_ms........: avg=72.34ms  min=72.34ms  med=72.34ms  max=72.34ms  p(90)=72.34ms  p(95)=72.34ms 
+    rest_enter_room_duration_ms.........: avg=257.57ms min=217.36ms med=258.07ms max=296.69ms p(90)=295.94ms p(95)=296.31ms
+    rest_login_duration_ms..............: avg=21.44ms  min=16.73ms  med=17.06ms  max=62.92ms  p(90)=19.34ms  p(95)=41.13ms 
+
+    HTTP
+    http_req_duration...................: avg=131.08ms min=16.73ms  med=67.63ms  max=296.69ms p(90)=295.83ms p(95)=295.85ms
+      { expected_response:true }........: avg=131.08ms min=16.73ms  med=67.63ms  max=296.69ms p(90)=295.83ms p(95)=295.85ms
+    http_req_failed.....................: 0.00%   0 out of 22
+    http_reqs...........................: 22      2.063339/s
+
+    EXECUTION
+    iteration_duration..................: avg=10.49s   min=10.46s   med=10.49s   max=10.52s   p(90)=10.52s   p(95)=10.52s  
+    iterations..........................: 10      0.937881/s
+    vus.................................: 10      min=10       max=10
+    vus_max.............................: 10      min=10       max=10
+
+    NETWORK
+    data_received.......................: 273 kB  26 kB/s
+    data_sent...........................: 20 kB   1.9 kB/s
+
+    WEBSOCKET
+    ws_connect_duration_ms..............: avg=14.7ms   min=6ms      med=14.5ms   max=24ms     p(90)=23.1ms   p(95)=23.55ms 
+    ws_connect_success_rate.............: 100.00% 10 out of 10
+    ws_connecting.......................: avg=14.5ms   min=5.66ms   med=14.39ms  max=23.57ms  p(90)=23.18ms  p(95)=23.38ms 
+    ws_message_roundtrip_ms.............: avg=38.2ms   min=13ms     med=24.5ms   max=165ms    p(90)=98.6ms   p(95)=135.29ms
+    ws_messages_received_total..........: 900     84.40931/s
+    ws_messages_sent_total..............: 90      8.440931/s
+    ws_msgs_received....................: 900     84.40931/s
+    ws_msgs_sent........................: 90      8.440931/s
+    ws_session_duration.................: avg=10.01s   min=10s      med=10.01s   max=10.02s   p(90)=10.02s   p(95)=10.02s  
+    ws_sessions.........................: 10      0.937881/s
+
+
+
+
+running (0m10.7s), 00/10 VUs, 10 complete and 0 interrupted iterations
+hot_room_fixed ✓ [ 100% ] 10 VUs  0m10.5s/1m40s  10/10 iters, 1 per VU

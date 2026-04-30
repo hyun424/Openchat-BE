@@ -11,6 +11,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 		"spring.jpa.database-platform=org.hibernate.dialect.H2Dialect",
 		"spring.jpa.hibernate.ddl-auto=create-drop",
 		"spring.kafka.bootstrap-servers=false",
+		"app.kafka.enabled=false",
 		"app.redis.subscriber.enabled=false"
 })
 class OpenchatApplicationTests {

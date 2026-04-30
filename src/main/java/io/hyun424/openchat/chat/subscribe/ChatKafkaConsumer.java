@@ -23,7 +23,7 @@ import org.springframework.stereotype.Service;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-@ConditionalOnProperty(name = "spring.kafka.bootstrap-servers")
+@ConditionalOnProperty(name = "app.kafka.enabled", havingValue = "true", matchIfMissing = true)
 public class ChatKafkaConsumer {
 
     private final ChatFanoutService fanoutService;

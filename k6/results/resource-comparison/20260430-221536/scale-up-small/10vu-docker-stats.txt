@@ -1,0 +1,5 @@
+CONTAINER ID   NAME                      CPU %     MEM USAGE / LIMIT     MEM %     NET I/O           BLOCK I/O        PIDS
+c726538ea110   openchat-lb-up-small      0.00%     3.801MiB / 256MiB     1.48%     441kB / 441kB     0B / 12.3kB      2
+c188ef1938d4   openchat-app-up-small     1.50%     454.4MiB / 4GiB       11.09%    420kB / 716kB     0B / 32.8kB      98
+411ba347c4dc   openchat-loadtest-redis   2.23%     9.52MiB / 7.653GiB    0.12%     97.4kB / 68.4kB   0B / 0B          6
+b8000463135d   openchat-loadtest-mysql   1.79%     388.8MiB / 7.653GiB   4.96%     278kB / 253kB     3.13MB / 266MB   54
