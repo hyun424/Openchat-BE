@@ -1,0 +1,13 @@
+.git
+.gradle
+build
+out
+.idea
+.vscode
+docs
+k6/results
+*.hprof
+*.rdb
+.env
+.env.*
+.DS_Store

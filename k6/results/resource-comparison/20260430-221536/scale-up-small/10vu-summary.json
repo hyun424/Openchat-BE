@@ -1,0 +1,301 @@
+{
+    "metrics": {
+        "vus_max": {
+            "value": 10,
+            "min": 10,
+            "max": 10
+        },
+        "ws_connect_success_rate": {
+            "passes": 10,
+            "fails": 0,
+            "thresholds": {
+                "rate>0.99": false
+            },
+            "value": 1
+        },
+        "http_req_blocked": {
+            "max": 0.855,
+            "p(90)": 0.3266,
+            "p(95)": 0.32795,
+            "avg": 0.1722272727272727,
+            "min": 0.001,
+            "med": 0.1155
+        },
+        "data_received": {
+            "count": 273150,
+            "rate": 25618.225508099495
+        },
+        "http_error_rate": {
+            "passes": 0,
+            "fails": 22,
+            "thresholds": {
+                "rate<0.01": false
+            },
+            "value": 0
+        },
+        "ws_connect_duration_ms": {
+            "min": 6,
+            "med": 14.5,
+            "max": 24,
+            "p(90)": 23.1,
+            "p(95)": 23.55,
+            "avg": 14.7,
+            "thresholds": {
+                "p(99)<2000": false,
+                "p(95)<1000": false
+            }
+        },
+        "rest_enter_room_duration_ms": {
+            "max": 296.692,
+            "p(90)": 295.9432,
+            "p(95)": 296.3176,
+            "avg": 257.574,
+            "min": 217.36,
+            "med": 258.076
+        },
+        "rest_create_room_duration_ms": {
+            "max": 72.344,
+            "p(90)": 72.344,
+            "p(95)": 72.344,
+            "avg": 72.344,
+            "min": 72.344,
+            "med": 72.344
+        },
+        "ws_connecting": {
+            "p(90)": 23.188057999999998,
+            "p(95)": 23.3825705,
+            "avg": 14.503274999999999,
+            "min": 5.660334,
+            "med": 14.396542,
+            "max": 23.577083
+        },
+        "vus": {
+            "max": 10,
+            "value": 10,
+            "min": 10
+        },
+        "iterations": {
+            "count": 10,
+            "rate": 0.9378812194069008
+        },
+        "ws_messages_sent_total": {
+            "count": 90,
+            "rate": 8.440930974662107
+        },
+        "http_req_waiting": {
+            "min": 16.22,
+            "med": 66.82900000000001,
+            "max": 295.102,
+            "p(90)": 219.369,
+            "p(95)": 219.77009999999999,
+            "avg": 116.58277272727273
+        },
+        "checks": {
+            "fails": 0,
+            "passes": 44,
+            "value": 1
+        },
+        "http_req_failed": {
+            "fails": 22,
+            "passes": 0,
+            "value": 0
+        },
+        "http_reqs": {
+            "rate": 2.0633386826951816,
+            "count": 22
+        },
+        "ws_msgs_sent": {
+            "count": 90,
+            "rate": 8.440930974662107
+        },
+        "hot_room_unique_received_total": {
+            "count": 900,
+            "rate": 84.40930974662108
+        },
+        "ws_messages_received_total": {
+            "count": 900,
+            "rate": 84.40930974662108
+        },
+        "ws_message_roundtrip_ms": {
+            "avg": 38.2,
+            "min": 13,
+            "med": 24.5,
+            "max": 165,
+            "p(90)": 98.60000000000001,
+            "p(95)": 135.2999999999998,
+            "thresholds": {
+                "p(99)<1000": false,
+                "p(50)<200": false,
+                "p(95)<500": false
+            }
+        },
+        "http_req_receiving": {
+            "med": 0.5489999999999999,
+            "max": 77.354,
+            "p(90)": 77.2217,
+            "p(95)": 77.3257,
+            "avg": 14.461045454545456,
+            "min": 0.027
+        },
+        "ws_session_duration": {
+            "med": 10015.2771045,
+            "max": 10024.149833,
+            "p(90)": 10024.1392202,
+            "p(95)": 10024.1445266,
+            "avg": 10015.381549900001,
+            "min": 10006.710959
+        },
+        "iteration_duration": {
+            "avg": 10492.488129300002,
+            "min": 10462.544084,
+            "med": 10492.5373335,
+            "max": 10522.40325,
+            "p(90)": 10522.3758378,
+            "p(95)": 10522.389543899999
+        },
+        "http_req_tls_handshaking": {
+            "p(95)": 0,
+            "avg": 0,
+            "min": 0,
+            "med": 0,
+            "max": 0,
+            "p(90)": 0
+        },
+        "hot_room_own_echo_received_total": {
+            "count": 90,
+            "rate": 8.440930974662107
+        },
+        "hot_room_broadcast_received_total": {
+            "count": 900,
+            "rate": 84.40930974662108
+        },
+        "rest_login_duration_ms": {
+            "max": 62.926,
+            "p(90)": 19.342,
+            "p(95)": 41.13399999999998,
+            "avg": 21.441090909090914,
+            "min": 16.73,
+            "med": 17.069
+        },
+        "ws_sessions": {
+            "count": 10,
+            "rate": 0.9378812194069008
+        },
+        "http_req_duration": {
+            "p(90)": 295.8306,
+            "p(95)": 295.8587,
+            "avg": 131.088,
+            "min": 16.73,
+            "med": 67.63499999999999,
+            "max": 296.692
+        },
+        "http_req_connecting": {
+            "min": 0,
+            "med": 0.101,
+            "max": 0.307,
+            "p(90)": 0.28509999999999996,
+            "p(95)": 0.305,
+            "avg": 0.12868181818181817
+        },
+        "ws_msgs_received": {
+            "count": 900,
+            "rate": 84.40930974662108
+        },
+        "data_sent": {
+            "count": 20340,
+            "rate": 1907.6504002736363
+        },
+        "http_req_duration{expected_response:true}": {
+            "min": 16.73,
+            "med": 67.63499999999999,
+            "max": 296.692,
+            "p(90)": 295.8306,
+            "p(95)": 295.8587,
+            "avg": 131.088
+        },
+        "http_req_sending": {
+            "max": 0.364,
+            "p(90)": 0.061900000000000004,
+            "p(95)": 0.1712999999999999,
+            "avg": 0.04418181818181819,
+            "min": 0.005,
+            "med": 0.0165
+        }
+    },
+    "setup_data": {
+        "roomId": 1
+    },
+    "root_group": {
+        "name": "",
+        "path": "",
+        "id": "d41d8cd98f00b204e9800998ecf8427e",
+        "groups": {
+            "setup": {
+                "name": "setup",
+                "path": "::setup",
+                "id": "5c0f8025f7e0b6654089e5b00e950f1a",
+                "groups": {},
+                "checks": {
+                        "login status 200": {
+                            "id": "17a4a3f3d5dbad586fefc48e40f4a9ab",
+                            "passes": 1,
+                            "fails": 0,
+                            "name": "login status 200",
+                            "path": "::setup::login status 200"
+                        },
+                        "login has token": {
+                            "name": "login has token",
+                            "path": "::setup::login has token",
+                            "id": "2a64ccc0036069b6bf05082925ff90b6",
+                            "passes": 1,
+                            "fails": 0
+                        },
+                        "createHotRoom status 2xx": {
+                            "name": "createHotRoom status 2xx",
+                            "path": "::setup::createHotRoom status 2xx",
+                            "id": "10c9b790bc1e8fa1eb683cf21d6b0eb4",
+                            "passes": 1,
+                            "fails": 0
+                        },
+                        "createHotRoom has id": {
+                            "path": "::setup::createHotRoom has id",
+                            "id": "0cbb72f67146f8c18e781a2c35f5d779",
+                            "passes": 1,
+                            "fails": 0,
+                            "name": "createHotRoom has id"
+                        }
+                    }
+            }
+        },
+        "checks": {
+            "login status 200": {
+                "fails": 0,
+                "name": "login status 200",
+                "path": "::login status 200",
+                "id": "a9f04e9f501317c68a9f824e04811bea",
+                "passes": 10
+            },
+            "login has token": {
+                "name": "login has token",
+                "path": "::login has token",
+                "id": "76fad3378234b1d9b3859991679a6c46",
+                "passes": 10,
+                "fails": 0
+            },
+            "enterRoom ok": {
+                "name": "enterRoom ok",
+                "path": "::enterRoom ok",
+                "id": "0c68510a8624a8ea9c336c8dbe0c5220",
+                "passes": 10,
+                "fails": 0
+            },
+            "ws connected": {
+                "name": "ws connected",
+                "path": "::ws connected",
+                "id": "b890c791400ee254856ecce8133edded",
+                "passes": 10,
+                "fails": 0
+            }
+        }
+    }
+}

@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # ── InfluxDB: k6 결과 저장소 ──
   influxdb:
@@ -53,7 +51,7 @@ services:
     ports:
       - "9104:9104"
     environment:
-      DATA_SOURCE_NAME: "openchat:openchat@(host.docker.internal:3306)/openchat"
+      DATA_SOURCE_NAME: "openchat:openchat@(openchat-loadtest-mysql:3306)/openchat"
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -64,7 +62,7 @@ services:
     ports:
       - "9121:9121"
     environment:
-      REDIS_ADDR: "host.docker.internal:6379"
+      REDIS_ADDR: "redis://openchat-loadtest-redis:6379"
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -82,7 +80,7 @@ services:
 
 networks:
   default:
-    name: openchat-network
+    name: openchat-loadtest-network
     external: true
 
 volumes:

@@ -27,9 +27,7 @@ public class ChatRedisSubscriber {
             ChatMessageDto message =
                     redisObjectMapper.readValue(messageJson, ChatMessageDto.class);
 
-            Long roomId = extractRoomId(channel);
-
-            log.info("[Redis SUBSCRIBE] channel={} messageId={}",
+            log.debug("[Redis SUBSCRIBE] channel={} messageId={}",
                     channel, message.getMessageId());
 
             chatFanoutService.fanout(message);
@@ -39,7 +37,4 @@ public class ChatRedisSubscriber {
         }
     }
 
-    private Long extractRoomId(String channel) {
-        return Long.parseLong(channel.split(":")[2]);
-    }
 }

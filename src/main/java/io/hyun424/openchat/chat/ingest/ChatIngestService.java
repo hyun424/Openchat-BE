@@ -102,7 +102,7 @@ public class ChatIngestService {
         String messageId = UUID.randomUUID().toString();
         long createdAt = System.currentTimeMillis();
 
-        log.info("[INGEST START][{}] roomId={} senderId={} clientMessageId={}",
+        log.debug("[INGEST START][{}] roomId={} senderId={} clientMessageId={}",
                 instanceId, roomId, senderId, clientMessageId);
 
         Message saved = saveMessageFirst(
@@ -114,7 +114,7 @@ public class ChatIngestService {
         publishOrBuffer(dto, roomId, messageId);
         updateHotChatBucket(roomId, messageId);
 
-        log.info("[INGEST DONE][{}] roomId={} messageId={} latency={}ms",
+        log.debug("[INGEST DONE][{}] roomId={} messageId={} latency={}ms",
                 instanceId, roomId, messageId, System.currentTimeMillis() - createdAt);
     }
 
@@ -190,7 +190,7 @@ public class ChatIngestService {
     private void publishOrBuffer(ChatMessageDto dto, Long roomId, String messageId) {
         try {
             publisher.publish(dto);
-            log.info("[PUBLISH OK][{}] roomId={} messageId={}", instanceId, roomId, messageId);
+            log.debug("[PUBLISH OK][{}] roomId={} messageId={}", instanceId, roomId, messageId);
         } catch (Exception e) {
             log.error("[PUBLISH FAIL][{}] roomId={} messageId={} - enqueuing for retry",
                     instanceId, roomId, messageId, e);

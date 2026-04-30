@@ -16,7 +16,7 @@ import org.springframework.stereotype.Service;
  */
 @Slf4j
 @Service
-@ConditionalOnProperty(name = "spring.kafka.bootstrap-servers")
+@ConditionalOnProperty(name = "app.kafka.enabled", havingValue = "true", matchIfMissing = true)
 public class ChatCompositePublisher implements ChatMessagePublisher {
 
     private static final String KAFKA_TOPIC = "chat-message";

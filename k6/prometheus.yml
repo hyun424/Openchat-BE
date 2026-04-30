@@ -4,11 +4,28 @@ global:
 
 scrape_configs:
   # Spring Boot Actuator (Prometheus endpoint)
-  - job_name: 'openchat-app'
+  - job_name: 'openchat-app-lb'
     metrics_path: '/actuator/prometheus'
     scrape_interval: 5s
     static_configs:
       - targets: ['host.docker.internal:8080']
+        labels:
+          application: 'openchat'
+          instance: 'lb-entrypoint'
+
+  # Spring Boot Actuator per load-test app container.
+  # Some targets are absent depending on the active compose profile.
+  - job_name: 'openchat-app-containers'
+    metrics_path: '/actuator/prometheus'
+    scrape_interval: 5s
+    static_configs:
+      - targets:
+          - 'openchat-app-up-small:8080'
+          - 'openchat-app-out-small-1:8080'
+          - 'openchat-app-out-small-2:8080'
+          - 'openchat-app-up-large:8080'
+          - 'openchat-app-out-large-1:8080'
+          - 'openchat-app-out-large-2:8080'
         labels:
           application: 'openchat'
 
