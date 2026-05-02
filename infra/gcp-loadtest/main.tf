@@ -332,12 +332,13 @@ resource "google_compute_instance" "app" {
 
   metadata = {
     startup-script = templatefile("${path.module}/templates/app-startup.sh.tftpl", {
-      bucket_name   = google_storage_bucket.results.name
-      source_object = google_storage_bucket_object.source.name
-      run_id        = var.run_id
-      app_index     = count.index + 1
-      mysql_ip      = google_compute_instance.mysql.network_interface[0].network_ip
-      redis_ip      = google_compute_instance.redis.network_interface[0].network_ip
+      bucket_name               = google_storage_bucket.results.name
+      source_object             = google_storage_bucket_object.source.name
+      run_id                    = var.run_id
+      app_index                 = count.index + 1
+      mysql_ip                  = google_compute_instance.mysql.network_interface[0].network_ip
+      redis_ip                  = google_compute_instance.redis.network_interface[0].network_ip
+      websocket_broadcast_lanes = var.websocket_broadcast_lanes
     })
     shutdown-script = templatefile("${path.module}/templates/vm-shutdown.sh.tftpl", {
       run_id      = var.run_id

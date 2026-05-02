@@ -56,6 +56,17 @@ variable "connect_ramp_seconds" {
   default     = 60
 }
 
+variable "websocket_broadcast_lanes" {
+  description = "Number of WebSocket broadcast lane workers per app VM."
+  type        = number
+  default     = 8
+
+  validation {
+    condition     = var.websocket_broadcast_lanes >= 1
+    error_message = "websocket_broadcast_lanes must be at least 1."
+  }
+}
+
 variable "scenario" {
   description = "k6 scenario path inside the source archive."
   type        = string
