@@ -1,6 +1,8 @@
 package io.hyun424.openchat.chat.fanout;
 
 import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
+import io.hyun424.openchat.infra.metrics.ChatPipelineMetrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -10,8 +12,10 @@ import static org.mockito.Mockito.*;
 class ChatFanoutServiceTest {
 
     private final ChatOutboundSender outboundSender = mock(ChatOutboundSender.class);
+    private final ChatPipelineMetrics chatPipelineMetrics =
+            new ChatPipelineMetrics(new SimpleMeterRegistry());
     private final ChatFanoutService fanoutService =
-            new ChatFanoutService(outboundSender);
+            new ChatFanoutService(outboundSender, chatPipelineMetrics);
 
     @AfterEach
     void tearDown() {
@@ -33,7 +37,8 @@ class ChatFanoutServiceTest {
     @DisplayName("서로 다른 인스턴스는 같은 messageId라도 각자 local 세션에 전송한다")
     void fanout_sameMessageIdDifferentInstances_eachSendsLocally() {
         ChatOutboundSender anotherOutboundSender = mock(ChatOutboundSender.class);
-        ChatFanoutService anotherFanoutService = new ChatFanoutService(anotherOutboundSender);
+        ChatFanoutService anotherFanoutService =
+                new ChatFanoutService(anotherOutboundSender, chatPipelineMetrics);
         ChatMessageDto message = message("message-2");
 
         fanoutService.fanout(message);

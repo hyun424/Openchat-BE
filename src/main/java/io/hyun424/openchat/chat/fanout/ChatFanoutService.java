@@ -1,6 +1,7 @@
 package io.hyun424.openchat.chat.fanout;
 
 import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
+import io.hyun424.openchat.infra.metrics.ChatPipelineMetrics;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -17,6 +18,7 @@ public class ChatFanoutService {
 
     private final ChatOutboundSender outboundSender;
     private final ScheduledExecutorService cleanerExecutor;
+    private final ChatPipelineMetrics chatPipelineMetrics;
 
     @Value("${app.instance-id:local}")
     private String instanceId;
@@ -24,8 +26,10 @@ public class ChatFanoutService {
     private final ConcurrentHashMap<String, Long> dedupeCache = new ConcurrentHashMap<>();
     private static final long DEDUPE_TTL_MS = 60_000;
 
-    public ChatFanoutService(ChatOutboundSender outboundSender) {
+    public ChatFanoutService(ChatOutboundSender outboundSender,
+                             ChatPipelineMetrics chatPipelineMetrics) {
         this.outboundSender = outboundSender;
+        this.chatPipelineMetrics = chatPipelineMetrics;
         this.cleanerExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "dedupe-cleaner");
             t.setDaemon(true);
@@ -42,11 +46,16 @@ public class ChatFanoutService {
         String messageId = message.getMessageId();
 
         if (hasProcessedLocally(messageId)) {
+            chatPipelineMetrics.incrementCounter("openchat_fanout_dedupe_skip_total");
             log.debug("[DEDUPE][{}] messageId={} - already processed", instanceId, messageId);
             return;
         }
 
+        chatPipelineMetrics.recordSinceCreated("fanout.enter.since_created", message);
+        chatPipelineMetrics.recordSinceCreated("fanout.before_outbound.since_created", message);
+        long startNanos = System.nanoTime();
         outboundSender.send(message);
+        chatPipelineMetrics.recordStageNanos("fanout.total", System.nanoTime() - startNanos);
 
         log.debug("[FANOUT][{}] roomId={} messageId={}",
                 instanceId, message.getRoomId(), message.getMessageId());

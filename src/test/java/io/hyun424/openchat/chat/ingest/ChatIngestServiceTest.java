@@ -4,7 +4,8 @@ import io.hyun424.openchat.chat.message.entity.Message;
 import io.hyun424.openchat.chat.message.service.MessageService;
 import io.hyun424.openchat.chat.publish.ChatMessagePublisher;
 import io.hyun424.openchat.chat.publish.PublishRetryBuffer;
-import io.hyun424.openchat.chat.room.service.RoomService;
+import io.hyun424.openchat.chat.room.service.RoomLastMessageUpdateBuffer;
+import io.hyun424.openchat.infra.metrics.ChatPipelineMetrics;
 import io.hyun424.openchat.infra.redis.health.RedisHealthState;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -27,8 +28,9 @@ class ChatIngestServiceTest {
     @Mock private PublishRetryBuffer retryBuffer;
     @Mock private StringRedisTemplate redisTemplate;
     @Mock private MessageService messageService;
-    @Mock private RoomService roomService;
+    @Mock private RoomLastMessageUpdateBuffer roomLastMessageUpdateBuffer;
     @Mock private RedisHealthState redisHealthState;
+    @Mock private ChatPipelineMetrics chatPipelineMetrics;
     @Mock private ZSetOperations<String, String> zSetOps;
 
     @InjectMocks
@@ -75,7 +77,7 @@ class ChatIngestServiceTest {
         verify(messageService).save(eq(ROOM_ID), eq(SENDER_ID), eq(NICKNAME), eq(CONTENT),
                 eq(CLIENT_MSG_ID), anyString(), anyLong());
         verify(publisher).publish(any());
-        verify(roomService).updateLastMessage(eq(ROOM_ID), anyLong(), eq(CONTENT), eq(NICKNAME));
+        verify(roomLastMessageUpdateBuffer).enqueue(eq(ROOM_ID), anyLong(), eq(CONTENT), eq(NICKNAME));
     }
 
     @Test
@@ -101,6 +103,7 @@ class ChatIngestServiceTest {
         // then
         verify(messageService, never()).save(any(), any(), any(), any(), any(), any(), anyLong());
         verify(publisher, never()).publish(any());
+        verify(roomLastMessageUpdateBuffer, never()).enqueue(any(), any(), any(), any());
     }
 
     @Test
@@ -118,6 +121,7 @@ class ChatIngestServiceTest {
                 chatIngestService.ingest(ROOM_ID, SENDER_ID, NICKNAME, CONTENT, CLIENT_MSG_ID));
 
         verify(publisher, never()).publish(any());
+        verify(roomLastMessageUpdateBuffer, never()).enqueue(any(), any(), any(), any());
     }
 
     @Test
@@ -148,7 +152,7 @@ class ChatIngestServiceTest {
 
         // then
         verify(retryBuffer).enqueue(any());
-        verify(roomService).updateLastMessage(eq(ROOM_ID), anyLong(), eq(CONTENT), eq(NICKNAME));
+        verify(roomLastMessageUpdateBuffer).enqueue(eq(ROOM_ID), anyLong(), eq(CONTENT), eq(NICKNAME));
     }
 
     @Test
@@ -178,6 +182,6 @@ class ChatIngestServiceTest {
         // then
         verify(publisher).publish(any());
         verify(retryBuffer, never()).enqueue(any());
-        verify(roomService).updateLastMessage(eq(ROOM_ID), anyLong(), eq(CONTENT), eq(NICKNAME));
+        verify(roomLastMessageUpdateBuffer).enqueue(eq(ROOM_ID), anyLong(), eq(CONTENT), eq(NICKNAME));
     }
 }

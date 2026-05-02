@@ -1,6 +1,8 @@
 package io.hyun424.openchat.infra.websocket.session;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.hyun424.openchat.infra.metrics.ChatPipelineMetrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.socket.WebSocketSession;
@@ -17,7 +19,9 @@ class RoomSessionRegistryTest {
     @Test
     @DisplayName("원본 세션으로 제거해도 decorator로 저장된 세션이 정리된다")
     void remove_originalSession_removesDecoratedSession() {
-        RoomSessionRegistry registry = new RoomSessionRegistry(new ObjectMapper());
+        RoomSessionRegistry registry = new RoomSessionRegistry(
+                new ObjectMapper(),
+                new ChatPipelineMetrics(new SimpleMeterRegistry()));
         WebSocketSession session = mockSession("session-1");
 
         registry.add(1L, session);

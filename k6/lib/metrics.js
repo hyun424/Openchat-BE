@@ -4,6 +4,8 @@ import { Trend, Rate, Counter } from 'k6/metrics';
 export const wsConnectDuration = new Trend('ws_connect_duration_ms', true);
 export const wsMessageRoundtrip = new Trend('ws_message_roundtrip_ms', true);
 export const wsConnectSuccess = new Rate('ws_connect_success_rate');
+export const wsConnectFailure = new Rate('ws_connect_failure_rate');
+export const wsConnectFailures = new Counter('ws_connect_failures_total');
 export const wsMsgSent = new Counter('ws_messages_sent_total');
 export const wsMsgReceived = new Counter('ws_messages_received_total');
 

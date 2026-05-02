@@ -2,6 +2,7 @@ package io.hyun424.openchat.infra.websocket.session;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
+import io.hyun424.openchat.infra.metrics.ChatPipelineMetrics;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -26,7 +27,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class RoomSessionRegistry {
 
     private final ObjectMapper objectMapper;
-    private final ExecutorService broadcastExecutor;
+    private final ThreadPoolExecutor broadcastExecutor;
+    private final ChatPipelineMetrics chatPipelineMetrics;
 
     private final ConcurrentMap<Long, Set<WebSocketSession>> roomSessions =
             new ConcurrentHashMap<>();
@@ -40,8 +42,10 @@ public class RoomSessionRegistry {
     private static final int BROADCAST_POOL_CORE = 4;
     private static final int BROADCAST_POOL_MAX = 32;
 
-    public RoomSessionRegistry(ObjectMapper objectMapper) {
+    public RoomSessionRegistry(ObjectMapper objectMapper,
+                               ChatPipelineMetrics chatPipelineMetrics) {
         this.objectMapper = objectMapper;
+        this.chatPipelineMetrics = chatPipelineMetrics;
         AtomicInteger threadCounter = new AtomicInteger(0);
         this.broadcastExecutor = new ThreadPoolExecutor(
                 BROADCAST_POOL_CORE, BROADCAST_POOL_MAX,
@@ -54,6 +58,7 @@ public class RoomSessionRegistry {
                 },
                 new ThreadPoolExecutor.CallerRunsPolicy()
         );
+        chatPipelineMetrics.bindBroadcastExecutor(broadcastExecutor);
     }
 
     public boolean isAcceptingConnections() {
@@ -113,6 +118,10 @@ public class RoomSessionRegistry {
             return;
         }
 
+        chatPipelineMetrics.recordSinceCreated("ws.broadcast.enter.since_created", message);
+        chatPipelineMetrics.recordSummary("openchat_ws_broadcast_sessions", sessions.size());
+        recordBroadcastExecutorSnapshot("before");
+        long broadcastStartNanos = System.nanoTime();
         TextMessage textMessage = serializeMessage(roomId, message);
         if (textMessage == null) {
             return;
@@ -123,15 +132,20 @@ public class RoomSessionRegistry {
 
         waitAllSends(roomId, sessions, textMessage, deadSessions, successCount);
         removeDeadSessions(roomId, deadSessions);
+        chatPipelineMetrics.recordStageNanos("ws.broadcast.total", System.nanoTime() - broadcastStartNanos);
 
         log.debug("[WS BROADCAST] roomId={} messageId={} sent={} dead={}",
                 roomId, message.getMessageId(), successCount.get(), deadSessions.size());
     }
 
     private TextMessage serializeMessage(Long roomId, ChatMessageDto message) {
+        long startNanos = System.nanoTime();
         try {
-            return new TextMessage(objectMapper.writeValueAsString(message));
+            TextMessage textMessage = new TextMessage(objectMapper.writeValueAsString(message));
+            chatPipelineMetrics.recordStageNanos("ws.serialize", System.nanoTime() - startNanos);
+            return textMessage;
         } catch (Exception e) {
+            chatPipelineMetrics.recordStageNanos("ws.serialize.fail", System.nanoTime() - startNanos);
             log.error("[WS SERIALIZE FAIL] roomId={} messageId={}",
                     roomId, message.getMessageId(), e);
             return null;
@@ -149,7 +163,21 @@ public class RoomSessionRegistry {
                     () -> sendToSingleSession(roomId, session, textMessage, deadSessions, successCount),
                     broadcastExecutor));
         }
+        recordBroadcastExecutorSnapshot("after_schedule");
         CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+        recordBroadcastExecutorSnapshot("after_complete");
+    }
+
+    private void recordBroadcastExecutorSnapshot(String phase) {
+        chatPipelineMetrics.recordSummary(
+                "openchat_ws_broadcast_executor_queue_" + phase,
+                broadcastExecutor.getQueue().size());
+        chatPipelineMetrics.recordSummary(
+                "openchat_ws_broadcast_executor_active_" + phase,
+                broadcastExecutor.getActiveCount());
+        chatPipelineMetrics.recordSummary(
+                "openchat_ws_broadcast_executor_pool_" + phase,
+                broadcastExecutor.getPoolSize());
     }
 
     private void sendToSingleSession(Long roomId,

@@ -50,3 +50,14 @@ out/
 
 ### Personal ###
 자소서_참고자료.md
+
+### Terraform ###
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+terraform.tfvars.json
+*.tfplan
+
+### Load test results ###
+k6/results/

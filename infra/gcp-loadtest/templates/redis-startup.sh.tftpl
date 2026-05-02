@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+RUN_ID="${run_id}"
+BUCKET_NAME="${bucket_name}"
+LOG_DIR="/var/log/openchat-loadtest"
+
+mkdir -p "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/redis-startup.log") 2>&1
+
+echo "[redis] startup begin run_id=$RUN_ID bucket=$BUCKET_NAME"
+
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y docker.io curl jq gnupg ca-certificates iproute2
+systemctl enable --now docker
+
+if ! command -v gcloud >/dev/null 2>&1; then
+  curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+    | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+  echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
+    > /etc/apt/sources.list.d/google-cloud-sdk.list
+  apt-get update
+  apt-get install -y google-cloud-cli
+fi
+
+docker rm -f openchat-redis >/dev/null 2>&1 || true
+docker run -d \
+  --name openchat-redis \
+  --restart unless-stopped \
+  -p 6379:6379 \
+  redis:7-alpine \
+  redis-server --save "" --appendonly no
+
+echo "[redis] waiting for ping"
+for attempt in $(seq 1 60); do
+  if docker exec openchat-redis redis-cli ping | grep -q PONG; then
+    echo "[redis] healthy"
+    exit 0
+  fi
+  if [ "$attempt" -eq 60 ]; then
+    echo "[redis] did not become healthy" >&2
+    docker logs openchat-redis > "$LOG_DIR/openchat-redis-failed.log" 2>&1 || true
+    exit 1
+  fi
+  sleep 2
+done
