@@ -1,0 +1,180 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_ID="${project_id}"
+ZONE="${zone}"
+LB_VM_NAME="${lb_vm_name}"
+MYSQL_VM_NAME="${mysql_vm_name}"
+REDIS_VM_NAME="${redis_vm_name}"
+APP_VM_NAMES="${app_vm_names}"
+K6_VM_NAME="${k6_vm_name}"
+LB_INTERNAL_IP="${lb_internal_ip}"
+APP_INTERNAL_IPS="${app_internal_ips}"
+BUCKET_NAME="${bucket_name}"
+SOURCE_OBJECT="${source_object}"
+RUN_ID="${run_id}"
+PROFILE="${profile}"
+VUS_LIST="${vus_list}"
+CHAT_DURATION_SECONDS="${chat_duration_seconds}"
+SEND_INTERVAL_MS="${send_interval_ms}"
+CONNECT_RAMP_SECONDS="${connect_ramp_seconds}"
+SCENARIO="${scenario}"
+
+WORKDIR="/opt/openchat"
+RESULT_ROOT="/opt/openchat-results"
+LOG_DIR="/var/log/openchat-loadtest"
+BASE_URL="http://$LB_INTERNAL_IP:8080"
+WS_BASE_URL="ws://$LB_INTERNAL_IP:8080"
+
+mkdir -p "$LOG_DIR" "$RESULT_ROOT/k6/$PROFILE" "$RESULT_ROOT/metrics"
+exec > >(tee -a "$LOG_DIR/k6-startup.log") 2>&1
+
+apply_socket_tuning() {
+  ulimit -n 1048576 || ulimit -n 65535 || true
+  sysctl -w net.core.somaxconn=65535 || true
+  sysctl -w net.ipv4.tcp_max_syn_backlog=65535 || true
+  sysctl -w net.core.netdev_max_backlog=250000 || true
+  sysctl -w net.ipv4.tcp_fin_timeout=15 || true
+  sysctl -w net.ipv4.ip_local_port_range="1024 65535" || true
+  sysctl -w net.ipv4.tcp_tw_reuse=1 || true
+}
+
+collect_socket_snapshot() {
+  local name="$1"
+  {
+    echo "timestamp=$(date -Iseconds)"
+    echo "ulimit_n=$(ulimit -n)"
+    sysctl net.core.somaxconn net.ipv4.tcp_max_syn_backlog net.core.netdev_max_backlog \
+      net.ipv4.tcp_fin_timeout net.ipv4.ip_local_port_range net.ipv4.tcp_tw_reuse 2>/dev/null || true
+    echo
+    ss -s || true
+    echo
+    ss -tan state established | head -n 2000 || true
+    echo
+    ss -tan state syn-recv | head -n 2000 || true
+  } > "$RESULT_ROOT/metrics/$name.txt" 2>&1
+}
+
+cleanup() {
+  local exit_code=$?
+  echo "[k6] cleanup begin exit_code=$exit_code"
+
+  curl --max-time 10 -sf "$BASE_URL/actuator/health" > "$RESULT_ROOT/metrics/lb-health-after.json" || true
+  curl --max-time 10 -sf "$BASE_URL/actuator/prometheus" > "$RESULT_ROOT/metrics/lb-prometheus-after.txt" || true
+  collect_socket_snapshot "k6-socket-after"
+
+  app_index=1
+  for app_ip in $APP_INTERNAL_IPS; do
+    curl --max-time 10 -sf "http://$app_ip:8080/actuator/health" > "$RESULT_ROOT/metrics/app-$${app_index}-health-after.json" || true
+    curl --max-time 10 -sf "http://$app_ip:8080/actuator/prometheus" > "$RESULT_ROOT/metrics/app-$${app_index}-prometheus-after.txt" || true
+    app_index=$((app_index + 1))
+  done
+
+  gcloud storage rsync -r "$RESULT_ROOT" "gs://$BUCKET_NAME/runs/$RUN_ID" || true
+  gcloud storage cp --recursive "$LOG_DIR" "gs://$BUCKET_NAME/runs/$RUN_ID/logs/k6-vm/" || true
+
+  for vm in $LB_VM_NAME $APP_VM_NAMES $MYSQL_VM_NAME $REDIS_VM_NAME; do
+    if [ -n "$vm" ]; then
+      echo "[k6] deleting vm $vm"
+      gcloud compute instances delete "$vm" --project "$PROJECT_ID" --zone "$ZONE" --quiet || true
+    fi
+  done
+
+  echo "[k6] scheduling self delete $K6_VM_NAME"
+  (sleep 5; gcloud compute instances delete "$K6_VM_NAME" --project "$PROJECT_ID" --zone "$ZONE" --quiet) >/tmp/openchat-self-delete.log 2>&1 &
+
+  exit "$exit_code"
+}
+trap cleanup EXIT
+
+echo "[k6] startup begin run_id=$RUN_ID profile=$PROFILE vus_list=$VUS_LIST base=$BASE_URL connect_ramp_seconds=$CONNECT_RAMP_SECONDS"
+apply_socket_tuning
+collect_socket_snapshot "k6-socket-before"
+
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y unzip curl jq gnupg ca-certificates iproute2
+
+if ! command -v gcloud >/dev/null 2>&1; then
+  curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+    | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+  echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
+    > /etc/apt/sources.list.d/google-cloud-sdk.list
+fi
+
+curl -fsSL https://dl.k6.io/key.gpg | gpg --dearmor -o /usr/share/keyrings/k6-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
+  > /etc/apt/sources.list.d/k6.list
+apt-get update
+apt-get install -y k6 google-cloud-cli iproute2
+
+rm -rf "$WORKDIR"
+mkdir -p "$WORKDIR"
+for attempt in $(seq 1 30); do
+  if gcloud storage cp "gs://$BUCKET_NAME/$SOURCE_OBJECT" /tmp/openchat-source.zip; then
+    break
+  fi
+  if [ "$attempt" -eq 30 ]; then
+    echo "[k6] failed to download source archive" >&2
+    exit 1
+  fi
+  sleep 5
+done
+unzip -q /tmp/openchat-source.zip -d "$WORKDIR"
+cd "$WORKDIR"
+
+echo "[k6] waiting for lb health at $BASE_URL"
+for attempt in $(seq 1 240); do
+  if curl --max-time 3 -sf "$BASE_URL/actuator/health" >/dev/null; then
+    echo "[k6] lb healthy"
+    break
+  fi
+  if [ "$attempt" -eq 240 ]; then
+    echo "[k6] lb did not become healthy" >&2
+    exit 1
+  fi
+  sleep 2
+done
+
+for vus in $VUS_LIST; do
+  label="$PROFILE-$${vus}vu"
+  output_dir="$RESULT_ROOT/k6/$PROFILE"
+  echo "[k6] running $label"
+
+  set +e
+  k6 run \
+    --summary-export "$output_dir/$${vus}vu-summary.json" \
+    -e BASE_URL="$BASE_URL" \
+    -e WS_BASE_URL="$WS_BASE_URL" \
+    -e TARGET_VUS="$vus" \
+    -e TEST_LABEL="$label" \
+    -e SEND_INTERVAL_MS="$SEND_INTERVAL_MS" \
+    -e CHAT_DURATION_SECONDS="$CHAT_DURATION_SECONDS" \
+    -e CONNECT_RAMP_SECONDS="$CONNECT_RAMP_SECONDS" \
+    "$SCENARIO" 2>&1 | tee "$output_dir/$${vus}vu.log"
+  k6_status=$${PIPESTATUS[0]}
+  set -e
+
+  echo "$k6_status" > "$output_dir/$${vus}vu-exit-code.txt"
+  echo "[k6] finished $label exit_code=$k6_status"
+done
+
+cat > "$RESULT_ROOT/run-metadata.json" <<EOF
+{
+  "runId": "$RUN_ID",
+  "profile": "$PROFILE",
+  "vusList": "$VUS_LIST",
+  "chatDurationSeconds": $CHAT_DURATION_SECONDS,
+  "sendIntervalMs": $SEND_INTERVAL_MS,
+  "connectRampSeconds": $CONNECT_RAMP_SECONDS,
+  "baseUrl": "$BASE_URL",
+  "wsBaseUrl": "$WS_BASE_URL",
+  "lbVmName": "$LB_VM_NAME",
+  "appVmNames": "$APP_VM_NAMES",
+  "mysqlVmName": "$MYSQL_VM_NAME",
+  "redisVmName": "$REDIS_VM_NAME",
+  "k6VmName": "$K6_VM_NAME"
+}
+EOF
+
+echo "[k6] completed"

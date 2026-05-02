@@ -2,6 +2,7 @@ package io.hyun424.openchat.infra.websocket.session;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
+import io.hyun424.openchat.chat.room.hot.RoomTrafficMonitor;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,6 +29,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class RoomSessionRegistry {
 
     private final ObjectMapper objectMapper;
+    private final RoomTrafficMonitor roomTrafficMonitor;
     private final ExecutorService broadcastExecutor;
     private final int broadcastPoolSize;
 
@@ -43,14 +45,22 @@ public class RoomSessionRegistry {
     private static final int DEFAULT_BROADCAST_QUEUE_CAPACITY = 4096;
 
     public RoomSessionRegistry(ObjectMapper objectMapper) {
-        this(objectMapper, 0, DEFAULT_BROADCAST_QUEUE_CAPACITY);
+        this(objectMapper, new RoomTrafficMonitor(), 0, DEFAULT_BROADCAST_QUEUE_CAPACITY);
+    }
+
+    public RoomSessionRegistry(ObjectMapper objectMapper,
+                               int configuredPoolSize,
+                               int queueCapacity) {
+        this(objectMapper, new RoomTrafficMonitor(), configuredPoolSize, queueCapacity);
     }
 
     @Autowired
     public RoomSessionRegistry(ObjectMapper objectMapper,
+                               RoomTrafficMonitor roomTrafficMonitor,
                                @Value("${app.websocket.broadcast.pool-size:0}") int configuredPoolSize,
                                @Value("${app.websocket.broadcast.queue-capacity:4096}") int queueCapacity) {
         this.objectMapper = objectMapper;
+        this.roomTrafficMonitor = roomTrafficMonitor;
         this.broadcastPoolSize = resolveBroadcastPoolSize(configuredPoolSize);
         int boundedQueueCapacity = Math.max(1, queueCapacity);
         AtomicInteger threadCounter = new AtomicInteger(0);
@@ -98,6 +108,7 @@ public class RoomSessionRegistry {
         roomSessions
                 .computeIfAbsent(roomId, k -> ConcurrentHashMap.newKeySet())
                 .add(decorated);
+        roomTrafficMonitor.recordJoin(roomId, count(roomId));
     }
 
     public void remove(Long roomId, WebSocketSession session) {
@@ -108,6 +119,7 @@ public class RoomSessionRegistry {
             if (set.isEmpty()) {
                 roomSessions.remove(roomId);
             }
+            roomTrafficMonitor.recordLeave(roomId, count(roomId));
         }
     }
 
@@ -142,6 +154,11 @@ public class RoomSessionRegistry {
         List<WebSocketSession> sessionSnapshot = new ArrayList<>(sessions);
         if (sessionSnapshot.isEmpty()) {
             return;
+        }
+        roomTrafficMonitor.recordOutboundFanout(roomId, sessionSnapshot.size());
+        Long createdAt = message.getCreatedAt();
+        if (createdAt != null) {
+            roomTrafficMonitor.recordDeliveryLag(roomId, createdAt);
         }
         waitAllSends(roomId, sessionSnapshot, textMessage, deadSessions, successCount);
         removeDeadSessions(roomId, deadSessions);
@@ -233,6 +250,7 @@ public class RoomSessionRegistry {
                 closedCount++;
             }
         }
+        roomTrafficMonitor.recordLeave(roomId, 0);
 
         log.info("[WS CLOSE ALL] roomId={} closed {} sessions", roomId, closedCount);
     }
@@ -243,12 +261,14 @@ public class RoomSessionRegistry {
     public void closeAllSessions() {
         int totalClosed = 0;
         for (Map.Entry<Long, Set<WebSocketSession>> entry : roomSessions.entrySet()) {
+            Long roomId = entry.getKey();
             Set<WebSocketSession> sessions = entry.getValue();
             for (WebSocketSession session : sessions) {
                 if (closeSession(session, new CloseStatus(1001, "Server shutting down"), "[WS SHUTDOWN CLOSE FAIL]")) {
                     totalClosed++;
                 }
             }
+            roomTrafficMonitor.recordLeave(roomId, 0);
         }
         roomSessions.clear();
         sessionsById.clear();

@@ -2,6 +2,7 @@ package io.hyun424.openchat.infra.websocket.session;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
+import io.hyun424.openchat.chat.room.hot.RoomTrafficMonitor;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.socket.TextMessage;
@@ -66,6 +67,25 @@ class RoomSessionRegistryTest {
 
         verify(closedSession, never()).sendMessage(any(TextMessage.class));
         assertEquals(0, registry.count(1L));
+        registry.shutdownExecutor();
+    }
+
+    @Test
+    @DisplayName("입장/퇴장과 전송 시 방 단위 traffic metric을 기록한다")
+    void roomTrafficMetricsRecorded() throws Exception {
+        RoomTrafficMonitor monitor = mock(RoomTrafficMonitor.class);
+        RoomSessionRegistry registry = new RoomSessionRegistry(new ObjectMapper(), monitor, 2, 16);
+        WebSocketSession session = mockOpenSession("session-1");
+        ChatMessageDto message = message();
+
+        registry.add(1L, session);
+        registry.sendToRoom(1L, message);
+        registry.remove(1L, session);
+
+        verify(monitor).recordJoin(1L, 1);
+        verify(monitor).recordOutboundFanout(1L, 1);
+        verify(monitor).recordDeliveryLag(1L, message.getCreatedAt());
+        verify(monitor).recordLeave(1L, 0);
         registry.shutdownExecutor();
     }
 

@@ -4,6 +4,7 @@ import io.hyun424.openchat.chat.message.entity.Message;
 import io.hyun424.openchat.chat.message.service.MessageService;
 import io.hyun424.openchat.chat.publish.ChatMessagePublisher;
 import io.hyun424.openchat.chat.publish.PublishRetryBuffer;
+import io.hyun424.openchat.chat.room.hot.RoomTrafficMonitor;
 import io.hyun424.openchat.chat.room.service.RoomService;
 import io.hyun424.openchat.infra.redis.health.RedisHealthState;
 import org.junit.jupiter.api.BeforeEach;
@@ -29,6 +30,7 @@ class ChatIngestServiceTest {
     @Mock private MessageService messageService;
     @Mock private RoomService roomService;
     @Mock private RedisHealthState redisHealthState;
+    @Mock private RoomTrafficMonitor roomTrafficMonitor;
     @Mock private ZSetOperations<String, String> zSetOps;
 
     @InjectMocks
@@ -74,6 +76,7 @@ class ChatIngestServiceTest {
         // then
         verify(messageService).save(eq(ROOM_ID), eq(SENDER_ID), eq(NICKNAME), eq(CONTENT),
                 eq(CLIENT_MSG_ID), anyString(), anyLong());
+        verify(roomTrafficMonitor).recordInboundMessage(ROOM_ID);
         verify(publisher).publish(any());
         verify(roomService).updateLastMessage(eq(ROOM_ID), anyLong(), eq(CONTENT), eq(NICKNAME));
     }
@@ -100,6 +103,7 @@ class ChatIngestServiceTest {
 
         // then
         verify(messageService, never()).save(any(), any(), any(), any(), any(), any(), anyLong());
+        verify(roomTrafficMonitor, never()).recordInboundMessage(anyLong());
         verify(publisher, never()).publish(any());
     }
 

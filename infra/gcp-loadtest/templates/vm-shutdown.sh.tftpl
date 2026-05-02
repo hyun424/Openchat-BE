@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+set +e
+
+RUN_ID="${run_id}"
+BUCKET_NAME="${bucket_name}"
+ROLE="${role}"
+HOSTNAME="$(hostname)"
+OUT_DIR="/var/log/openchat-loadtest/final"
+
+mkdir -p "$OUT_DIR"
+echo "[$ROLE] shutdown collect begin run_id=$RUN_ID host=$HOSTNAME" > "$OUT_DIR/shutdown.log"
+
+{
+  echo "timestamp=$(date -Iseconds)"
+  echo "ulimit_n=$(ulimit -n)"
+  sysctl net.core.somaxconn net.ipv4.tcp_max_syn_backlog net.core.netdev_max_backlog \
+    net.ipv4.tcp_fin_timeout net.ipv4.ip_local_port_range net.ipv4.tcp_tw_reuse 2>/dev/null || true
+  echo
+  if command -v ss >/dev/null 2>&1; then
+    ss -s || true
+    echo
+    ss -tan state established | head -n 5000 || true
+    echo
+    ss -tan state syn-recv | head -n 5000 || true
+  else
+    echo "ss command not available"
+  fi
+} > "$OUT_DIR/socket-snapshot.txt" 2>&1
+
+if command -v docker >/dev/null 2>&1; then
+  docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" > "$OUT_DIR/docker-ps.txt" 2>&1
+  docker ps -a --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" > "$OUT_DIR/docker-ps-all.txt" 2>&1
+  docker stats --no-stream > "$OUT_DIR/docker-stats.txt" 2>&1
+
+  docker ps -a --format "{{.Names}}" | while read -r container_name; do
+    if [ -n "$container_name" ]; then
+      docker logs "$container_name" > "$OUT_DIR/$container_name.log" 2>&1
+    fi
+  done
+fi
+
+if command -v nginx >/dev/null 2>&1; then
+  nginx -T > "$OUT_DIR/nginx-config.txt" 2>&1
+  systemctl status nginx --no-pager > "$OUT_DIR/nginx-status.txt" 2>&1
+fi
+
+if command -v gcloud >/dev/null 2>&1; then
+  gcloud storage cp --recursive /var/log/openchat-loadtest "gs://$BUCKET_NAME/runs/$RUN_ID/logs/$ROLE-vm/$HOSTNAME/" || true
+fi
+
+echo "[$ROLE] shutdown collect done" >> "$OUT_DIR/shutdown.log"

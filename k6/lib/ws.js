@@ -3,7 +3,7 @@ import { check } from 'k6';
 import { makeUUID } from './data-factory.js';
 import {
   wsConnectDuration, wsMessageRoundtrip, wsConnectSuccess,
-  wsMsgSent, wsMsgReceived,
+  wsConnectFailure, wsConnectFailures, wsMsgSent, wsMsgReceived,
 } from './metrics.js';
 
 const WS_BASE_URL = __ENV.WS_BASE_URL || 'ws://localhost:8080';
@@ -39,6 +39,7 @@ export function connectAndChat(opts) {
     const connectEnd = Date.now();
     wsConnectDuration.add(connectEnd - connectStart);
     wsConnectSuccess.add(true);
+    wsConnectFailure.add(false);
 
     // 메시지 수신 핸들러
     socket.on('message', function (data) {
@@ -61,6 +62,9 @@ export function connectAndChat(opts) {
 
     socket.on('error', function (e) {
       wsConnectSuccess.add(false);
+      wsConnectFailure.add(true, { status: 'socket_error' });
+      wsConnectFailures.add(1, { status: 'socket_error' });
+      console.error(`WS socket error roomId=${roomId} error=${String(e).slice(0, 240)}`);
     });
 
     // 주기적 메시지 전송
@@ -86,7 +90,12 @@ export function connectAndChat(opts) {
     'ws connected': (r) => r && r.status === 101,
   });
   if (!connected) {
+    const status = res && res.status ? String(res.status) : 'unknown';
+    const error = res && res.error ? String(res.error).slice(0, 240) : '';
     wsConnectSuccess.add(false);
+    wsConnectFailure.add(true, { status });
+    wsConnectFailures.add(1, { status });
+    console.error(`WS connect failed roomId=${roomId} status=${status} error=${error}`);
   }
 
   return res;

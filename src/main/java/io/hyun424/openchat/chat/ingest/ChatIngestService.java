@@ -5,6 +5,7 @@ import io.hyun424.openchat.chat.message.entity.Message;
 import io.hyun424.openchat.chat.message.service.MessageService;
 import io.hyun424.openchat.chat.publish.ChatMessagePublisher;
 import io.hyun424.openchat.chat.publish.PublishRetryBuffer;
+import io.hyun424.openchat.chat.room.hot.RoomTrafficMonitor;
 import io.hyun424.openchat.chat.room.service.RoomService;
 import io.hyun424.openchat.infra.redis.health.RedisHealthState;
 import io.hyun424.openchat.infra.time.BucketKeyUtil;
@@ -37,6 +38,7 @@ public class ChatIngestService {
     private final MessageService messageService;
     private final RoomService roomService;
     private final RedisHealthState redisHealthState;
+    private final RoomTrafficMonitor roomTrafficMonitor;
 
     private final ConcurrentHashMap<String, Long> clientMessageIdCache = new ConcurrentHashMap<>();
     private static final long CLIENT_MSG_CACHE_TTL_MS = 60_000;
@@ -50,13 +52,15 @@ public class ChatIngestService {
                              StringRedisTemplate redisTemplate,
                              MessageService messageService,
                              RoomService roomService,
-                             RedisHealthState redisHealthState) {
+                             RedisHealthState redisHealthState,
+                             RoomTrafficMonitor roomTrafficMonitor) {
         this.publisher = publisher;
         this.retryBuffer = retryBuffer;
         this.redisTemplate = redisTemplate;
         this.messageService = messageService;
         this.roomService = roomService;
         this.redisHealthState = redisHealthState;
+        this.roomTrafficMonitor = roomTrafficMonitor;
         this.cacheCleaner = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "ingest-cache-cleaner");
             t.setDaemon(true);
@@ -98,6 +102,8 @@ public class ChatIngestService {
         if (isDuplicateClientMessage(roomId, senderId, normalizedClientMessageId)) {
             return;
         }
+
+        roomTrafficMonitor.recordInboundMessage(roomId);
 
         String messageId = UUID.randomUUID().toString();
         long createdAt = System.currentTimeMillis();

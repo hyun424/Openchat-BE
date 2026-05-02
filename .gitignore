@@ -1,6 +1,11 @@
 HELP.md
 docs/
 data/
+k6/results/
+infra/gcp-loadtest/.terraform/
+infra/gcp-loadtest/*.tfstate
+infra/gcp-loadtest/*.tfstate.*
+infra/gcp-loadtest/terraform.tfvars
 
 ### Environment ###
 .env

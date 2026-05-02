@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+RUN_ID="${run_id}"
+BUCKET_NAME="${bucket_name}"
+SOURCE_OBJECT="${source_object}"
+APP_INDEX="${app_index}"
+MYSQL_IP="${mysql_ip}"
+REDIS_IP="${redis_ip}"
+WORKDIR="/opt/openchat"
+LOG_DIR="/var/log/openchat-loadtest"
+
+mkdir -p "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/app-startup.log") 2>&1
+
+apply_socket_tuning() {
+  ulimit -n 1048576 || ulimit -n 65535 || true
+  sysctl -w net.core.somaxconn=65535 || true
+  sysctl -w net.ipv4.tcp_max_syn_backlog=65535 || true
+  sysctl -w net.core.netdev_max_backlog=250000 || true
+  sysctl -w net.ipv4.tcp_fin_timeout=15 || true
+}
+
+collect_socket_snapshot() {
+  local name="$1"
+  local out_dir="$LOG_DIR/final"
+  mkdir -p "$out_dir"
+  {
+    echo "timestamp=$(date -Iseconds)"
+    echo "ulimit_n=$(ulimit -n)"
+    sysctl net.core.somaxconn net.ipv4.tcp_max_syn_backlog net.core.netdev_max_backlog \
+      net.ipv4.tcp_fin_timeout 2>/dev/null || true
+    echo
+    ss -s || true
+    echo
+    ss -tan state established | head -n 2000 || true
+    echo
+    ss -tan state syn-recv | head -n 2000 || true
+  } > "$out_dir/$name.txt" 2>&1
+}
+
+echo "[app] startup begin run_id=$RUN_ID app_index=$APP_INDEX mysql=$MYSQL_IP redis=$REDIS_IP"
+apply_socket_tuning
+collect_socket_snapshot "app-socket-before"
+
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y docker.io unzip curl jq gnupg ca-certificates netcat-openbsd iproute2
+systemctl enable --now docker
+
+if ! command -v gcloud >/dev/null 2>&1; then
+  curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+    | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+  echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
+    > /etc/apt/sources.list.d/google-cloud-sdk.list
+  apt-get update
+  apt-get install -y google-cloud-cli
+fi
+
+echo "[app] waiting for mysql and redis ports"
+for attempt in $(seq 1 180); do
+  if nc -z "$MYSQL_IP" 3306 && nc -z "$REDIS_IP" 6379; then
+    echo "[app] mysql and redis reachable"
+    break
+  fi
+  if [ "$attempt" -eq 180 ]; then
+    echo "[app] mysql/redis did not become reachable" >&2
+    exit 1
+  fi
+  sleep 2
+done
+
+rm -rf "$WORKDIR"
+mkdir -p "$WORKDIR"
+for attempt in $(seq 1 30); do
+  if gcloud storage cp "gs://$BUCKET_NAME/$SOURCE_OBJECT" /tmp/openchat-source.zip; then
+    break
+  fi
+  if [ "$attempt" -eq 30 ]; then
+    echo "[app] failed to download source archive" >&2
+    exit 1
+  fi
+  sleep 5
+done
+
+unzip -q /tmp/openchat-source.zip -d "$WORKDIR"
+cd "$WORKDIR"
+
+echo "[app] building backend image"
+DOCKER_BUILDKIT=1 docker build -t "openchat-loadtest-app:$RUN_ID" . 2>&1 | tee "$LOG_DIR/docker-build.log"
+
+docker rm -f openchat-app >/dev/null 2>&1 || true
+echo "[app] starting backend container"
+docker run -d \
+  --name openchat-app \
+  --restart unless-stopped \
+  --ulimit nofile=1048576:1048576 \
+  -p 8080:8080 \
+  -e SPRING_PROFILES_ACTIVE=loadtest \
+  -e DB_HOST="$MYSQL_IP" \
+  -e DB_PORT=3306 \
+  -e DB_NAME=openchat \
+  -e DB_USERNAME=openchat \
+  -e DB_PASSWORD=openchat \
+  -e SPRING_DATASOURCE_URL="jdbc:mysql://$MYSQL_IP:3306/openchat?useSSL=false&serverTimezone=Asia/Seoul&allowPublicKeyRetrieval=true" \
+  -e SPRING_DATASOURCE_USERNAME=openchat \
+  -e SPRING_DATASOURCE_PASSWORD=openchat \
+  -e REDIS_HOST="$REDIS_IP" \
+  -e REDIS_PORT=6379 \
+  -e SPRING_DATA_REDIS_HOST="$REDIS_IP" \
+  -e SPRING_DATA_REDIS_PORT=6379 \
+  -e APP_KAFKA_ENABLED=false \
+  -e KAFKA_SERVERS=127.0.0.1:9092 \
+  -e INSTANCE_ID="gcp-app-$APP_INDEX" \
+  -e APP_INSTANCE_ID="gcp-app-$APP_INDEX" \
+  -e JWT_SECRET=loadtest-secret-key-minimum-32-characters \
+  -e CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000 \
+  -e SERVER_TOMCAT_MAX_CONNECTIONS=20000 \
+  -e SERVER_TOMCAT_ACCEPT_COUNT=2000 \
+  -e SERVER_TOMCAT_THREADS_MAX=400 \
+  -e WEBSOCKET_BROADCAST_LANES=${websocket_broadcast_lanes} \
+  -e JAVA_OPTS="-XX:MaxRAMPercentage=70 -XX:+UseG1GC -Djava.security.egd=file:/dev/./urandom" \
+  "openchat-loadtest-app:$RUN_ID"
+
+echo "[app] waiting for local health"
+for attempt in $(seq 1 180); do
+  if curl --max-time 2 -sf http://127.0.0.1:8080/actuator/health >/dev/null; then
+    echo "[app] healthy"
+    collect_socket_snapshot "app-socket-after-startup"
+    exit 0
+  fi
+  if [ "$attempt" -eq 180 ]; then
+    echo "[app] did not become healthy" >&2
+    docker ps -a | tee "$LOG_DIR/docker-ps-failed.txt" || true
+    docker logs openchat-app > "$LOG_DIR/openchat-app-failed.log" 2>&1 || true
+    exit 1
+  fi
+  sleep 2
+done

@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+RUN_ID="${run_id}"
+BUCKET_NAME="${bucket_name}"
+LOG_DIR="/var/log/openchat-loadtest"
+DATA_DIR="/var/lib/openchat-mysql"
+
+mkdir -p "$LOG_DIR" "$DATA_DIR"
+exec > >(tee -a "$LOG_DIR/mysql-startup.log") 2>&1
+
+echo "[mysql] startup begin run_id=$RUN_ID bucket=$BUCKET_NAME"
+
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y docker.io curl jq gnupg ca-certificates iproute2
+systemctl enable --now docker
+
+if ! command -v gcloud >/dev/null 2>&1; then
+  curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+    | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+  echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
+    > /etc/apt/sources.list.d/google-cloud-sdk.list
+  apt-get update
+  apt-get install -y google-cloud-cli
+fi
+
+docker rm -f openchat-mysql >/dev/null 2>&1 || true
+docker run -d \
+  --name openchat-mysql \
+  --restart unless-stopped \
+  -p 3306:3306 \
+  -v "$DATA_DIR:/var/lib/mysql" \
+  -e MYSQL_ROOT_PASSWORD=root \
+  -e MYSQL_DATABASE=openchat \
+  -e MYSQL_USER=openchat \
+  -e MYSQL_PASSWORD=openchat \
+  mysql:8.0 \
+  --character-set-server=utf8mb4 \
+  --collation-server=utf8mb4_unicode_ci
+
+echo "[mysql] waiting for mysqladmin ping"
+for attempt in $(seq 1 120); do
+  if docker exec openchat-mysql mysqladmin ping -h 127.0.0.1 -uroot -proot --silent; then
+    echo "[mysql] healthy"
+    exit 0
+  fi
+  if [ "$attempt" -eq 120 ]; then
+    echo "[mysql] did not become healthy" >&2
+    docker logs openchat-mysql > "$LOG_DIR/openchat-mysql-failed.log" 2>&1 || true
+    exit 1
+  fi
+  sleep 2
+done
