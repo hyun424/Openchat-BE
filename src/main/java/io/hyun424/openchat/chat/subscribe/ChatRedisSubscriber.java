@@ -1,7 +1,7 @@
 package io.hyun424.openchat.chat.subscribe;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.hyun424.openchat.chat.fanout.ChatFanoutService;
+import io.hyun424.openchat.chat.fanout.RoomFanoutDispatcher;
 import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
 import io.hyun424.openchat.infra.metrics.ChatPipelineMetrics;
 import lombok.extern.slf4j.Slf4j;
@@ -13,16 +13,16 @@ import org.springframework.stereotype.Component;
 public class ChatRedisSubscriber {
 
     private final ObjectMapper redisObjectMapper;
-    private final ChatFanoutService chatFanoutService;
+    private final RoomFanoutDispatcher roomFanoutDispatcher;
     private final ChatPipelineMetrics chatPipelineMetrics;
 
     public ChatRedisSubscriber(
             @Qualifier("redisObjectMapper") ObjectMapper redisObjectMapper,
-            ChatFanoutService chatFanoutService,
+            RoomFanoutDispatcher roomFanoutDispatcher,
             ChatPipelineMetrics chatPipelineMetrics
     ) {
         this.redisObjectMapper = redisObjectMapper;
-        this.chatFanoutService = chatFanoutService;
+        this.roomFanoutDispatcher = roomFanoutDispatcher;
         this.chatPipelineMetrics = chatPipelineMetrics;
     }
 
@@ -42,7 +42,7 @@ public class ChatRedisSubscriber {
 
             chatPipelineMetrics.recordSinceCreated("subscribe.before_fanout.since_created", message);
             long fanoutCallStartNanos = System.nanoTime();
-            chatFanoutService.fanout(message);
+            roomFanoutDispatcher.enqueue(message);
             chatPipelineMetrics.recordStageNanos(
                     "subscribe.fanout_call", System.nanoTime() - fanoutCallStartNanos);
 

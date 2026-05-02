@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.util.Map;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadPoolExecutor;
 
@@ -63,6 +64,13 @@ public class ChatPipelineMetrics {
                 .register(meterRegistry);
         Gauge.builder("openchat_ws_broadcast_executor_pool_size", executor, ThreadPoolExecutor::getPoolSize)
                 .description("Current WebSocket broadcast executor pool size")
+                .register(meterRegistry);
+    }
+
+    public void bindFanoutDispatcherQueue(int stripe, BlockingQueue<?> queue) {
+        Gauge.builder("openchat_fanout_dispatcher_queue_size", queue, BlockingQueue::size)
+                .description("Current fanout dispatcher queue size")
+                .tag("stripe", String.valueOf(stripe))
                 .register(meterRegistry);
     }
 
