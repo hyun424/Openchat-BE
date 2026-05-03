@@ -3,8 +3,6 @@ package io.hyun424.openchat.chat.outbox;
 import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
 import io.hyun424.openchat.chat.metrics.ChatPipelineMetrics;
 import io.hyun424.openchat.chat.publish.ChatMessagePublisher;
-import io.hyun424.openchat.chat.room.service.RoomService;
-import io.hyun424.openchat.hotchat.HotChatService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -22,8 +20,6 @@ public class OutboxEventProcessor {
     private final OutboxEventRepository outboxEventRepository;
     private final OutboxPayloadSerializer payloadSerializer;
     private final ChatMessagePublisher publisher;
-    private final RoomService roomService;
-    private final HotChatService hotChatService;
     private final ChatPipelineMetrics chatPipelineMetrics;
     private final TransactionTemplate transactionTemplate;
 
@@ -99,22 +95,9 @@ public class OutboxEventProcessor {
     }
 
     private void processMessageCreated(ChatMessageDto message) {
-        long roomUpdateStartNanos = System.nanoTime();
-        roomService.updateLastMessage(
-                message.getRoomId(),
-                message.getCreatedAt(),
-                message.getMessage(),
-                message.getSenderName()
-        );
-        chatPipelineMetrics.recordStage("outbox.room_update", roomUpdateStartNanos);
-
         long publishStartNanos = System.nanoTime();
         publisher.publish(message);
         chatPipelineMetrics.recordStage("outbox.publish.redis", publishStartNanos);
-
-        long hotchatStartNanos = System.nanoTime();
-        hotChatService.recordMessageActivity(message.getRoomId(), message.getMessageId());
-        chatPipelineMetrics.recordStage("outbox.hotchat_update", hotchatStartNanos);
     }
 
     private void markPublished(Long id) {

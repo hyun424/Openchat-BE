@@ -2,12 +2,15 @@ package io.hyun424.openchat.infra.websocket.handler;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.hyun424.openchat.auth.jwt.JwtProvider;
+import io.hyun424.openchat.chat.ingest.ChatIngestResult;
 import io.hyun424.openchat.chat.ingest.ChatIngestService;
 import io.hyun424.openchat.chat.member.service.RoomMemberService;
 import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
 import io.hyun424.openchat.chat.message.service.MessageService;
 import io.hyun424.openchat.chat.metrics.ChatPipelineMetrics;
+import io.hyun424.openchat.chat.outbox.PostCommitLivePublishService;
 import io.hyun424.openchat.chat.room.domain.Room;
+import io.hyun424.openchat.chat.room.metadata.RoomMetadataUpdateBuffer;
 import io.hyun424.openchat.chat.room.service.RoomService;
 import io.hyun424.openchat.global.ratelimit.RateLimiter;
 import io.hyun424.openchat.infra.websocket.session.RoomSessionRegistry;
@@ -17,6 +20,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -49,6 +53,8 @@ class ChatWebSocketHandlerTest {
     @Mock private RateLimiter rateLimiter;
     @Mock private JwtProvider jwtProvider;
     @Mock private ChatPipelineMetrics chatPipelineMetrics;
+    @Mock private PostCommitLivePublishService postCommitLivePublishService;
+    @Mock private RoomMetadataUpdateBuffer roomMetadataUpdateBuffer;
     @Mock private WebSocketSession session;
 
     @InjectMocks
@@ -143,7 +149,7 @@ class ChatWebSocketHandlerTest {
                 .createdAt(1000L)
                 .build();
         when(chatIngestService.ingest(eq(1L), eq("user1"), eq("TestUser"), anyString(), eq("c1")))
-                .thenReturn(saved);
+                .thenReturn(new ChatIngestResult(saved, true));
 
         handler.handleTextMessage(session, msg);
 
@@ -153,6 +159,51 @@ class ChatWebSocketHandlerTest {
                         && "c1".equals(ack.getClientMessageId())
                         && Long.valueOf(10L).equals(ack.getSequence())
         ), eq("ack"));
+    }
+
+    @Test
+    @DisplayName("새 메시지는 ack 이후 async live publish와 metadata enqueue를 호출한다")
+    void handleMessage_newMessage_publishesAfterAck() throws Exception {
+        TextMessage msg = new TextMessage("{\"content\":\"Hello World\",\"clientMessageId\":\"c1\"}");
+        ChatMessageDto saved = ChatMessageDto.builder()
+                .id(10L)
+                .sequence(10L)
+                .messageId("message-10")
+                .clientMessageId("c1")
+                .roomId(1L)
+                .createdAt(1000L)
+                .build();
+        when(chatIngestService.ingest(eq(1L), eq("user1"), eq("TestUser"), anyString(), eq("c1")))
+                .thenReturn(new ChatIngestResult(saved, true));
+
+        handler.handleTextMessage(session, msg);
+
+        InOrder inOrder = inOrder(roomSessionRegistry, postCommitLivePublishService, roomMetadataUpdateBuffer);
+        inOrder.verify(roomSessionRegistry).sendControlToSession(eq("session-1"), any(), eq("ack"));
+        inOrder.verify(postCommitLivePublishService).publishAsync(saved);
+        inOrder.verify(roomMetadataUpdateBuffer).enqueue(saved);
+    }
+
+    @Test
+    @DisplayName("중복 메시지는 ack만 보내고 async live publish를 반복하지 않는다")
+    void handleMessage_duplicateMessage_skipsPostCommitPublish() throws Exception {
+        TextMessage msg = new TextMessage("{\"content\":\"Hello World\",\"clientMessageId\":\"c1\"}");
+        ChatMessageDto saved = ChatMessageDto.builder()
+                .id(10L)
+                .sequence(10L)
+                .messageId("message-10")
+                .clientMessageId("c1")
+                .roomId(1L)
+                .createdAt(1000L)
+                .build();
+        when(chatIngestService.ingest(eq(1L), eq("user1"), eq("TestUser"), anyString(), eq("c1")))
+                .thenReturn(new ChatIngestResult(saved, false));
+
+        handler.handleTextMessage(session, msg);
+
+        verify(roomSessionRegistry).sendControlToSession(eq("session-1"), any(), eq("ack"));
+        verify(postCommitLivePublishService, never()).publishAsync(any());
+        verify(roomMetadataUpdateBuffer, never()).enqueue(any());
     }
 
     @Test

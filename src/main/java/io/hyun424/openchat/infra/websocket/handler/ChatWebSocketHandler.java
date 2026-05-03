@@ -1,12 +1,15 @@
 package io.hyun424.openchat.infra.websocket.handler;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.hyun424.openchat.chat.ingest.ChatIngestResult;
 import io.hyun424.openchat.auth.jwt.JwtProvider;
 import io.hyun424.openchat.chat.ingest.ChatIngestService;
 import io.hyun424.openchat.chat.member.service.RoomMemberService;
 import io.hyun424.openchat.chat.message.dto.ChatAckMessageDto;
 import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
 import io.hyun424.openchat.chat.metrics.ChatPipelineMetrics;
+import io.hyun424.openchat.chat.outbox.PostCommitLivePublishService;
+import io.hyun424.openchat.chat.room.metadata.RoomMetadataUpdateBuffer;
 import io.hyun424.openchat.chat.room.domain.Room;
 import io.hyun424.openchat.chat.room.service.RoomService;
 import io.hyun424.openchat.global.ratelimit.RateLimiter;
@@ -37,6 +40,8 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
     private final WebSocketErrorSender errorSender;
     private final WebSocketSessionGuard sessionGuard;
     private final ChatPipelineMetrics chatPipelineMetrics;
+    private final PostCommitLivePublishService postCommitLivePublishService;
+    private final RoomMetadataUpdateBuffer roomMetadataUpdateBuffer;
 
     @Value("${ratelimit.ws.message-limit:10}")
     private int wsMessageLimit;
@@ -54,7 +59,9 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
                                 RoomService roomService,
                                 RateLimiter rateLimiter,
                                 JwtProvider jwtProvider,
-                                ChatPipelineMetrics chatPipelineMetrics) {
+                                ChatPipelineMetrics chatPipelineMetrics,
+                                PostCommitLivePublishService postCommitLivePublishService,
+                                RoomMetadataUpdateBuffer roomMetadataUpdateBuffer) {
         this.roomMemberService = roomMemberService;
         this.roomSessionRegistry = roomSessionRegistry;
         this.chatIngestService = chatIngestService;
@@ -64,6 +71,8 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         this.errorSender = new WebSocketErrorSender(objectMapper);
         this.sessionGuard = new WebSocketSessionGuard(jwtProvider);
         this.chatPipelineMetrics = chatPipelineMetrics;
+        this.postCommitLivePublishService = postCommitLivePublishService;
+        this.roomMetadataUpdateBuffer = roomMetadataUpdateBuffer;
     }
 
     @Override
@@ -132,18 +141,25 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
             }
 
             /*
-             * DB 저장, 메시지 버스 발행, fan-out은 모두 Ingest 계층이 책임진다.
-             * WebSocket 핸들러는 연결/입력 검증만 담당해야 장애 대응 흐름을 추적하기 쉽다.
+             * Ack는 DB commit 성공을 의미한다. Live publish와 room metadata 갱신은
+             * ack 이후 비동기로 분리해 사용자 피드백이 후처리 지연에 끌리지 않게 한다.
              */
             long ingestStartNanos = System.nanoTime();
-            ChatMessageDto savedMessage = chatIngestService.ingest(
+            ChatIngestResult ingestResult = chatIngestService.ingest(
                     roomId,
                     senderId,
                     nickname,
                     message.content(),
                     message.clientMessageId()
             );
-            sendAck(session, savedMessage);
+            if (ingestResult == null) {
+                return;
+            }
+            sendAck(session, ingestResult.message());
+            if (ingestResult.newMessage()) {
+                postCommitLivePublishService.publishAsync(ingestResult.message());
+                roomMetadataUpdateBuffer.enqueue(ingestResult.message());
+            }
             chatPipelineMetrics.recordStage("ws.inbound.ingest", ingestStartNanos);
 
         } catch (Exception e) {

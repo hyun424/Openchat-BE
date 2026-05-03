@@ -9,6 +9,7 @@ import io.hyun424.openchat.chat.outbox.OutboxEventRepository;
 import io.hyun424.openchat.chat.outbox.OutboxEventStatus;
 import io.hyun424.openchat.chat.outbox.OutboxPayloadSerializer;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -23,6 +24,9 @@ public class ChatMessagePersistenceService {
     private final OutboxEventRepository outboxEventRepository;
     private final OutboxPayloadSerializer payloadSerializer;
     private final ChatPipelineMetrics chatPipelineMetrics;
+
+    @Value("${app.outbox.initial-retry-delay-ms:1000}")
+    private long initialRetryDelayMs;
 
     @Transactional
     public PersistedChatMessage persistWithOutbox(Long roomId,
@@ -49,6 +53,7 @@ public class ChatMessagePersistenceService {
         dto.setClientMessageId(clientMessageId);
 
         long outboxStartNanos = System.nanoTime();
+        long outboxCreatedAt = System.currentTimeMillis();
         OutboxEvent event = outboxEventRepository.save(OutboxEvent.builder()
                 .eventId(UUID.randomUUID().toString())
                 .eventType(OutboxEvent.CHAT_MESSAGE_CREATED)
@@ -59,8 +64,8 @@ public class ChatMessagePersistenceService {
                 .payloadJson(payloadSerializer.serialize(dto))
                 .status(OutboxEventStatus.PENDING)
                 .attemptCount(0)
-                .nextRetryAt(System.currentTimeMillis())
-                .createdAt(System.currentTimeMillis())
+                .nextRetryAt(outboxCreatedAt + Math.max(0, initialRetryDelayMs))
+                .createdAt(outboxCreatedAt)
                 .build());
         chatPipelineMetrics.recordStage("ingest.outbox_save", outboxStartNanos);
         chatPipelineMetrics.recordStage("ingest.persist.total", totalStartNanos);

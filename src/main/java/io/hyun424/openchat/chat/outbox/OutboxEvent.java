@@ -14,6 +14,7 @@ import lombok.NoArgsConstructor;
         indexes = {
                 @Index(name = "idx_outbox_status_retry_id", columnList = "status, nextRetryAt, id"),
                 @Index(name = "idx_outbox_room_id", columnList = "roomId, id"),
+                @Index(name = "idx_outbox_message_id", columnList = "messageId"),
                 @Index(name = "uk_outbox_event_id", columnList = "eventId", unique = true)
         }
 )

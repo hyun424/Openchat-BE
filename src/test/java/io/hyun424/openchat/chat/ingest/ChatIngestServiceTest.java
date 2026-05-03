@@ -63,11 +63,12 @@ class ChatIngestServiceTest {
                 .thenReturn(new PersistedChatMessage(saved, dto(saved, CLIENT_MSG_ID), outbox("uuid-1")));
 
         // when
-        ChatMessageDto result = chatIngestService.ingest(ROOM_ID, SENDER_ID, NICKNAME, CONTENT, CLIENT_MSG_ID);
+        ChatIngestResult result = chatIngestService.ingest(ROOM_ID, SENDER_ID, NICKNAME, CONTENT, CLIENT_MSG_ID);
 
         // then
-        assertEquals(CLIENT_MSG_ID, result.getClientMessageId());
-        assertEquals(ROOM_ID, result.getRoomId());
+        assertEquals(CLIENT_MSG_ID, result.message().getClientMessageId());
+        assertEquals(ROOM_ID, result.message().getRoomId());
+        assertEquals(true, result.newMessage());
         verify(persistenceService).persistWithOutbox(eq(ROOM_ID), eq(SENDER_ID), eq(NICKNAME), eq(CONTENT),
                 eq(CLIENT_MSG_ID), anyString(), anyLong());
         verify(roomTrafficMonitor).recordInboundMessage(ROOM_ID);
@@ -91,9 +92,11 @@ class ChatIngestServiceTest {
                 .thenReturn(existing);
 
         // when
-        chatIngestService.ingest(ROOM_ID, SENDER_ID, NICKNAME, CONTENT, CLIENT_MSG_ID);
+        ChatIngestResult result = chatIngestService.ingest(ROOM_ID, SENDER_ID, NICKNAME, CONTENT, CLIENT_MSG_ID);
 
         // then
+        assertEquals(false, result.newMessage());
+        assertEquals("existing-uuid", result.message().getMessageId());
         verify(persistenceService, never()).persistWithOutbox(any(), any(), any(), any(), any(), any(), anyLong());
         verify(roomTrafficMonitor, never()).recordInboundMessage(anyLong());
     }
