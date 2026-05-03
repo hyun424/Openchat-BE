@@ -2,6 +2,8 @@ package io.hyun424.openchat.chat.fanout;
 
 import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
 import io.hyun424.openchat.chat.metrics.ChatPipelineMetrics;
+import io.hyun424.openchat.chat.room.hot.RoomHotState;
+import io.hyun424.openchat.chat.room.hot.RoomTrafficMonitor;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -29,9 +31,13 @@ public class ChatFanoutService {
     private final ConcurrentHashMap<Long, RoomFanoutBuffer> roomBuffers = new ConcurrentHashMap<>();
     private final boolean batchEnabled;
     private final long batchWindowMillis;
+    private final long warmBatchWindowMillis;
+    private final long hotBatchWindowMillis;
+    private final long superHotBatchWindowMillis;
     private final int maxBatchSize;
     private final int maxFlushBatchesPerRun;
     private final ChatPipelineMetrics chatPipelineMetrics;
+    private final RoomTrafficMonitor roomTrafficMonitor;
 
     @Value("${app.instance-id:local}")
     private String instanceId;
@@ -40,29 +46,38 @@ public class ChatFanoutService {
     private static final long DEDUPE_TTL_MS = 60_000;
 
     public ChatFanoutService(ChatOutboundSender outboundSender) {
-        this(outboundSender, true, 20, 64, 16, ChatPipelineMetrics.noop());
+        this(outboundSender, true, 20, 30, 50, 100, 64, 16, ChatPipelineMetrics.noop(), new RoomTrafficMonitor());
     }
 
     public ChatFanoutService(ChatOutboundSender outboundSender,
                              boolean batchEnabled,
                              long batchWindowMillis,
                              int maxBatchSize) {
-        this(outboundSender, batchEnabled, batchWindowMillis, maxBatchSize, 16, ChatPipelineMetrics.noop());
+        this(outboundSender, batchEnabled, batchWindowMillis, 30, 50, 100, maxBatchSize, 16,
+                ChatPipelineMetrics.noop(), new RoomTrafficMonitor());
     }
 
     @Autowired
     public ChatFanoutService(ChatOutboundSender outboundSender,
                              @Value("${app.websocket.batch.enabled:true}") boolean batchEnabled,
                              @Value("${app.websocket.batch.window-ms:20}") long batchWindowMillis,
+                             @Value("${app.websocket.batch.warm-window-ms:30}") long warmBatchWindowMillis,
+                             @Value("${app.websocket.batch.hot-window-ms:50}") long hotBatchWindowMillis,
+                             @Value("${app.websocket.batch.super-hot-window-ms:100}") long superHotBatchWindowMillis,
                              @Value("${app.websocket.batch.max-size:64}") int maxBatchSize,
                              @Value("${app.websocket.batch.max-flush-batches-per-run:16}") int maxFlushBatchesPerRun,
-                             ChatPipelineMetrics chatPipelineMetrics) {
+                             ChatPipelineMetrics chatPipelineMetrics,
+                             RoomTrafficMonitor roomTrafficMonitor) {
         this.outboundSender = outboundSender;
         this.batchEnabled = batchEnabled;
         this.batchWindowMillis = Math.max(1, batchWindowMillis);
+        this.warmBatchWindowMillis = Math.max(this.batchWindowMillis, warmBatchWindowMillis);
+        this.hotBatchWindowMillis = Math.max(this.warmBatchWindowMillis, hotBatchWindowMillis);
+        this.superHotBatchWindowMillis = Math.max(this.hotBatchWindowMillis, superHotBatchWindowMillis);
         this.maxBatchSize = Math.max(1, maxBatchSize);
         this.maxFlushBatchesPerRun = Math.max(1, maxFlushBatchesPerRun);
         this.chatPipelineMetrics = chatPipelineMetrics;
+        this.roomTrafficMonitor = roomTrafficMonitor;
         this.cleanerExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "dedupe-cleaner");
             t.setDaemon(true);
@@ -112,7 +127,7 @@ public class ChatFanoutService {
         chatPipelineMetrics.recordSinceCreated("fanout.batch.enqueued.since_created", message);
 
         if (buffer.markScheduled()) {
-            scheduleFlush(roomId, batchWindowMillis);
+            scheduleFlush(roomId, resolveBatchWindowMillis(roomId));
         }
 
         if (buffer.size() >= maxBatchSize) {
@@ -130,6 +145,16 @@ public class ChatFanoutService {
         } catch (RejectedExecutionException e) {
             flushRoomBatch(roomId);
         }
+    }
+
+    private long resolveBatchWindowMillis(Long roomId) {
+        RoomHotState state = roomTrafficMonitor.state(roomId);
+        return switch (state) {
+            case WARM -> warmBatchWindowMillis;
+            case HOT -> hotBatchWindowMillis;
+            case SUPER_HOT -> superHotBatchWindowMillis;
+            case NORMAL, WATCHED -> batchWindowMillis;
+        };
     }
 
     private void flushRoomBatch(Long roomId) {

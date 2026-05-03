@@ -1,6 +1,9 @@
 package io.hyun424.openchat.chat.fanout;
 
 import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
+import io.hyun424.openchat.chat.metrics.ChatPipelineMetrics;
+import io.hyun424.openchat.chat.room.hot.RoomHotState;
+import io.hyun424.openchat.chat.room.hot.RoomTrafficMonitor;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -91,6 +94,38 @@ class ChatFanoutServiceTest {
 
         verify(outboundSender).send(message);
         disabledBatchFanout.shutdown();
+    }
+
+    @Test
+    @DisplayName("hot room은 상태별 batch window를 사용해 더 오래 모은 뒤 batch로 전송한다")
+    void fanout_hotRoom_usesAdaptiveBatchWindow() throws Exception {
+        RoomTrafficMonitor roomTrafficMonitor = mock(RoomTrafficMonitor.class);
+        when(roomTrafficMonitor.state(1L)).thenReturn(RoomHotState.HOT);
+        ChatFanoutService adaptiveFanout = new ChatFanoutService(
+                outboundSender,
+                true,
+                20,
+                30,
+                120,
+                150,
+                64,
+                16,
+                ChatPipelineMetrics.noop(),
+                roomTrafficMonitor
+        );
+        ChatMessageDto first = message("message-7", 14L);
+        ChatMessageDto second = message("message-8", 15L);
+
+        adaptiveFanout.fanout(first);
+        Thread.sleep(40);
+        adaptiveFanout.fanout(second);
+        assertTrue(adaptiveFanout.awaitBatchIdle(500));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ChatMessageDto>> captor = ArgumentCaptor.forClass(List.class);
+        verify(outboundSender).sendBatch(eq(1L), captor.capture());
+        assertEquals(List.of(first, second), captor.getValue());
+        adaptiveFanout.shutdown();
     }
 
     private ChatMessageDto message(String messageId) {
