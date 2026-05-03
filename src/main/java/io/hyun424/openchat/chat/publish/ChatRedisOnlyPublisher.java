@@ -48,7 +48,7 @@ public class ChatRedisOnlyPublisher implements ChatMessagePublisher {
         if (!redisHealthState.isUp()) {
             log.debug("[REDIS PUB SKIP][{}] Redis is down, roomId={} messageId={}",
                     instanceId, message.getRoomId(), message.getMessageId());
-            return;
+            throw new ChatPublishException("Redis is down");
         }
 
         String channel = "chat:room:" + message.getRoomId();
@@ -68,7 +68,7 @@ public class ChatRedisOnlyPublisher implements ChatMessagePublisher {
             redisHealthState.markDown();
             log.error("[REDIS PUB FAIL][{}] roomId={} messageId={} - marking Redis down",
                     instanceId, message.getRoomId(), message.getMessageId(), e);
-            // Message is already saved in DB, polling can recover it
+            throw new ChatPublishException("Redis publish failed", e);
         }
     }
 }

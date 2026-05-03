@@ -4,11 +4,9 @@ import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
 import io.hyun424.openchat.chat.message.entity.Message;
 import io.hyun424.openchat.chat.message.service.MessageService;
 import io.hyun424.openchat.chat.metrics.ChatPipelineMetrics;
-import io.hyun424.openchat.chat.publish.ChatMessagePublisher;
-import io.hyun424.openchat.chat.publish.PublishRetryBuffer;
+import io.hyun424.openchat.chat.outbox.OutboxEvent;
+import io.hyun424.openchat.chat.outbox.OutboxEventStatus;
 import io.hyun424.openchat.chat.room.hot.RoomTrafficMonitor;
-import io.hyun424.openchat.chat.room.service.RoomService;
-import io.hyun424.openchat.infra.redis.health.RedisHealthState;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -16,8 +14,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.ZSetOperations;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -27,15 +23,10 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class ChatIngestServiceTest {
 
-    @Mock private ChatMessagePublisher publisher;
-    @Mock private PublishRetryBuffer retryBuffer;
-    @Mock private StringRedisTemplate redisTemplate;
     @Mock private MessageService messageService;
-    @Mock private RoomService roomService;
-    @Mock private RedisHealthState redisHealthState;
+    @Mock private ChatMessagePersistenceService persistenceService;
     @Mock private RoomTrafficMonitor roomTrafficMonitor;
     @Mock private ChatPipelineMetrics chatPipelineMetrics;
-    @Mock private ZSetOperations<String, String> zSetOps;
 
     @InjectMocks
     private ChatIngestService chatIngestService;
@@ -48,13 +39,10 @@ class ChatIngestServiceTest {
 
     @BeforeEach
     void setUp() {
-        // RedisHealthState default: UP for hotchat bucket
-        lenient().when(redisHealthState.isUp()).thenReturn(true);
-        lenient().when(redisTemplate.opsForZSet()).thenReturn(zSetOps);
     }
 
     @Test
-    @DisplayName("정상 ingest: DB 저장 → publish → hotchat 업데이트")
+    @DisplayName("정상 ingest: DB 메시지와 outbox를 저장하고 저장 DTO를 반환한다")
     void ingest_success() {
         // given
         when(messageService.findByClientMessageId(eq(ROOM_ID), eq(SENDER_ID), eq(CLIENT_MSG_ID)))
@@ -70,9 +58,9 @@ class ChatIngestServiceTest {
                 .createdAt(System.currentTimeMillis())
                 .build();
 
-        when(messageService.save(eq(ROOM_ID), eq(SENDER_ID), eq(NICKNAME), eq(CONTENT),
+        when(persistenceService.persistWithOutbox(eq(ROOM_ID), eq(SENDER_ID), eq(NICKNAME), eq(CONTENT),
                 eq(CLIENT_MSG_ID), anyString(), anyLong()))
-                .thenReturn(saved);
+                .thenReturn(new PersistedChatMessage(saved, dto(saved, CLIENT_MSG_ID), outbox("uuid-1")));
 
         // when
         ChatMessageDto result = chatIngestService.ingest(ROOM_ID, SENDER_ID, NICKNAME, CONTENT, CLIENT_MSG_ID);
@@ -80,15 +68,13 @@ class ChatIngestServiceTest {
         // then
         assertEquals(CLIENT_MSG_ID, result.getClientMessageId());
         assertEquals(ROOM_ID, result.getRoomId());
-        verify(messageService).save(eq(ROOM_ID), eq(SENDER_ID), eq(NICKNAME), eq(CONTENT),
+        verify(persistenceService).persistWithOutbox(eq(ROOM_ID), eq(SENDER_ID), eq(NICKNAME), eq(CONTENT),
                 eq(CLIENT_MSG_ID), anyString(), anyLong());
         verify(roomTrafficMonitor).recordInboundMessage(ROOM_ID);
-        verify(publisher).publish(any());
-        verify(roomService).updateLastMessage(eq(ROOM_ID), anyLong(), eq(CONTENT), eq(NICKNAME));
     }
 
     @Test
-    @DisplayName("중복 clientMessageId dedupe: DB 저장/publish 스킵")
+    @DisplayName("중복 clientMessageId dedupe: 신규 DB 저장/outbox 생성 스킵")
     void ingest_duplicateClientMessageId_skipped() {
         // given
         Message existing = Message.builder()
@@ -108,62 +94,28 @@ class ChatIngestServiceTest {
         chatIngestService.ingest(ROOM_ID, SENDER_ID, NICKNAME, CONTENT, CLIENT_MSG_ID);
 
         // then
-        verify(messageService, never()).save(any(), any(), any(), any(), any(), any(), anyLong());
+        verify(persistenceService, never()).persistWithOutbox(any(), any(), any(), any(), any(), any(), anyLong());
         verify(roomTrafficMonitor, never()).recordInboundMessage(anyLong());
-        verify(publisher, never()).publish(any());
     }
 
     @Test
-    @DisplayName("DB 저장 실패 시 예외 전파 (publish 호출 안 됨)")
+    @DisplayName("DB/outbox 저장 실패 시 예외 전파")
     void ingest_dbFailure_throwsAndSkipsPublish() {
         // given
         when(messageService.findByClientMessageId(eq(ROOM_ID), eq(SENDER_ID), eq(CLIENT_MSG_ID)))
                 .thenReturn(null);
-        when(messageService.save(eq(ROOM_ID), eq(SENDER_ID), eq(NICKNAME), eq(CONTENT),
+        when(persistenceService.persistWithOutbox(eq(ROOM_ID), eq(SENDER_ID), eq(NICKNAME), eq(CONTENT),
                 eq(CLIENT_MSG_ID), anyString(), anyLong()))
                 .thenThrow(new RuntimeException("DB connection lost"));
 
         // when & then
         assertThrows(RuntimeException.class, () ->
                 chatIngestService.ingest(ROOM_ID, SENDER_ID, NICKNAME, CONTENT, CLIENT_MSG_ID));
-
-        verify(publisher, never()).publish(any());
     }
 
     @Test
-    @DisplayName("publish 실패 시 retryBuffer에 enqueue, 예외 전파 안 됨")
-    void ingest_publishFailure_enqueuesRetryBuffer() {
-        // given
-        when(messageService.findByClientMessageId(eq(ROOM_ID), eq(SENDER_ID), eq(CLIENT_MSG_ID)))
-                .thenReturn(null);
-
-        Message saved = Message.builder()
-                .messageId("uuid-2")
-                .roomId(ROOM_ID)
-                .senderId(SENDER_ID)
-                .senderNickname(NICKNAME)
-                .content(CONTENT)
-                .clientMessageId(CLIENT_MSG_ID)
-                .createdAt(System.currentTimeMillis())
-                .build();
-
-        when(messageService.save(eq(ROOM_ID), eq(SENDER_ID), eq(NICKNAME), eq(CONTENT),
-                eq(CLIENT_MSG_ID), anyString(), anyLong()))
-                .thenReturn(saved);
-
-        doThrow(new RuntimeException("Kafka down")).when(publisher).publish(any());
-
-        // when — should not throw
-        chatIngestService.ingest(ROOM_ID, SENDER_ID, NICKNAME, CONTENT, CLIENT_MSG_ID);
-
-        // then
-        verify(retryBuffer).enqueue(any());
-        verify(roomService).updateLastMessage(eq(ROOM_ID), anyLong(), eq(CONTENT), eq(NICKNAME));
-    }
-
-    @Test
-    @DisplayName("수정 전 경계 확인: publisher가 실패를 숨기고 정상 반환하면 retryBuffer에 들어가지 않는다")
-    void ingest_publisherReturnsNormally_retryBufferNotUsed() {
+    @DisplayName("ingest request path에서는 publish와 room update 후처리를 직접 수행하지 않는다")
+    void ingest_doesNotRunPostProcessingInline() {
         // given
         when(messageService.findByClientMessageId(eq(ROOM_ID), eq(SENDER_ID), eq(CLIENT_MSG_ID)))
                 .thenReturn(null);
@@ -178,16 +130,36 @@ class ChatIngestServiceTest {
                 .createdAt(System.currentTimeMillis())
                 .build();
 
-        when(messageService.save(eq(ROOM_ID), eq(SENDER_ID), eq(NICKNAME), eq(CONTENT),
+        when(persistenceService.persistWithOutbox(eq(ROOM_ID), eq(SENDER_ID), eq(NICKNAME), eq(CONTENT),
                 eq(CLIENT_MSG_ID), anyString(), anyLong()))
-                .thenReturn(saved);
+                .thenReturn(new PersistedChatMessage(saved, dto(saved, CLIENT_MSG_ID), outbox("uuid-3")));
 
         // when
         chatIngestService.ingest(ROOM_ID, SENDER_ID, NICKNAME, CONTENT, CLIENT_MSG_ID);
 
         // then
-        verify(publisher).publish(any());
-        verify(retryBuffer, never()).enqueue(any());
-        verify(roomService).updateLastMessage(eq(ROOM_ID), anyLong(), eq(CONTENT), eq(NICKNAME));
+        verify(persistenceService).persistWithOutbox(any(), any(), any(), any(), any(), any(), anyLong());
+    }
+
+    private ChatMessageDto dto(Message saved, String clientMessageId) {
+        ChatMessageDto dto = ChatMessageDto.from(saved);
+        dto.setClientMessageId(clientMessageId);
+        return dto;
+    }
+
+    private OutboxEvent outbox(String messageId) {
+        return OutboxEvent.builder()
+                .eventId("event-" + messageId)
+                .eventType(OutboxEvent.CHAT_MESSAGE_CREATED)
+                .aggregateType(OutboxEvent.AGGREGATE_MESSAGE)
+                .aggregateId(1L)
+                .roomId(ROOM_ID)
+                .messageId(messageId)
+                .payloadJson("{}")
+                .status(OutboxEventStatus.PENDING)
+                .attemptCount(0)
+                .nextRetryAt(System.currentTimeMillis())
+                .createdAt(System.currentTimeMillis())
+                .build();
     }
 }

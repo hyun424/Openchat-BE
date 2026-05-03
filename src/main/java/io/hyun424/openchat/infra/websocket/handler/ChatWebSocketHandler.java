@@ -157,11 +157,13 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         if (savedMessage == null) {
             return;
         }
+        long startNanos = System.nanoTime();
         roomSessionRegistry.sendControlToSession(
                 session.getId(),
                 ChatAckMessageDto.from(savedMessage),
                 "ack"
         );
+        chatPipelineMetrics.recordStage("ack.after_commit", startNanos);
     }
 
     private void validateAuthenticatedSession(String userId, String nickname) {

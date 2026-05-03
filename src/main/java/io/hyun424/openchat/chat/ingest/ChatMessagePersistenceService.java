@@ -1,0 +1,70 @@
+package io.hyun424.openchat.chat.ingest;
+
+import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
+import io.hyun424.openchat.chat.message.entity.Message;
+import io.hyun424.openchat.chat.message.repository.MessageRepository;
+import io.hyun424.openchat.chat.metrics.ChatPipelineMetrics;
+import io.hyun424.openchat.chat.outbox.OutboxEvent;
+import io.hyun424.openchat.chat.outbox.OutboxEventRepository;
+import io.hyun424.openchat.chat.outbox.OutboxEventStatus;
+import io.hyun424.openchat.chat.outbox.OutboxPayloadSerializer;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
+
+import java.util.UUID;
+
+@Service
+@RequiredArgsConstructor
+public class ChatMessagePersistenceService {
+
+    private final MessageRepository messageRepository;
+    private final OutboxEventRepository outboxEventRepository;
+    private final OutboxPayloadSerializer payloadSerializer;
+    private final ChatPipelineMetrics chatPipelineMetrics;
+
+    @Transactional
+    public PersistedChatMessage persistWithOutbox(Long roomId,
+                                                  String senderId,
+                                                  String nickname,
+                                                  String content,
+                                                  String clientMessageId,
+                                                  String messageId,
+                                                  long createdAt) {
+        long totalStartNanos = System.nanoTime();
+        long dbStartNanos = System.nanoTime();
+        Message saved = messageRepository.save(Message.builder()
+                .messageId(messageId)
+                .roomId(roomId)
+                .senderId(senderId)
+                .clientMessageId(StringUtils.hasText(clientMessageId) ? clientMessageId : null)
+                .senderNickname(nickname)
+                .content(content)
+                .createdAt(createdAt)
+                .build());
+        chatPipelineMetrics.recordStage("ingest.db_save", dbStartNanos);
+
+        ChatMessageDto dto = ChatMessageDto.from(saved);
+        dto.setClientMessageId(clientMessageId);
+
+        long outboxStartNanos = System.nanoTime();
+        OutboxEvent event = outboxEventRepository.save(OutboxEvent.builder()
+                .eventId(UUID.randomUUID().toString())
+                .eventType(OutboxEvent.CHAT_MESSAGE_CREATED)
+                .aggregateType(OutboxEvent.AGGREGATE_MESSAGE)
+                .aggregateId(saved.getId())
+                .roomId(roomId)
+                .messageId(messageId)
+                .payloadJson(payloadSerializer.serialize(dto))
+                .status(OutboxEventStatus.PENDING)
+                .attemptCount(0)
+                .nextRetryAt(System.currentTimeMillis())
+                .createdAt(System.currentTimeMillis())
+                .build());
+        chatPipelineMetrics.recordStage("ingest.outbox_save", outboxStartNanos);
+        chatPipelineMetrics.recordStage("ingest.persist.total", totalStartNanos);
+
+        return new PersistedChatMessage(saved, dto, event);
+    }
+}
