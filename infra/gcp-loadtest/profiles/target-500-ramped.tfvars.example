@@ -14,6 +14,7 @@ chat_duration_seconds = 120
 send_interval_ms     = 1000
 connect_ramp_seconds = 60
 scenario             = "k6/scenarios/08-hot-room-ramped.js"
+websocket_broadcast_lanes = 16
 
 app_disk_size_gb   = 30
 lb_disk_size_gb    = 10

@@ -13,6 +13,9 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -20,8 +23,10 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentCaptor.forClass;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.doAnswer;
 
 class RoomSessionRegistryTest {
 
@@ -54,7 +59,7 @@ class RoomSessionRegistryTest {
         registry.sendToRoom(1L, message());
 
         for (WebSocketSession session : sessions) {
-            verify(session).sendMessage(any(TextMessage.class));
+            verify(session, timeout(500)).sendMessage(any(TextMessage.class));
         }
         assertEquals(5, registry.count(1L));
         registry.shutdownExecutor();
@@ -70,7 +75,7 @@ class RoomSessionRegistryTest {
         registry.sendToRoom(1L, message());
 
         verify(closedSession, never()).sendMessage(any(TextMessage.class));
-        assertEquals(0, registry.count(1L));
+        awaitRoomCount(registry, 1L, 0);
         registry.shutdownExecutor();
     }
 
@@ -108,7 +113,7 @@ class RoomSessionRegistryTest {
         List<String> payloads = new ArrayList<>();
         for (WebSocketSession session : sessions) {
             ArgumentCaptor<TextMessage> captor = forClass(TextMessage.class);
-            verify(session).sendMessage(captor.capture());
+            verify(session, timeout(500)).sendMessage(captor.capture());
             payloads.add(captor.getValue().getPayload());
         }
         for (String payload : payloads) {
@@ -118,6 +123,42 @@ class RoomSessionRegistryTest {
             assertTrue(payload.contains("\"messages\""));
         }
         registry.shutdownExecutor();
+    }
+
+    @Test
+    @DisplayName("batch 전송은 실제 socket send 완료를 기다리지 않고 반환한다")
+    void sendBatchToRoom_enqueuesLaneTaskWithoutWaitingForSocketSend() throws Exception {
+        RoomSessionRegistry registry = new RoomSessionRegistry(new ObjectMapper(), 1, 16);
+        WebSocketSession session = mockOpenSession("session-1");
+        CountDownLatch sendStarted = new CountDownLatch(1);
+        CountDownLatch releaseSend = new CountDownLatch(1);
+        AtomicBoolean sendCompleted = new AtomicBoolean(false);
+        doAnswer(invocation -> {
+            sendStarted.countDown();
+            releaseSend.await(1, TimeUnit.SECONDS);
+            sendCompleted.set(true);
+            return null;
+        }).when(session).sendMessage(any(TextMessage.class));
+        registry.add(1L, session);
+
+        registry.sendBatchToRoom(1L, List.of(message(1L, "message-1"), message(2L, "message-2")));
+
+        assertTrue(sendStarted.await(500, TimeUnit.MILLISECONDS));
+        assertTrue(!sendCompleted.get());
+        releaseSend.countDown();
+        verify(session, timeout(500)).sendMessage(any(TextMessage.class));
+        registry.shutdownExecutor();
+    }
+
+    private void awaitRoomCount(RoomSessionRegistry registry, Long roomId, int expected) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + 500;
+        while (System.currentTimeMillis() < deadline) {
+            if (registry.count(roomId) == expected) {
+                return;
+            }
+            Thread.sleep(10);
+        }
+        assertEquals(expected, registry.count(roomId));
     }
 
     private WebSocketSession mockSession(String sessionId) {

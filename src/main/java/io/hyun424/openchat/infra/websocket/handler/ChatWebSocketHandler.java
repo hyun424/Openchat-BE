@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.hyun424.openchat.auth.jwt.JwtProvider;
 import io.hyun424.openchat.chat.ingest.ChatIngestService;
 import io.hyun424.openchat.chat.member.service.RoomMemberService;
+import io.hyun424.openchat.chat.metrics.ChatPipelineMetrics;
 import io.hyun424.openchat.chat.room.domain.Room;
 import io.hyun424.openchat.chat.room.service.RoomService;
 import io.hyun424.openchat.global.ratelimit.RateLimiter;
@@ -33,6 +34,7 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
     private final ChatWebSocketMessageParser messageParser;
     private final WebSocketErrorSender errorSender;
     private final WebSocketSessionGuard sessionGuard;
+    private final ChatPipelineMetrics chatPipelineMetrics;
 
     @Value("${ratelimit.ws.message-limit:10}")
     private int wsMessageLimit;
@@ -49,7 +51,8 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
                                 ChatIngestService chatIngestService,
                                 RoomService roomService,
                                 RateLimiter rateLimiter,
-                                JwtProvider jwtProvider) {
+                                JwtProvider jwtProvider,
+                                ChatPipelineMetrics chatPipelineMetrics) {
         this.roomMemberService = roomMemberService;
         this.roomSessionRegistry = roomSessionRegistry;
         this.chatIngestService = chatIngestService;
@@ -58,45 +61,70 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         this.messageParser = new ChatWebSocketMessageParser(objectMapper);
         this.errorSender = new WebSocketErrorSender(objectMapper);
         this.sessionGuard = new WebSocketSessionGuard(jwtProvider);
+        this.chatPipelineMetrics = chatPipelineMetrics;
     }
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
+        long totalStartNanos = System.nanoTime();
         Long roomId = extractRoomId(session);
         String userId = (String) session.getAttributes().get("userId");
         String nickname = (String) session.getAttributes().get("nickname");
 
         validateAuthenticatedSession(userId, nickname);
+        long roomCheckStartNanos = System.nanoTime();
         if (!closeIfRoomEnded(session, roomId)) {
+            chatPipelineMetrics.recordStage("ws.connect.room_check", roomCheckStartNanos);
+            chatPipelineMetrics.recordStage("ws.connect.total", totalStartNanos);
             return;
         }
+        chatPipelineMetrics.recordStage("ws.connect.room_check", roomCheckStartNanos);
 
+        long memberLookupStartNanos = System.nanoTime();
         roomMemberService.getJoinedAtOrThrow(roomId, userId);
+        chatPipelineMetrics.recordStage("ws.connect.member_lookup", memberLookupStartNanos);
         sessionGuard.markConnected(session);
+        long registryStartNanos = System.nanoTime();
         roomSessionRegistry.add(roomId, session);
+        chatPipelineMetrics.recordStage("ws.connect.registry_add", registryStartNanos);
+        chatPipelineMetrics.recordStage("ws.connect.total", totalStartNanos);
 
-        log.info("[WS CONNECT] roomId={} userId={} session={}",
+        log.debug("[WS CONNECT] roomId={} userId={} session={}",
                 roomId, userId, session.getId());
     }
 
     @Override
     protected void handleTextMessage(WebSocketSession session, TextMessage textMessage) {
+        long totalStartNanos = System.nanoTime();
         Long roomId = extractRoomId(session);
         String senderId = (String) session.getAttributes().get("userId");
         String nickname = (String) session.getAttributes().get("nickname");
 
         try {
+            long sizeCheckStartNanos = System.nanoTime();
             if (!validateMessageSize(session, textMessage, roomId, senderId)) {
+                chatPipelineMetrics.recordStage("ws.inbound.size_check", sizeCheckStartNanos);
                 return;
             }
-            if (!validateSessionState(session, roomId, senderId)) {
-                return;
-            }
-            if (!validateRateLimit(session, senderId, roomId)) {
-                return;
-            }
+            chatPipelineMetrics.recordStage("ws.inbound.size_check", sizeCheckStartNanos);
 
+            long sessionCheckStartNanos = System.nanoTime();
+            if (!validateSessionState(session, roomId, senderId)) {
+                chatPipelineMetrics.recordStage("ws.inbound.session_check", sessionCheckStartNanos);
+                return;
+            }
+            chatPipelineMetrics.recordStage("ws.inbound.session_check", sessionCheckStartNanos);
+
+            long rateLimitStartNanos = System.nanoTime();
+            if (!validateRateLimit(session, senderId, roomId)) {
+                chatPipelineMetrics.recordStage("ws.inbound.rate_limit", rateLimitStartNanos);
+                return;
+            }
+            chatPipelineMetrics.recordStage("ws.inbound.rate_limit", rateLimitStartNanos);
+
+            long parseStartNanos = System.nanoTime();
             ChatWebSocketMessage message = messageParser.parse(textMessage);
+            chatPipelineMetrics.recordStage("ws.inbound.parse", parseStartNanos);
             if (!validateContent(session, message, roomId, senderId)) {
                 return;
             }
@@ -105,6 +133,7 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
              * DB 저장, 메시지 버스 발행, fan-out은 모두 Ingest 계층이 책임진다.
              * WebSocket 핸들러는 연결/입력 검증만 담당해야 장애 대응 흐름을 추적하기 쉽다.
              */
+            long ingestStartNanos = System.nanoTime();
             chatIngestService.ingest(
                     roomId,
                     senderId,
@@ -112,9 +141,12 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
                     message.content(),
                     message.clientMessageId()
             );
+            chatPipelineMetrics.recordStage("ws.inbound.ingest", ingestStartNanos);
 
         } catch (Exception e) {
             log.error("[WS_MSG_ERROR]", e);
+        } finally {
+            chatPipelineMetrics.recordStage("ws.inbound.total", totalStartNanos);
         }
     }
 
@@ -191,7 +223,7 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         Long roomId = extractRoomId(session);
         roomSessionRegistry.remove(roomId, session);
 
-        log.info("[WS DISCONNECT] roomId={} session={}", roomId, session.getId());
+        log.debug("[WS DISCONNECT] roomId={} session={}", roomId, session.getId());
     }
 
     private Long extractRoomId(WebSocketSession session) {

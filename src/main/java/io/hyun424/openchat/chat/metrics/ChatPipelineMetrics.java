@@ -7,6 +7,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.Comparator;
@@ -32,6 +33,7 @@ public class ChatPipelineMetrics {
     private final ConcurrentHashMap<String, LongAdder> counterStats;
     private final ScheduledExecutorService loggerExecutor;
 
+    @Autowired
     public ChatPipelineMetrics(MeterRegistry meterRegistry) {
         this.meterRegistry = meterRegistry;
         this.enabled = true;
@@ -127,6 +129,7 @@ public class ChatPipelineMetrics {
     private Timer timer(String name, String stage) {
         return timers.computeIfAbsent(name + "." + stage, ignored -> Timer.builder(name)
                 .tag("stage", stage)
+                .publishPercentiles(0.5, 0.95, 0.99)
                 .register(meterRegistry));
     }
 

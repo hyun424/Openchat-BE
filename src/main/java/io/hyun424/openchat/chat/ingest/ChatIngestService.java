@@ -141,14 +141,19 @@ public class ChatIngestService {
             return false;
         }
 
+        long cacheStartNanos = System.nanoTime();
         String cacheKey = clientMessageCacheKey(roomId, senderId, clientMessageId);
         if (clientMessageIdCache.containsKey(cacheKey)) {
+            chatPipelineMetrics.recordStage("ingest.dedupe.cache_check", cacheStartNanos);
             log.info("[INGEST DEDUPE CACHE][{}] roomId={} senderId={} clientMessageId={}",
                     instanceId, roomId, senderId, clientMessageId);
             return true;
         }
+        chatPipelineMetrics.recordStage("ingest.dedupe.cache_check", cacheStartNanos);
 
+        long dbLookupStartNanos = System.nanoTime();
         Message existing = messageService.findByClientMessageId(roomId, senderId, clientMessageId);
+        chatPipelineMetrics.recordStage("ingest.dedupe.db_lookup", dbLookupStartNanos);
         if (existing == null) {
             return false;
         }

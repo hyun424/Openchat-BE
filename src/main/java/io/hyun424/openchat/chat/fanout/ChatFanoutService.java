@@ -30,6 +30,7 @@ public class ChatFanoutService {
     private final boolean batchEnabled;
     private final long batchWindowMillis;
     private final int maxBatchSize;
+    private final int maxFlushBatchesPerRun;
     private final ChatPipelineMetrics chatPipelineMetrics;
 
     @Value("${app.instance-id:local}")
@@ -39,14 +40,14 @@ public class ChatFanoutService {
     private static final long DEDUPE_TTL_MS = 60_000;
 
     public ChatFanoutService(ChatOutboundSender outboundSender) {
-        this(outboundSender, true, 20, 64, ChatPipelineMetrics.noop());
+        this(outboundSender, true, 20, 64, 16, ChatPipelineMetrics.noop());
     }
 
     public ChatFanoutService(ChatOutboundSender outboundSender,
                              boolean batchEnabled,
                              long batchWindowMillis,
                              int maxBatchSize) {
-        this(outboundSender, batchEnabled, batchWindowMillis, maxBatchSize, ChatPipelineMetrics.noop());
+        this(outboundSender, batchEnabled, batchWindowMillis, maxBatchSize, 16, ChatPipelineMetrics.noop());
     }
 
     @Autowired
@@ -54,11 +55,13 @@ public class ChatFanoutService {
                              @Value("${app.websocket.batch.enabled:true}") boolean batchEnabled,
                              @Value("${app.websocket.batch.window-ms:20}") long batchWindowMillis,
                              @Value("${app.websocket.batch.max-size:64}") int maxBatchSize,
+                             @Value("${app.websocket.batch.max-flush-batches-per-run:16}") int maxFlushBatchesPerRun,
                              ChatPipelineMetrics chatPipelineMetrics) {
         this.outboundSender = outboundSender;
         this.batchEnabled = batchEnabled;
         this.batchWindowMillis = Math.max(1, batchWindowMillis);
         this.maxBatchSize = Math.max(1, maxBatchSize);
+        this.maxFlushBatchesPerRun = Math.max(1, maxFlushBatchesPerRun);
         this.chatPipelineMetrics = chatPipelineMetrics;
         this.cleanerExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "dedupe-cleaner");
@@ -136,20 +139,33 @@ public class ChatFanoutService {
             return;
         }
 
-        List<ChatMessageDto> messages = buffer.drain(maxBatchSize);
-        if (messages.isEmpty()) {
+        int flushedBatchCount = 0;
+        int flushedMessageCount = 0;
+        try {
+            while (flushedBatchCount < maxFlushBatchesPerRun) {
+                List<ChatMessageDto> messages = buffer.drain(maxBatchSize);
+                if (messages.isEmpty()) {
+                    break;
+                }
+
+                for (ChatMessageDto message : messages) {
+                    chatPipelineMetrics.recordSinceCreated("fanout.batch.flush_start.since_created", message);
+                }
+                chatPipelineMetrics.recordDistribution("openchat_pipeline_batch_size", "fanout.flush", messages.size());
+                sendFlushedMessages(roomId, messages);
+                flushedBatchCount++;
+                flushedMessageCount += messages.size();
+            }
+        } finally {
             buffer.clearScheduled();
-            return;
         }
 
-        for (ChatMessageDto message : messages) {
-            chatPipelineMetrics.recordSinceCreated("fanout.batch.flush_start.since_created", message);
-        }
-        chatPipelineMetrics.recordDistribution("openchat_pipeline_batch_size", "fanout.flush", messages.size());
-        sendFlushedMessages(roomId, messages);
         chatPipelineMetrics.recordStage("fanout.batch.flush_total", flushStartNanos);
+        if (flushedBatchCount > 0) {
+            chatPipelineMetrics.recordDistribution("openchat_pipeline_batch_flush_batches", "fanout.room", flushedBatchCount);
+            chatPipelineMetrics.recordDistribution("openchat_pipeline_batch_flush_messages", "fanout.room", flushedMessageCount);
+        }
 
-        buffer.clearScheduled();
         if (buffer.size() > 0 && buffer.markScheduled()) {
             scheduleFlush(roomId, 0);
         }

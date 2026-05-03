@@ -1,5 +1,6 @@
 package io.hyun424.openchat.chat.room.service;
 
+import io.hyun424.openchat.chat.metrics.ChatPipelineMetrics;
 import io.hyun424.openchat.chat.room.domain.Room;
 import io.hyun424.openchat.chat.room.domain.RoomStatus;
 import io.hyun424.openchat.chat.room.dto.MyRoomResponse;
@@ -31,6 +32,7 @@ public class RoomService {
     private final RoomRepository roomRepository;
     private final RoomSessionRegistry roomSessionRegistry;
     private final RoomLifecyclePublisher roomLifecyclePublisher;
+    private final ChatPipelineMetrics chatPipelineMetrics;
 
     public Room createRoom(String userId, RoomCreateRequest request) {
         Room.RoomBuilder builder = Room.builder()
@@ -82,8 +84,13 @@ public class RoomService {
     }
 
     public Room getRoomOrThrow(Long roomId) {
-        return roomRepository.findById(roomId)
-                .orElseThrow(() -> new ApiException(ErrorCode.ROOM_NOT_FOUND));
+        long startNanos = System.nanoTime();
+        try {
+            return roomRepository.findById(roomId)
+                    .orElseThrow(() -> new ApiException(ErrorCode.ROOM_NOT_FOUND));
+        } finally {
+            chatPipelineMetrics.recordStage("room.get_by_id", startNanos);
+        }
     }
 
     /**
@@ -140,7 +147,9 @@ public class RoomService {
      */
     @Transactional
     public void updateLastMessage(Long roomId, Long timestamp, String message, String senderName) {
+        long startNanos = System.nanoTime();
         int updated = roomRepository.updateLastMessageIfNewer(roomId, timestamp, message, senderName);
+        chatPipelineMetrics.recordStage("room.update_last_message", startNanos);
         if (updated > 0) {
             log.debug("[ROOM UPDATE] roomId={} lastMessageAt={} sender={}", roomId, timestamp, senderName);
         }

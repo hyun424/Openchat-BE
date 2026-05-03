@@ -60,7 +60,7 @@ public class ChatRedisOnlyPublisher implements ChatMessagePublisher {
             redisTemplate.convertAndSend(channel, payload);
             chatPipelineMetrics.recordStage("publish.redis.convert_and_send", publishStartNanos);
             chatPipelineMetrics.recordSinceCreated("publish.redis.after_send.since_created", message);
-            log.info("[REDIS PUB][{}] channel={} roomId={} messageId={}",
+            log.debug("[REDIS PUB][{}] channel={} roomId={} messageId={}",
                     instanceId, channel, message.getRoomId(), message.getMessageId());
         } catch (Exception e) {
             chatPipelineMetrics.incrementCounter("publish.redis.fail");

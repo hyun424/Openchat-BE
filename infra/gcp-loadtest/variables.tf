@@ -59,7 +59,7 @@ variable "connect_ramp_seconds" {
 variable "websocket_broadcast_lanes" {
   description = "Number of WebSocket broadcast lane workers per app VM."
   type        = number
-  default     = 8
+  default     = 16
 
   validation {
     condition     = var.websocket_broadcast_lanes >= 1

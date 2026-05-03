@@ -33,8 +33,9 @@ public class RoomSessionRegistry {
     private final ObjectMapper objectMapper;
     private final RoomTrafficMonitor roomTrafficMonitor;
     private final ChatPipelineMetrics chatPipelineMetrics;
-    private final ExecutorService broadcastExecutor;
-    private final int broadcastPoolSize;
+    private final ThreadPoolExecutor[] broadcastLaneExecutors;
+    private final int broadcastLaneCount;
+    private final int broadcastShutdownTimeoutMillis;
 
     private final ConcurrentMap<Long, Set<WebSocketSession>> roomSessions =
             new ConcurrentHashMap<>();
@@ -45,55 +46,85 @@ public class RoomSessionRegistry {
 
     private static final int SEND_TIME_LIMIT_MS = 5000;
     private static final int BUFFER_SIZE_LIMIT = 64 * 1024;
-    private static final int DEFAULT_BROADCAST_QUEUE_CAPACITY = 4096;
+    private static final int DEFAULT_BROADCAST_LANES = 16;
+    private static final int DEFAULT_BROADCAST_QUEUE_CAPACITY_PER_LANE = 4096;
+    private static final int DEFAULT_BROADCAST_SHUTDOWN_TIMEOUT_MS = 5000;
 
     public RoomSessionRegistry(ObjectMapper objectMapper) {
-        this(objectMapper, new RoomTrafficMonitor(), ChatPipelineMetrics.noop(), 0, DEFAULT_BROADCAST_QUEUE_CAPACITY);
+        this(objectMapper, new RoomTrafficMonitor(), ChatPipelineMetrics.noop(),
+                DEFAULT_BROADCAST_LANES,
+                DEFAULT_BROADCAST_QUEUE_CAPACITY_PER_LANE,
+                DEFAULT_BROADCAST_SHUTDOWN_TIMEOUT_MS);
     }
 
     public RoomSessionRegistry(ObjectMapper objectMapper,
-                               int configuredPoolSize,
+                               int configuredLaneCount,
                                int queueCapacity) {
-        this(objectMapper, new RoomTrafficMonitor(), ChatPipelineMetrics.noop(), configuredPoolSize, queueCapacity);
+        this(objectMapper, new RoomTrafficMonitor(), ChatPipelineMetrics.noop(),
+                configuredLaneCount,
+                queueCapacity,
+                DEFAULT_BROADCAST_SHUTDOWN_TIMEOUT_MS);
     }
 
     public RoomSessionRegistry(ObjectMapper objectMapper,
                                RoomTrafficMonitor roomTrafficMonitor,
-                               int configuredPoolSize,
+                               int configuredLaneCount,
                                int queueCapacity) {
-        this(objectMapper, roomTrafficMonitor, ChatPipelineMetrics.noop(), configuredPoolSize, queueCapacity);
+        this(objectMapper, roomTrafficMonitor, ChatPipelineMetrics.noop(),
+                configuredLaneCount,
+                queueCapacity,
+                DEFAULT_BROADCAST_SHUTDOWN_TIMEOUT_MS);
     }
 
     @Autowired
     public RoomSessionRegistry(ObjectMapper objectMapper,
                                RoomTrafficMonitor roomTrafficMonitor,
                                ChatPipelineMetrics chatPipelineMetrics,
-                               @Value("${app.websocket.broadcast.pool-size:0}") int configuredPoolSize,
-                               @Value("${app.websocket.broadcast.queue-capacity:4096}") int queueCapacity) {
+                               @Value("${app.websocket.broadcast.lanes:0}") int configuredLaneCount,
+                               @Value("${app.websocket.broadcast.pool-size:0}") int legacyPoolSize,
+                               @Value("${app.websocket.broadcast.queue-capacity-per-lane:${app.websocket.broadcast.queue-capacity:4096}}") int queueCapacityPerLane,
+                               @Value("${app.websocket.broadcast.shutdown-timeout-ms:5000}") int shutdownTimeoutMillis) {
+        this(objectMapper, roomTrafficMonitor, chatPipelineMetrics,
+                configuredLaneCount > 0 ? configuredLaneCount : legacyPoolSize,
+                queueCapacityPerLane,
+                shutdownTimeoutMillis);
+    }
+
+    private RoomSessionRegistry(ObjectMapper objectMapper,
+                                RoomTrafficMonitor roomTrafficMonitor,
+                                ChatPipelineMetrics chatPipelineMetrics,
+                                int configuredLaneCount,
+                                int queueCapacityPerLane,
+                                int shutdownTimeoutMillis) {
         this.objectMapper = objectMapper;
         this.roomTrafficMonitor = roomTrafficMonitor;
         this.chatPipelineMetrics = chatPipelineMetrics;
-        this.broadcastPoolSize = resolveBroadcastPoolSize(configuredPoolSize);
-        int boundedQueueCapacity = Math.max(1, queueCapacity);
+        this.broadcastLaneCount = resolveBroadcastLaneCount(configuredLaneCount);
+        this.broadcastShutdownTimeoutMillis = Math.max(1, shutdownTimeoutMillis);
+        int boundedQueueCapacity = Math.max(1, queueCapacityPerLane);
         AtomicInteger threadCounter = new AtomicInteger(0);
-        this.broadcastExecutor = new ThreadPoolExecutor(
-                broadcastPoolSize, broadcastPoolSize,
-                60L, TimeUnit.SECONDS,
-                new LinkedBlockingQueue<>(boundedQueueCapacity),
-                r -> {
-                    Thread t = new Thread(r, "ws-broadcast-" + threadCounter.incrementAndGet());
-                    t.setDaemon(true);
-                    return t;
-                },
-                new ThreadPoolExecutor.CallerRunsPolicy()
-        );
+        this.broadcastLaneExecutors = new ThreadPoolExecutor[broadcastLaneCount];
+        for (int i = 0; i < broadcastLaneCount; i++) {
+            int laneIndex = i;
+            this.broadcastLaneExecutors[i] = new ThreadPoolExecutor(
+                    1, 1,
+                    60L, TimeUnit.SECONDS,
+                    new ArrayBlockingQueue<>(boundedQueueCapacity),
+                    r -> {
+                        Thread t = new Thread(r, "ws-broadcast-lane-" + laneIndex + "-" + threadCounter.incrementAndGet());
+                        t.setDaemon(true);
+                        return t;
+                    },
+                    new ThreadPoolExecutor.AbortPolicy()
+            );
+        }
     }
 
-    private int resolveBroadcastPoolSize(int configuredPoolSize) {
-        if (configuredPoolSize > 0) {
-            return configuredPoolSize;
+    private int resolveBroadcastLaneCount(int configuredLaneCount) {
+        if (configuredLaneCount > 0) {
+            return configuredLaneCount;
         }
-        return Math.max(4, Runtime.getRuntime().availableProcessors() * 4);
+        return DEFAULT_BROADCAST_LANES;
     }
 
     public boolean isAcceptingConnections() {
@@ -161,9 +192,6 @@ public class RoomSessionRegistry {
             return;
         }
 
-        Set<WebSocketSession> deadSessions = ConcurrentHashMap.newKeySet();
-        AtomicInteger successCount = new AtomicInteger(0);
-
         List<WebSocketSession> sessionSnapshot = new ArrayList<>(sessions);
         if (sessionSnapshot.isEmpty()) {
             return;
@@ -173,12 +201,11 @@ public class RoomSessionRegistry {
         if (createdAt != null) {
             roomTrafficMonitor.recordDeliveryLag(roomId, createdAt);
         }
-        waitAllSends(roomId, sessionSnapshot, textMessage, deadSessions, successCount);
-        removeDeadSessions(roomId, deadSessions);
+        int taskCount = enqueueBroadcast(roomId, sessionSnapshot, textMessage, "single");
         chatPipelineMetrics.recordStage("ws.broadcast.single.total", broadcastStartNanos);
 
-        log.debug("[WS BROADCAST] roomId={} messageId={} sent={} dead={}",
-                roomId, message.getMessageId(), successCount.get(), deadSessions.size());
+        log.debug("[WS BROADCAST] roomId={} messageId={} sessions={} laneTasks={}",
+                roomId, message.getMessageId(), sessionSnapshot.size(), taskCount);
     }
 
     /**
@@ -206,9 +233,6 @@ public class RoomSessionRegistry {
             return;
         }
 
-        Set<WebSocketSession> deadSessions = ConcurrentHashMap.newKeySet();
-        AtomicInteger successCount = new AtomicInteger(0);
-
         List<WebSocketSession> sessionSnapshot = new ArrayList<>(sessions);
         if (sessionSnapshot.isEmpty()) {
             return;
@@ -221,14 +245,13 @@ public class RoomSessionRegistry {
             }
         }
 
-        waitAllSends(roomId, sessionSnapshot, textMessage, deadSessions, successCount);
-        removeDeadSessions(roomId, deadSessions);
+        int taskCount = enqueueBroadcast(roomId, sessionSnapshot, textMessage, "batch");
         chatPipelineMetrics.recordStage("ws.broadcast.batch.total", broadcastStartNanos);
         chatPipelineMetrics.recordDistribution("openchat_pipeline_batch_size", "ws.broadcast", messages.size());
         chatPipelineMetrics.recordDistribution("openchat_pipeline_batch_sessions", "ws.broadcast", sessionSnapshot.size());
 
-        log.debug("[WS BATCH BROADCAST] roomId={} count={} sent={} dead={}",
-                roomId, messages.size(), successCount.get(), deadSessions.size());
+        log.debug("[WS BATCH BROADCAST] roomId={} count={} sessions={} laneTasks={}",
+                roomId, messages.size(), sessionSnapshot.size(), taskCount);
     }
 
     private TextMessage serializeMessage(Long roomId, ChatMessageDto message) {
@@ -259,41 +282,80 @@ public class RoomSessionRegistry {
         }
     }
 
-    private void waitAllSends(Long roomId,
-                              List<WebSocketSession> sessions,
-                              TextMessage textMessage,
-                              Set<WebSocketSession> deadSessions,
-                              AtomicInteger successCount) {
-        List<CompletableFuture<Void>> futures = new ArrayList<>();
-        int batchSize = calculateBatchSize(sessions.size());
-        for (int start = 0; start < sessions.size(); start += batchSize) {
-            int end = Math.min(start + batchSize, sessions.size());
-            List<WebSocketSession> batch = sessions.subList(start, end);
-            futures.add(CompletableFuture.runAsync(
-                    () -> sendBatch(roomId, batch, textMessage, deadSessions, successCount),
-                    broadcastExecutor));
+    private int enqueueBroadcast(Long roomId,
+                                 List<WebSocketSession> sessions,
+                                 TextMessage textMessage,
+                                 String payloadType) {
+        long enqueueStartNanos = System.nanoTime();
+        List<List<WebSocketSession>> laneSessions = new ArrayList<>(broadcastLaneCount);
+        for (int i = 0; i < broadcastLaneCount; i++) {
+            laneSessions.add(new ArrayList<>());
         }
-        long waitStartNanos = System.nanoTime();
-        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
-        chatPipelineMetrics.recordStage("ws.broadcast.wait_all", waitStartNanos);
-    }
 
-    private int calculateBatchSize(int sessionCount) {
-        int workerCount = Math.min(broadcastPoolSize, sessionCount);
-        return Math.max(1, (int) Math.ceil((double) sessionCount / workerCount));
-    }
-
-    private void sendBatch(Long roomId,
-                           List<WebSocketSession> sessions,
-                           TextMessage textMessage,
-                           Set<WebSocketSession> deadSessions,
-                           AtomicInteger successCount) {
-        long startNanos = System.nanoTime();
         for (WebSocketSession session : sessions) {
-            sendToSingleSession(roomId, session, textMessage, deadSessions, successCount);
+            laneSessions.get(laneIndex(session)).add(session);
         }
-        chatPipelineMetrics.recordStage("ws.broadcast.worker_batch", startNanos);
-        chatPipelineMetrics.recordDistribution("openchat_pipeline_batch_sessions", "ws.worker", sessions.size());
+
+        int taskCount = 0;
+        for (int laneIndex = 0; laneIndex < laneSessions.size(); laneIndex++) {
+            List<WebSocketSession> laneBatch = laneSessions.get(laneIndex);
+            if (laneBatch.isEmpty()) {
+                continue;
+            }
+            BroadcastTask task = new BroadcastTask(
+                    roomId,
+                    laneIndex,
+                    payloadType,
+                    textMessage,
+                    List.copyOf(laneBatch),
+                    System.nanoTime()
+            );
+            enqueueLaneTask(task);
+            taskCount++;
+        }
+        chatPipelineMetrics.recordStage("ws.broadcast.enqueue.total", enqueueStartNanos);
+        chatPipelineMetrics.recordDistribution("openchat_pipeline_broadcast_lane_tasks", payloadType, taskCount);
+        return taskCount;
+    }
+
+    private int laneIndex(WebSocketSession session) {
+        String sessionId = session.getId();
+        return Math.floorMod(sessionId == null ? 0 : sessionId.hashCode(), broadcastLaneCount);
+    }
+
+    private void enqueueLaneTask(BroadcastTask task) {
+        ThreadPoolExecutor executor = broadcastLaneExecutors[task.laneIndex()];
+        long enqueueStartNanos = System.nanoTime();
+        try {
+            executor.execute(() -> runBroadcastTask(task));
+            chatPipelineMetrics.recordStage("ws.broadcast.lane.enqueue", enqueueStartNanos);
+            chatPipelineMetrics.recordDistribution("openchat_pipeline_broadcast_lane_queue_size",
+                    "lane-" + task.laneIndex(), executor.getQueue().size());
+        } catch (RejectedExecutionException e) {
+            chatPipelineMetrics.recordStage("ws.broadcast.lane.enqueue.fail", enqueueStartNanos);
+            chatPipelineMetrics.incrementCounter("ws.broadcast.lane.enqueue.fail");
+            log.warn("[WS BROADCAST LANE FULL] lane={} roomId={} sessions={}",
+                    task.laneIndex(), task.roomId(), task.sessions().size());
+            runBroadcastTask(task);
+        }
+    }
+
+    private void runBroadcastTask(BroadcastTask task) {
+        long startNanos = System.nanoTime();
+        chatPipelineMetrics.recordStageNanos("ws.broadcast.lane.queue_wait", startNanos - task.enqueuedNanos());
+        Set<WebSocketSession> deadSessions = ConcurrentHashMap.newKeySet();
+        AtomicInteger successCount = new AtomicInteger(0);
+        for (WebSocketSession session : task.sessions()) {
+            sendToSingleSession(task.roomId(), session, task.textMessage(), deadSessions, successCount);
+        }
+        removeDeadSessions(task.roomId(), deadSessions);
+        chatPipelineMetrics.recordStage("ws.broadcast.lane.worker.total", startNanos);
+        chatPipelineMetrics.recordDistribution("openchat_pipeline_batch_sessions",
+                "ws.lane." + task.payloadType(), task.sessions().size());
+
+        log.debug("[WS BROADCAST LANE] roomId={} lane={} type={} sessions={} sent={} dead={}",
+                task.roomId(), task.laneIndex(), task.payloadType(), task.sessions().size(),
+                successCount.get(), deadSessions.size());
     }
 
     private void sendToSingleSession(Long roomId,
@@ -301,6 +363,7 @@ public class RoomSessionRegistry {
                                      TextMessage textMessage,
                                      Set<WebSocketSession> deadSessions,
                                      AtomicInteger successCount) {
+        long sendStartNanos = System.nanoTime();
         try {
             if (!session.isOpen()) {
                 deadSessions.add(session);
@@ -308,8 +371,10 @@ public class RoomSessionRegistry {
             }
             session.sendMessage(textMessage);
             successCount.incrementAndGet();
+            chatPipelineMetrics.recordStage("ws.broadcast.lane.send.total", sendStartNanos);
         } catch (Exception e) {
-            chatPipelineMetrics.incrementCounter("ws.send.fail");
+            chatPipelineMetrics.recordStage("ws.broadcast.lane.send.fail", sendStartNanos);
+            chatPipelineMetrics.incrementCounter("ws.broadcast.lane.send.fail");
             log.warn("[WS SEND FAIL] roomId={} sessionId={}", roomId, session.getId(), e);
             deadSessions.add(session);
         }
@@ -386,15 +451,28 @@ public class RoomSessionRegistry {
 
     @PreDestroy
     public void shutdownExecutor() {
-        log.info("[WS REGISTRY] Shutting down broadcast executor");
-        broadcastExecutor.shutdown();
-        try {
-            if (!broadcastExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
-                broadcastExecutor.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            broadcastExecutor.shutdownNow();
-            Thread.currentThread().interrupt();
+        log.info("[WS REGISTRY] Shutting down broadcast lane executors");
+        for (ThreadPoolExecutor executor : broadcastLaneExecutors) {
+            executor.shutdown();
         }
+        long timeoutPerLane = Math.max(1, broadcastShutdownTimeoutMillis / Math.max(1, broadcastLaneExecutors.length));
+        for (ThreadPoolExecutor executor : broadcastLaneExecutors) {
+            try {
+                if (!executor.awaitTermination(timeoutPerLane, TimeUnit.MILLISECONDS)) {
+                    executor.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                executor.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    private record BroadcastTask(Long roomId,
+                                 int laneIndex,
+                                 String payloadType,
+                                 TextMessage textMessage,
+                                 List<WebSocketSession> sessions,
+                                 long enqueuedNanos) {
     }
 }

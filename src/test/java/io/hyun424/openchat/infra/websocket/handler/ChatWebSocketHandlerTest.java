@@ -5,6 +5,7 @@ import io.hyun424.openchat.auth.jwt.JwtProvider;
 import io.hyun424.openchat.chat.ingest.ChatIngestService;
 import io.hyun424.openchat.chat.member.service.RoomMemberService;
 import io.hyun424.openchat.chat.message.service.MessageService;
+import io.hyun424.openchat.chat.metrics.ChatPipelineMetrics;
 import io.hyun424.openchat.chat.room.domain.Room;
 import io.hyun424.openchat.chat.room.service.RoomService;
 import io.hyun424.openchat.global.ratelimit.RateLimiter;
@@ -46,6 +47,7 @@ class ChatWebSocketHandlerTest {
     @Mock private RoomService roomService;
     @Mock private RateLimiter rateLimiter;
     @Mock private JwtProvider jwtProvider;
+    @Mock private ChatPipelineMetrics chatPipelineMetrics;
     @Mock private WebSocketSession session;
 
     @InjectMocks
