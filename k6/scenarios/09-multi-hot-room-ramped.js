@@ -158,7 +158,7 @@ export default function (data) {
   hotRoomAssignedUsers.add(1, tags);
 
   const userId = makeUserId(`mhr-${HOT_ROOMS}x${VUS_PER_ROOM}-r${roomIndex}-${userOrdinalInRoom}`);
-  const nickname = makeNickname(`MHR${roomIndex}-${userOrdinalInRoom}`);
+  const nickname = makeNickname(`MHR${roomIndex}U${userOrdinalInRoom}`);
 
   const token = login(userId, nickname);
   if (!token) {
