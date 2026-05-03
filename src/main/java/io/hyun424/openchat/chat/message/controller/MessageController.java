@@ -52,6 +52,21 @@ public class MessageController {
     }
 
     /**
+     * WebSocket batch/재연결 보정을 위해 cursor 이후 메시지를 조회한다.
+     * cursor는 마지막으로 처리한 Message.id 또는 sequence 값을 사용한다.
+     */
+    @GetMapping("/{roomId}/messages/after")
+    public MessagePageResponse getMessagesAfter(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable @Positive Long roomId,
+            @RequestParam @Positive Long cursor,
+            @RequestParam(defaultValue = "100") @Min(1) @Max(500) int limit
+    ) {
+        String userId = authUserResolver.extractUserId(authorization);
+        return messageService.getMessagesAfterCursor(roomId, userId, cursor, limit);
+    }
+
+    /**
      * 기존 클라이언트 호환을 위한 전체 조회 API.
      * 신규 화면은 cursor 기반 API를 사용한다.
      */

@@ -4,6 +4,7 @@ import { makeUUID } from './data-factory.js';
 import {
   wsConnectDuration, wsMessageRoundtrip, wsConnectSuccess,
   wsConnectFailure, wsConnectFailures, wsMsgSent, wsMsgReceived,
+  wsFramesReceived,
 } from './metrics.js';
 
 const WS_BASE_URL = __ENV.WS_BASE_URL || 'ws://localhost:8080';
@@ -43,18 +44,27 @@ export function connectAndChat(opts) {
 
     // 메시지 수신 핸들러
     socket.on('message', function (data) {
-      wsMsgReceived.add(1);
+      wsFramesReceived.add(1);
       try {
         const msg = JSON.parse(data);
+        const messages = msg && msg.type === 'chat.batch' && Array.isArray(msg.messages)
+          ? msg.messages
+          : [msg];
 
-        // 에코된 자기 메시지의 라운드트립 측정
-        if (msg.clientMessageId && pendingMessages[msg.clientMessageId]) {
-          const rtt = Date.now() - pendingMessages[msg.clientMessageId];
-          wsMessageRoundtrip.add(rtt);
-          delete pendingMessages[msg.clientMessageId];
+        for (const logicalMsg of messages) {
+          wsMsgReceived.add(1);
+
+          // 에코된 자기 메시지의 라운드트립 측정
+          if (logicalMsg.clientMessageId && pendingMessages[logicalMsg.clientMessageId]) {
+            const rtt = Date.now() - pendingMessages[logicalMsg.clientMessageId];
+            wsMessageRoundtrip.add(rtt);
+            delete pendingMessages[logicalMsg.clientMessageId];
+          }
+
+          if (onMessage) {
+            onMessage(logicalMsg);
+          }
         }
-
-        if (onMessage) onMessage(msg);
       } catch (e) {
         // non-JSON 메시지 무시
       }

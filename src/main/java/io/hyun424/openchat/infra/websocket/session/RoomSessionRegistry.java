@@ -1,6 +1,7 @@
 package io.hyun424.openchat.infra.websocket.session;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.hyun424.openchat.chat.message.dto.ChatBatchMessageDto;
 import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
 import io.hyun424.openchat.chat.room.hot.RoomTrafficMonitor;
 import jakarta.annotation.PreDestroy;
@@ -167,12 +168,68 @@ public class RoomSessionRegistry {
                 roomId, message.getMessageId(), successCount.get(), deadSessions.size());
     }
 
+    /**
+     * 같은 방의 여러 논리 메시지를 하나의 WebSocket frame으로 전송한다.
+     * 단건 payload 호환성을 위해 메시지가 1개뿐이면 기존 단건 경로를 사용한다.
+     */
+    public void sendBatchToRoom(Long roomId, List<ChatMessageDto> messages) {
+        if (messages == null || messages.isEmpty()) {
+            return;
+        }
+        if (messages.size() == 1) {
+            sendToRoom(roomId, messages.get(0));
+            return;
+        }
+
+        Set<WebSocketSession> sessions = getSessions(roomId);
+        if (sessions.isEmpty()) {
+            log.debug("[WS BATCH BROADCAST] roomId={} count={} - no sessions", roomId, messages.size());
+            return;
+        }
+
+        TextMessage textMessage = serializeBatchMessage(roomId, messages);
+        if (textMessage == null) {
+            return;
+        }
+
+        Set<WebSocketSession> deadSessions = ConcurrentHashMap.newKeySet();
+        AtomicInteger successCount = new AtomicInteger(0);
+
+        List<WebSocketSession> sessionSnapshot = new ArrayList<>(sessions);
+        if (sessionSnapshot.isEmpty()) {
+            return;
+        }
+        roomTrafficMonitor.recordOutboundFanout(roomId, sessionSnapshot.size() * messages.size());
+        for (ChatMessageDto message : messages) {
+            Long createdAt = message.getCreatedAt();
+            if (createdAt != null) {
+                roomTrafficMonitor.recordDeliveryLag(roomId, createdAt);
+            }
+        }
+
+        waitAllSends(roomId, sessionSnapshot, textMessage, deadSessions, successCount);
+        removeDeadSessions(roomId, deadSessions);
+
+        log.debug("[WS BATCH BROADCAST] roomId={} count={} sent={} dead={}",
+                roomId, messages.size(), successCount.get(), deadSessions.size());
+    }
+
     private TextMessage serializeMessage(Long roomId, ChatMessageDto message) {
         try {
             return new TextMessage(objectMapper.writeValueAsString(message));
         } catch (Exception e) {
             log.error("[WS SERIALIZE FAIL] roomId={} messageId={}",
                     roomId, message.getMessageId(), e);
+            return null;
+        }
+    }
+
+    private TextMessage serializeBatchMessage(Long roomId, List<ChatMessageDto> messages) {
+        try {
+            return new TextMessage(objectMapper.writeValueAsString(ChatBatchMessageDto.from(roomId, messages)));
+        } catch (Exception e) {
+            log.error("[WS BATCH SERIALIZE FAIL] roomId={} count={}",
+                    roomId, messages.size(), e);
             return null;
         }
     }

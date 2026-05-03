@@ -5,15 +5,19 @@ import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
 import io.hyun424.openchat.chat.room.hot.RoomTrafficMonitor;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
 import java.net.URI;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentCaptor.forClass;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -89,6 +93,33 @@ class RoomSessionRegistryTest {
         registry.shutdownExecutor();
     }
 
+    @Test
+    @DisplayName("batch envelope을 한 번 직렬화해 모든 열린 세션에 전송한다")
+    void sendBatchToRoom_multipleMessages_sendsBatchEnvelopeToEveryOpenSession() throws Exception {
+        RoomSessionRegistry registry = new RoomSessionRegistry(new ObjectMapper(), 2, 16);
+        List<WebSocketSession> sessions = List.of(
+                mockOpenSession("session-1"),
+                mockOpenSession("session-2")
+        );
+        sessions.forEach(session -> registry.add(1L, session));
+
+        registry.sendBatchToRoom(1L, List.of(message(1L, "message-1"), message(2L, "message-2")));
+
+        List<String> payloads = new ArrayList<>();
+        for (WebSocketSession session : sessions) {
+            ArgumentCaptor<TextMessage> captor = forClass(TextMessage.class);
+            verify(session).sendMessage(captor.capture());
+            payloads.add(captor.getValue().getPayload());
+        }
+        for (String payload : payloads) {
+            assertTrue(payload.contains("\"type\":\"chat.batch\""));
+            assertTrue(payload.contains("\"firstSequence\":1"));
+            assertTrue(payload.contains("\"lastSequence\":2"));
+            assertTrue(payload.contains("\"messages\""));
+        }
+        registry.shutdownExecutor();
+    }
+
     private WebSocketSession mockSession(String sessionId) {
         return mockSession(sessionId, true);
     }
@@ -107,9 +138,14 @@ class RoomSessionRegistryTest {
     }
 
     private ChatMessageDto message() {
+        return message(1L, "message-1");
+    }
+
+    private ChatMessageDto message(Long id, String messageId) {
         return ChatMessageDto.builder()
-                .id(1L)
-                .messageId("message-1")
+                .id(id)
+                .sequence(id)
+                .messageId(messageId)
                 .clientMessageId("client-message-1")
                 .roomId(1L)
                 .senderId("user-1")

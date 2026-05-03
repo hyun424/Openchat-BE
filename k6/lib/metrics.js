@@ -8,6 +8,7 @@ export const wsConnectFailure = new Rate('ws_connect_failure_rate');
 export const wsConnectFailures = new Counter('ws_connect_failures_total');
 export const wsMsgSent = new Counter('ws_messages_sent_total');
 export const wsMsgReceived = new Counter('ws_messages_received_total');
+export const wsFramesReceived = new Counter('ws_frames_received_total');
 
 // ── REST API Metrics (per endpoint) ──
 export const restLogin = new Trend('rest_login_duration_ms', true);
