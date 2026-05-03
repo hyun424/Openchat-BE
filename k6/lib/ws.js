@@ -20,6 +20,7 @@ const WS_BASE_URL = __ENV.WS_BASE_URL || 'ws://localhost:8080';
  * @param {number} opts.sendInterval - 메시지 전송 간격(ms), 기본 200
  * @param {string} opts.messageText - 전송할 메시지 텍스트
  * @param {function} opts.onMessage - 수신 메시지 콜백 (선택)
+ * @param {Object} opts.tags        - k6 metric tags (선택)
  */
 export function connectAndChat(opts) {
   const {
@@ -29,30 +30,32 @@ export function connectAndChat(opts) {
     sendInterval = 200,
     messageText = 'k6 load test message',
     onMessage,
+    tags = {},
   } = opts;
 
   const url = `${WS_BASE_URL}/ws/chat?roomId=${roomId}&token=${token}`;
   const connectStart = Date.now();
+  const metricTags = tags || {};
 
   // 전송 메시지의 clientMessageId → 전송 시각 맵 (라운드트립 측정용)
   const pendingMessages = {};
 
   const res = ws.connect(url, {}, function (socket) {
     const connectEnd = Date.now();
-    wsConnectDuration.add(connectEnd - connectStart);
-    wsConnectSuccess.add(true);
-    wsConnectFailure.add(false);
+    wsConnectDuration.add(connectEnd - connectStart, metricTags);
+    wsConnectSuccess.add(true, metricTags);
+    wsConnectFailure.add(false, metricTags);
 
     // 메시지 수신 핸들러
     socket.on('message', function (data) {
-      wsFramesReceived.add(1);
+      wsFramesReceived.add(1, metricTags);
       try {
         const msg = JSON.parse(data);
         if (msg && msg.type === 'chat.ack') {
-          wsAcksReceived.add(1);
+          wsAcksReceived.add(1, metricTags);
           if (msg.clientMessageId && pendingMessages[msg.clientMessageId]) {
             const ackRtt = Date.now() - pendingMessages[msg.clientMessageId];
-            chatAckRoundtrip.add(ackRtt);
+            chatAckRoundtrip.add(ackRtt, metricTags);
             delete pendingMessages[msg.clientMessageId];
           }
           if (onMessage) {
@@ -62,8 +65,8 @@ export function connectAndChat(opts) {
         }
 
         if (msg && msg.type === 'chat.batch' && msg.realtimeComplete === false) {
-          wsRealtimeIncompleteFrames.add(1);
-          wsRealtimeOmittedMessages.add(Number(msg.omittedCount || 0));
+          wsRealtimeIncompleteFrames.add(1, metricTags);
+          wsRealtimeOmittedMessages.add(Number(msg.omittedCount || 0), metricTags);
         }
 
         const messages = msg && msg.type === 'chat.batch' && Array.isArray(msg.messages)
@@ -71,15 +74,15 @@ export function connectAndChat(opts) {
           : [msg];
 
         for (const logicalMsg of messages) {
-          wsMsgReceived.add(1);
+          wsMsgReceived.add(1, metricTags);
           if (logicalMsg.createdAt) {
-            wsVisibleFreshness.add(Date.now() - Number(logicalMsg.createdAt));
+            wsVisibleFreshness.add(Date.now() - Number(logicalMsg.createdAt), metricTags);
           }
 
           // 에코된 자기 메시지의 라운드트립 측정
           if (logicalMsg.clientMessageId && pendingMessages[logicalMsg.clientMessageId]) {
             const rtt = Date.now() - pendingMessages[logicalMsg.clientMessageId];
-            wsMessageRoundtrip.add(rtt);
+            wsMessageRoundtrip.add(rtt, metricTags);
             delete pendingMessages[logicalMsg.clientMessageId];
           }
 
@@ -93,9 +96,9 @@ export function connectAndChat(opts) {
     });
 
     socket.on('error', function (e) {
-      wsConnectSuccess.add(false);
-      wsConnectFailure.add(true, { status: 'socket_error' });
-      wsConnectFailures.add(1, { status: 'socket_error' });
+      wsConnectSuccess.add(false, metricTags);
+      wsConnectFailure.add(true, { ...metricTags, status: 'socket_error' });
+      wsConnectFailures.add(1, { ...metricTags, status: 'socket_error' });
       console.error(`WS socket error roomId=${roomId} error=${String(e).slice(0, 240)}`);
     });
 
@@ -108,7 +111,7 @@ export function connectAndChat(opts) {
       });
       pendingMessages[clientMessageId] = Date.now();
       socket.send(payload);
-      wsMsgSent.add(1);
+      wsMsgSent.add(1, metricTags);
     }, sendInterval);
 
     // duration 후 연결 종료
@@ -124,9 +127,9 @@ export function connectAndChat(opts) {
   if (!connected) {
     const status = res && res.status ? String(res.status) : 'unknown';
     const error = res && res.error ? String(res.error).slice(0, 240) : '';
-    wsConnectSuccess.add(false);
-    wsConnectFailure.add(true, { status });
-    wsConnectFailures.add(1, { status });
+    wsConnectSuccess.add(false, metricTags);
+    wsConnectFailure.add(true, { ...metricTags, status });
+    wsConnectFailures.add(1, { ...metricTags, status });
     console.error(`WS connect failed roomId=${roomId} status=${status} error=${error}`);
   }
 

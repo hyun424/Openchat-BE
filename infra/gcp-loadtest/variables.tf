@@ -56,6 +56,28 @@ variable "connect_ramp_seconds" {
   default     = 60
 }
 
+variable "hot_rooms" {
+  description = "Number of simultaneous hot rooms for multi-room k6 scenarios."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.hot_rooms >= 1
+    error_message = "hot_rooms must be at least 1."
+  }
+}
+
+variable "vus_per_room" {
+  description = "Number of VUs assigned to each hot room for multi-room k6 scenarios."
+  type        = number
+  default     = 0
+
+  validation {
+    condition     = var.vus_per_room >= 0
+    error_message = "vus_per_room must be zero or greater."
+  }
+}
+
 variable "websocket_broadcast_lanes" {
   description = "Number of WebSocket broadcast lane workers per app VM."
   type        = number

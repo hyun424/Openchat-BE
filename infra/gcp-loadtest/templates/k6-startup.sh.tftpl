@@ -18,6 +18,8 @@ VUS_LIST="${vus_list}"
 CHAT_DURATION_SECONDS="${chat_duration_seconds}"
 SEND_INTERVAL_MS="${send_interval_ms}"
 CONNECT_RAMP_SECONDS="${connect_ramp_seconds}"
+HOT_ROOMS="${hot_rooms}"
+VUS_PER_ROOM="${vus_per_room}"
 SCENARIO="${scenario}"
 
 WORKDIR="/opt/openchat"
@@ -87,7 +89,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "[k6] startup begin run_id=$RUN_ID profile=$PROFILE vus_list=$VUS_LIST base=$BASE_URL connect_ramp_seconds=$CONNECT_RAMP_SECONDS"
+echo "[k6] startup begin run_id=$RUN_ID profile=$PROFILE vus_list=$VUS_LIST base=$BASE_URL connect_ramp_seconds=$CONNECT_RAMP_SECONDS hot_rooms=$HOT_ROOMS vus_per_room=$VUS_PER_ROOM"
 apply_socket_tuning
 collect_socket_snapshot "k6-socket-before"
 
@@ -151,6 +153,8 @@ for vus in $VUS_LIST; do
     -e SEND_INTERVAL_MS="$SEND_INTERVAL_MS" \
     -e CHAT_DURATION_SECONDS="$CHAT_DURATION_SECONDS" \
     -e CONNECT_RAMP_SECONDS="$CONNECT_RAMP_SECONDS" \
+    -e HOT_ROOMS="$HOT_ROOMS" \
+    -e VUS_PER_ROOM="$VUS_PER_ROOM" \
     "$SCENARIO" 2>&1 | tee "$output_dir/$${vus}vu.log"
   k6_status=$${PIPESTATUS[0]}
   set -e
@@ -167,6 +171,8 @@ cat > "$RESULT_ROOT/run-metadata.json" <<EOF
   "chatDurationSeconds": $CHAT_DURATION_SECONDS,
   "sendIntervalMs": $SEND_INTERVAL_MS,
   "connectRampSeconds": $CONNECT_RAMP_SECONDS,
+  "hotRooms": $HOT_ROOMS,
+  "vusPerRoom": $VUS_PER_ROOM,
   "baseUrl": "$BASE_URL",
   "wsBaseUrl": "$WS_BASE_URL",
   "lbVmName": "$LB_VM_NAME",

@@ -445,6 +445,8 @@ resource "google_compute_instance" "k6" {
       chat_duration_seconds = var.chat_duration_seconds
       send_interval_ms      = var.send_interval_ms
       connect_ramp_seconds  = var.connect_ramp_seconds
+      hot_rooms             = var.hot_rooms
+      vus_per_room          = var.vus_per_room
       scenario              = var.scenario
     })
   }
