@@ -2,6 +2,7 @@ package io.hyun424.openchat.chat.ingest;
 
 import io.hyun424.openchat.chat.message.entity.Message;
 import io.hyun424.openchat.chat.message.service.MessageService;
+import io.hyun424.openchat.chat.metrics.ChatPipelineMetrics;
 import io.hyun424.openchat.chat.publish.ChatMessagePublisher;
 import io.hyun424.openchat.chat.publish.PublishRetryBuffer;
 import io.hyun424.openchat.chat.room.hot.RoomTrafficMonitor;
@@ -31,6 +32,7 @@ class ChatIngestServiceTest {
     @Mock private RoomService roomService;
     @Mock private RedisHealthState redisHealthState;
     @Mock private RoomTrafficMonitor roomTrafficMonitor;
+    @Mock private ChatPipelineMetrics chatPipelineMetrics;
     @Mock private ZSetOperations<String, String> zSetOps;
 
     @InjectMocks

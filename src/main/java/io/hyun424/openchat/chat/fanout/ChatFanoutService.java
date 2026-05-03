@@ -1,6 +1,7 @@
 package io.hyun424.openchat.chat.fanout;
 
 import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
+import io.hyun424.openchat.chat.metrics.ChatPipelineMetrics;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -29,6 +30,7 @@ public class ChatFanoutService {
     private final boolean batchEnabled;
     private final long batchWindowMillis;
     private final int maxBatchSize;
+    private final ChatPipelineMetrics chatPipelineMetrics;
 
     @Value("${app.instance-id:local}")
     private String instanceId;
@@ -37,18 +39,27 @@ public class ChatFanoutService {
     private static final long DEDUPE_TTL_MS = 60_000;
 
     public ChatFanoutService(ChatOutboundSender outboundSender) {
-        this(outboundSender, true, 20, 64);
+        this(outboundSender, true, 20, 64, ChatPipelineMetrics.noop());
+    }
+
+    public ChatFanoutService(ChatOutboundSender outboundSender,
+                             boolean batchEnabled,
+                             long batchWindowMillis,
+                             int maxBatchSize) {
+        this(outboundSender, batchEnabled, batchWindowMillis, maxBatchSize, ChatPipelineMetrics.noop());
     }
 
     @Autowired
     public ChatFanoutService(ChatOutboundSender outboundSender,
                              @Value("${app.websocket.batch.enabled:true}") boolean batchEnabled,
                              @Value("${app.websocket.batch.window-ms:20}") long batchWindowMillis,
-                             @Value("${app.websocket.batch.max-size:64}") int maxBatchSize) {
+                             @Value("${app.websocket.batch.max-size:64}") int maxBatchSize,
+                             ChatPipelineMetrics chatPipelineMetrics) {
         this.outboundSender = outboundSender;
         this.batchEnabled = batchEnabled;
         this.batchWindowMillis = Math.max(1, batchWindowMillis);
         this.maxBatchSize = Math.max(1, maxBatchSize);
+        this.chatPipelineMetrics = chatPipelineMetrics;
         this.cleanerExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "dedupe-cleaner");
             t.setDaemon(true);
@@ -67,18 +78,24 @@ public class ChatFanoutService {
      * Redis Pub/Sub은 모든 앱 인스턴스가 같은 메시지를 받아야 하므로 dedupe는 인스턴스 로컬 범위로만 수행한다.
      */
     public void fanout(ChatMessageDto message) {
+        long startNanos = System.nanoTime();
         String messageId = message.getMessageId();
 
         if (hasProcessedLocally(messageId)) {
+            chatPipelineMetrics.incrementCounter("fanout.dedupe_skip");
             log.debug("[DEDUPE][{}] messageId={} - already processed", instanceId, messageId);
             return;
         }
+        chatPipelineMetrics.recordSinceCreated("fanout.enter.since_created", message);
 
         if (batchEnabled) {
             enqueueForRoomBatch(message);
         } else {
+            long sendStartNanos = System.nanoTime();
             outboundSender.send(message);
+            chatPipelineMetrics.recordStage("fanout.outbound_single", sendStartNanos);
         }
+        chatPipelineMetrics.recordStage("fanout.total", startNanos);
 
         log.debug("[FANOUT][{}] roomId={} messageId={}",
                 instanceId, message.getRoomId(), message.getMessageId());
@@ -88,6 +105,8 @@ public class ChatFanoutService {
         Long roomId = message.getRoomId();
         RoomFanoutBuffer buffer = roomBuffers.computeIfAbsent(roomId, ignored -> new RoomFanoutBuffer());
         buffer.add(message);
+        chatPipelineMetrics.recordDistribution("openchat_pipeline_batch_pending", "fanout.room", buffer.size());
+        chatPipelineMetrics.recordSinceCreated("fanout.batch.enqueued.since_created", message);
 
         if (buffer.markScheduled()) {
             scheduleFlush(roomId, batchWindowMillis);
@@ -111,6 +130,7 @@ public class ChatFanoutService {
     }
 
     private void flushRoomBatch(Long roomId) {
+        long flushStartNanos = System.nanoTime();
         RoomFanoutBuffer buffer = roomBuffers.get(roomId);
         if (buffer == null) {
             return;
@@ -122,7 +142,12 @@ public class ChatFanoutService {
             return;
         }
 
+        for (ChatMessageDto message : messages) {
+            chatPipelineMetrics.recordSinceCreated("fanout.batch.flush_start.since_created", message);
+        }
+        chatPipelineMetrics.recordDistribution("openchat_pipeline_batch_size", "fanout.flush", messages.size());
         sendFlushedMessages(roomId, messages);
+        chatPipelineMetrics.recordStage("fanout.batch.flush_total", flushStartNanos);
 
         buffer.clearScheduled();
         if (buffer.size() > 0 && buffer.markScheduled()) {
@@ -131,11 +156,14 @@ public class ChatFanoutService {
     }
 
     private void sendFlushedMessages(Long roomId, List<ChatMessageDto> messages) {
+        long sendStartNanos = System.nanoTime();
         if (messages.size() == 1) {
             outboundSender.send(messages.get(0));
+            chatPipelineMetrics.recordStage("fanout.batch.outbound_single", sendStartNanos);
             return;
         }
         outboundSender.sendBatch(roomId, messages);
+        chatPipelineMetrics.recordStage("fanout.batch.outbound_batch", sendStartNanos);
     }
 
     private boolean hasProcessedLocally(String messageId) {

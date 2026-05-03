@@ -3,6 +3,7 @@ package io.hyun424.openchat.chat.ingest;
 import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
 import io.hyun424.openchat.chat.message.entity.Message;
 import io.hyun424.openchat.chat.message.service.MessageService;
+import io.hyun424.openchat.chat.metrics.ChatPipelineMetrics;
 import io.hyun424.openchat.chat.publish.ChatMessagePublisher;
 import io.hyun424.openchat.chat.publish.PublishRetryBuffer;
 import io.hyun424.openchat.chat.room.hot.RoomTrafficMonitor;
@@ -39,6 +40,7 @@ public class ChatIngestService {
     private final RoomService roomService;
     private final RedisHealthState redisHealthState;
     private final RoomTrafficMonitor roomTrafficMonitor;
+    private final ChatPipelineMetrics chatPipelineMetrics;
 
     private final ConcurrentHashMap<String, Long> clientMessageIdCache = new ConcurrentHashMap<>();
     private static final long CLIENT_MSG_CACHE_TTL_MS = 60_000;
@@ -53,7 +55,8 @@ public class ChatIngestService {
                              MessageService messageService,
                              RoomService roomService,
                              RedisHealthState redisHealthState,
-                             RoomTrafficMonitor roomTrafficMonitor) {
+                             RoomTrafficMonitor roomTrafficMonitor,
+                             ChatPipelineMetrics chatPipelineMetrics) {
         this.publisher = publisher;
         this.retryBuffer = retryBuffer;
         this.redisTemplate = redisTemplate;
@@ -61,6 +64,7 @@ public class ChatIngestService {
         this.roomService = roomService;
         this.redisHealthState = redisHealthState;
         this.roomTrafficMonitor = roomTrafficMonitor;
+        this.chatPipelineMetrics = chatPipelineMetrics;
         this.cacheCleaner = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "ingest-cache-cleaner");
             t.setDaemon(true);
@@ -97,9 +101,11 @@ public class ChatIngestService {
             String content,
             String clientMessageId
     ) {
+        long ingestStartNanos = System.nanoTime();
         String normalizedClientMessageId = normalizeClientMessageId(clientMessageId);
 
         if (isDuplicateClientMessage(roomId, senderId, normalizedClientMessageId)) {
+            chatPipelineMetrics.incrementCounter("ingest.dedupe_skip");
             return;
         }
 
@@ -118,7 +124,9 @@ public class ChatIngestService {
 
         ChatMessageDto dto = buildMessageDto(saved, normalizedClientMessageId);
         publishOrBuffer(dto, roomId, messageId);
+        chatPipelineMetrics.recordSinceCreated("ingest.after_publish.since_created", dto);
         updateHotChatBucket(roomId, messageId);
+        chatPipelineMetrics.recordStage("ingest.total", ingestStartNanos);
 
         log.debug("[INGEST DONE][{}] roomId={} messageId={} latency={}ms",
                 instanceId, roomId, messageId, System.currentTimeMillis() - createdAt);
@@ -158,12 +166,15 @@ public class ChatIngestService {
                                      String clientMessageId,
                                      String messageId,
                                      long createdAt) {
+        long startNanos = System.nanoTime();
         try {
             Message saved = messageService.save(
                     roomId, senderId, nickname, content, clientMessageId, messageId, createdAt);
+            chatPipelineMetrics.recordStage("ingest.db_save", startNanos);
             log.debug("[DB SAVED][{}] messageId={} dbId={}", instanceId, messageId, saved.getId());
             return saved;
         } catch (Exception e) {
+            chatPipelineMetrics.recordStage("ingest.db_save.fail", startNanos);
             log.error("[DB SAVE FAIL][{}] roomId={} senderId={} messageId={}",
                     instanceId, roomId, senderId, messageId, e);
             throw e;
@@ -184,7 +195,9 @@ public class ChatIngestService {
     }
 
     private void updateRoomLastMessage(Long roomId, long createdAt, String content, String nickname) {
+        long startNanos = System.nanoTime();
         roomService.updateLastMessage(roomId, createdAt, content, nickname);
+        chatPipelineMetrics.recordStage("ingest.room_update", startNanos);
     }
 
     private ChatMessageDto buildMessageDto(Message saved, String normalizedClientMessageId) {
@@ -194,10 +207,13 @@ public class ChatIngestService {
     }
 
     private void publishOrBuffer(ChatMessageDto dto, Long roomId, String messageId) {
+        long startNanos = System.nanoTime();
         try {
             publisher.publish(dto);
+            chatPipelineMetrics.recordStage("ingest.publish", startNanos);
             log.debug("[PUBLISH OK][{}] roomId={} messageId={}", instanceId, roomId, messageId);
         } catch (Exception e) {
+            chatPipelineMetrics.recordStage("ingest.publish.fail", startNanos);
             log.error("[PUBLISH FAIL][{}] roomId={} messageId={} - enqueuing for retry",
                     instanceId, roomId, messageId, e);
             retryBuffer.enqueue(dto);
@@ -213,12 +229,15 @@ public class ChatIngestService {
             return;
         }
 
+        long startNanos = System.nanoTime();
         try {
             String bucketKey = BucketKeyUtil.currentBucketKey();
             redisTemplate.opsForZSet()
                     .incrementScore(bucketKey, "room:" + roomId, 1);
             redisTemplate.expire(bucketKey, Duration.ofMinutes(7));
+            chatPipelineMetrics.recordStage("ingest.hotchat", startNanos);
         } catch (Exception e) {
+            chatPipelineMetrics.recordStage("ingest.hotchat.fail", startNanos);
             redisHealthState.markDown();
             log.warn("[HOTCHAT FAIL][{}] roomId={} messageId={} - marking Redis down",
                     instanceId, roomId, messageId);

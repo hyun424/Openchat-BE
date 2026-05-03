@@ -2,6 +2,7 @@ package io.hyun424.openchat.chat.publish;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
+import io.hyun424.openchat.chat.metrics.ChatPipelineMetrics;
 import io.hyun424.openchat.infra.redis.health.RedisHealthState;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -25,6 +26,7 @@ public class ChatCompositePublisher implements ChatMessagePublisher {
     private final ObjectMapper objectMapper;
     private final KafkaTemplate<String, ChatMessageDto> kafkaTemplate;
     private final RedisHealthState redisHealthState;
+    private final ChatPipelineMetrics chatPipelineMetrics;
 
     @Value("${app.instance-id:local}")
     private String instanceId;
@@ -33,12 +35,14 @@ public class ChatCompositePublisher implements ChatMessagePublisher {
             StringRedisTemplate redisTemplate,
             ObjectMapper objectMapper,
             KafkaTemplate<String, ChatMessageDto> kafkaTemplate,
-            RedisHealthState redisHealthState
+            RedisHealthState redisHealthState,
+            ChatPipelineMetrics chatPipelineMetrics
     ) {
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper;
         this.kafkaTemplate = kafkaTemplate;
         this.redisHealthState = redisHealthState;
+        this.chatPipelineMetrics = chatPipelineMetrics;
         log.info("ChatCompositePublisher initialized (Redis + Kafka)");
     }
 
@@ -60,11 +64,17 @@ public class ChatCompositePublisher implements ChatMessagePublisher {
 
         String channel = "chat:room:" + message.getRoomId();
         try {
+            long serializeStartNanos = System.nanoTime();
             String payload = objectMapper.writeValueAsString(message);
+            chatPipelineMetrics.recordStage("publish.redis.serialize", serializeStartNanos);
+            long publishStartNanos = System.nanoTime();
             redisTemplate.convertAndSend(channel, payload);
+            chatPipelineMetrics.recordStage("publish.redis.convert_and_send", publishStartNanos);
+            chatPipelineMetrics.recordSinceCreated("publish.redis.after_send.since_created", message);
             log.debug("[REDIS PUB][{}] channel={} messageId={}",
                     instanceId, channel, message.getMessageId());
         } catch (Exception e) {
+            chatPipelineMetrics.incrementCounter("publish.redis.fail");
             // Mark Redis as down, Kafka will handle durability
             redisHealthState.markDown();
             log.warn("[REDIS PUB FAIL][{}] roomId={} messageId={} - marking Redis down",
@@ -74,12 +84,15 @@ public class ChatCompositePublisher implements ChatMessagePublisher {
 
     private void publishToKafka(ChatMessageDto message) {
         String key = String.valueOf(message.getRoomId());
+        long startNanos = System.nanoTime();
         kafkaTemplate.send(KAFKA_TOPIC, key, message)
                 .whenComplete((result, ex) -> {
                     if (ex != null) {
+                        chatPipelineMetrics.recordStage("publish.kafka.fail", startNanos);
                         log.error("[KAFKA PUB FAIL][{}] roomId={} messageId={}",
                                 instanceId, message.getRoomId(), message.getMessageId(), ex);
                     } else {
+                        chatPipelineMetrics.recordStage("publish.kafka.ack", startNanos);
                         log.debug("[KAFKA PUB][{}] partition={} offset={} messageId={}",
                                 instanceId,
                                 result.getRecordMetadata().partition(),

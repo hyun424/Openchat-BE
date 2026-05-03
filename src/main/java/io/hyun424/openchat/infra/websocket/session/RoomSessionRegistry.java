@@ -3,6 +3,7 @@ package io.hyun424.openchat.infra.websocket.session;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.hyun424.openchat.chat.message.dto.ChatBatchMessageDto;
 import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
+import io.hyun424.openchat.chat.metrics.ChatPipelineMetrics;
 import io.hyun424.openchat.chat.room.hot.RoomTrafficMonitor;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
@@ -31,6 +32,7 @@ public class RoomSessionRegistry {
 
     private final ObjectMapper objectMapper;
     private final RoomTrafficMonitor roomTrafficMonitor;
+    private final ChatPipelineMetrics chatPipelineMetrics;
     private final ExecutorService broadcastExecutor;
     private final int broadcastPoolSize;
 
@@ -46,22 +48,31 @@ public class RoomSessionRegistry {
     private static final int DEFAULT_BROADCAST_QUEUE_CAPACITY = 4096;
 
     public RoomSessionRegistry(ObjectMapper objectMapper) {
-        this(objectMapper, new RoomTrafficMonitor(), 0, DEFAULT_BROADCAST_QUEUE_CAPACITY);
+        this(objectMapper, new RoomTrafficMonitor(), ChatPipelineMetrics.noop(), 0, DEFAULT_BROADCAST_QUEUE_CAPACITY);
     }
 
     public RoomSessionRegistry(ObjectMapper objectMapper,
                                int configuredPoolSize,
                                int queueCapacity) {
-        this(objectMapper, new RoomTrafficMonitor(), configuredPoolSize, queueCapacity);
+        this(objectMapper, new RoomTrafficMonitor(), ChatPipelineMetrics.noop(), configuredPoolSize, queueCapacity);
+    }
+
+    public RoomSessionRegistry(ObjectMapper objectMapper,
+                               RoomTrafficMonitor roomTrafficMonitor,
+                               int configuredPoolSize,
+                               int queueCapacity) {
+        this(objectMapper, roomTrafficMonitor, ChatPipelineMetrics.noop(), configuredPoolSize, queueCapacity);
     }
 
     @Autowired
     public RoomSessionRegistry(ObjectMapper objectMapper,
                                RoomTrafficMonitor roomTrafficMonitor,
+                               ChatPipelineMetrics chatPipelineMetrics,
                                @Value("${app.websocket.broadcast.pool-size:0}") int configuredPoolSize,
                                @Value("${app.websocket.broadcast.queue-capacity:4096}") int queueCapacity) {
         this.objectMapper = objectMapper;
         this.roomTrafficMonitor = roomTrafficMonitor;
+        this.chatPipelineMetrics = chatPipelineMetrics;
         this.broadcastPoolSize = resolveBroadcastPoolSize(configuredPoolSize);
         int boundedQueueCapacity = Math.max(1, queueCapacity);
         AtomicInteger threadCounter = new AtomicInteger(0);
@@ -137,6 +148,7 @@ public class RoomSessionRegistry {
      * 전송 중 Set을 직접 수정하면 살아있는 세션을 건너뛸 수 있으므로, 죽은 세션은 전송이 끝난 뒤 정리한다.
      */
     public void sendToRoom(Long roomId, ChatMessageDto message) {
+        long broadcastStartNanos = System.nanoTime();
         Set<WebSocketSession> sessions = getSessions(roomId);
 
         if (sessions.isEmpty()) {
@@ -163,6 +175,7 @@ public class RoomSessionRegistry {
         }
         waitAllSends(roomId, sessionSnapshot, textMessage, deadSessions, successCount);
         removeDeadSessions(roomId, deadSessions);
+        chatPipelineMetrics.recordStage("ws.broadcast.single.total", broadcastStartNanos);
 
         log.debug("[WS BROADCAST] roomId={} messageId={} sent={} dead={}",
                 roomId, message.getMessageId(), successCount.get(), deadSessions.size());
@@ -173,6 +186,7 @@ public class RoomSessionRegistry {
      * 단건 payload 호환성을 위해 메시지가 1개뿐이면 기존 단건 경로를 사용한다.
      */
     public void sendBatchToRoom(Long roomId, List<ChatMessageDto> messages) {
+        long broadcastStartNanos = System.nanoTime();
         if (messages == null || messages.isEmpty()) {
             return;
         }
@@ -209,15 +223,22 @@ public class RoomSessionRegistry {
 
         waitAllSends(roomId, sessionSnapshot, textMessage, deadSessions, successCount);
         removeDeadSessions(roomId, deadSessions);
+        chatPipelineMetrics.recordStage("ws.broadcast.batch.total", broadcastStartNanos);
+        chatPipelineMetrics.recordDistribution("openchat_pipeline_batch_size", "ws.broadcast", messages.size());
+        chatPipelineMetrics.recordDistribution("openchat_pipeline_batch_sessions", "ws.broadcast", sessionSnapshot.size());
 
         log.debug("[WS BATCH BROADCAST] roomId={} count={} sent={} dead={}",
                 roomId, messages.size(), successCount.get(), deadSessions.size());
     }
 
     private TextMessage serializeMessage(Long roomId, ChatMessageDto message) {
+        long startNanos = System.nanoTime();
         try {
-            return new TextMessage(objectMapper.writeValueAsString(message));
+            TextMessage textMessage = new TextMessage(objectMapper.writeValueAsString(message));
+            chatPipelineMetrics.recordStage("ws.serialize.single", startNanos);
+            return textMessage;
         } catch (Exception e) {
+            chatPipelineMetrics.recordStage("ws.serialize.single.fail", startNanos);
             log.error("[WS SERIALIZE FAIL] roomId={} messageId={}",
                     roomId, message.getMessageId(), e);
             return null;
@@ -225,9 +246,13 @@ public class RoomSessionRegistry {
     }
 
     private TextMessage serializeBatchMessage(Long roomId, List<ChatMessageDto> messages) {
+        long startNanos = System.nanoTime();
         try {
-            return new TextMessage(objectMapper.writeValueAsString(ChatBatchMessageDto.from(roomId, messages)));
+            TextMessage textMessage = new TextMessage(objectMapper.writeValueAsString(ChatBatchMessageDto.from(roomId, messages)));
+            chatPipelineMetrics.recordStage("ws.serialize.batch", startNanos);
+            return textMessage;
         } catch (Exception e) {
+            chatPipelineMetrics.recordStage("ws.serialize.batch.fail", startNanos);
             log.error("[WS BATCH SERIALIZE FAIL] roomId={} count={}",
                     roomId, messages.size(), e);
             return null;
@@ -248,7 +273,9 @@ public class RoomSessionRegistry {
                     () -> sendBatch(roomId, batch, textMessage, deadSessions, successCount),
                     broadcastExecutor));
         }
+        long waitStartNanos = System.nanoTime();
         CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+        chatPipelineMetrics.recordStage("ws.broadcast.wait_all", waitStartNanos);
     }
 
     private int calculateBatchSize(int sessionCount) {
@@ -261,9 +288,12 @@ public class RoomSessionRegistry {
                            TextMessage textMessage,
                            Set<WebSocketSession> deadSessions,
                            AtomicInteger successCount) {
+        long startNanos = System.nanoTime();
         for (WebSocketSession session : sessions) {
             sendToSingleSession(roomId, session, textMessage, deadSessions, successCount);
         }
+        chatPipelineMetrics.recordStage("ws.broadcast.worker_batch", startNanos);
+        chatPipelineMetrics.recordDistribution("openchat_pipeline_batch_sessions", "ws.worker", sessions.size());
     }
 
     private void sendToSingleSession(Long roomId,
@@ -279,6 +309,7 @@ public class RoomSessionRegistry {
             session.sendMessage(textMessage);
             successCount.incrementAndGet();
         } catch (Exception e) {
+            chatPipelineMetrics.incrementCounter("ws.send.fail");
             log.warn("[WS SEND FAIL] roomId={} sessionId={}", roomId, session.getId(), e);
             deadSessions.add(session);
         }
