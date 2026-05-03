@@ -15,13 +15,25 @@ public class ChatBatchMessageDto {
     private final Long roomId;
     private final Long firstSequence;
     private final Long lastSequence;
+    private final boolean realtimeComplete;
+    private final int omittedCount;
     private final List<ChatMessageDto> messages;
 
     public static ChatBatchMessageDto from(Long roomId, List<ChatMessageDto> messages) {
+        return from(roomId, messages, true, 0, sequenceOf(messages.get(messages.size() - 1)));
+    }
+
+    public static ChatBatchMessageDto from(Long roomId,
+                                           List<ChatMessageDto> messages,
+                                           boolean realtimeComplete,
+                                           int omittedCount,
+                                           Long lastSequence) {
         return ChatBatchMessageDto.builder()
                 .roomId(roomId)
                 .firstSequence(sequenceOf(messages.get(0)))
-                .lastSequence(sequenceOf(messages.get(messages.size() - 1)))
+                .lastSequence(lastSequence)
+                .realtimeComplete(realtimeComplete)
+                .omittedCount(Math.max(0, omittedCount))
                 .messages(messages)
                 .build();
     }

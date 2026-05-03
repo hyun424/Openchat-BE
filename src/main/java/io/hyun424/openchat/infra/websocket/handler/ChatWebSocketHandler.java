@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.hyun424.openchat.auth.jwt.JwtProvider;
 import io.hyun424.openchat.chat.ingest.ChatIngestService;
 import io.hyun424.openchat.chat.member.service.RoomMemberService;
+import io.hyun424.openchat.chat.message.dto.ChatAckMessageDto;
+import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
 import io.hyun424.openchat.chat.metrics.ChatPipelineMetrics;
 import io.hyun424.openchat.chat.room.domain.Room;
 import io.hyun424.openchat.chat.room.service.RoomService;
@@ -134,13 +136,14 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
              * WebSocket 핸들러는 연결/입력 검증만 담당해야 장애 대응 흐름을 추적하기 쉽다.
              */
             long ingestStartNanos = System.nanoTime();
-            chatIngestService.ingest(
+            ChatMessageDto savedMessage = chatIngestService.ingest(
                     roomId,
                     senderId,
                     nickname,
                     message.content(),
                     message.clientMessageId()
             );
+            sendAck(session, savedMessage);
             chatPipelineMetrics.recordStage("ws.inbound.ingest", ingestStartNanos);
 
         } catch (Exception e) {
@@ -148,6 +151,17 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         } finally {
             chatPipelineMetrics.recordStage("ws.inbound.total", totalStartNanos);
         }
+    }
+
+    private void sendAck(WebSocketSession session, ChatMessageDto savedMessage) {
+        if (savedMessage == null) {
+            return;
+        }
+        roomSessionRegistry.sendControlToSession(
+                session.getId(),
+                ChatAckMessageDto.from(savedMessage),
+                "ack"
+        );
     }
 
     private void validateAuthenticatedSession(String userId, String nickname) {

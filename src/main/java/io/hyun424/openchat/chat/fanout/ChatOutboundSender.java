@@ -12,4 +12,12 @@ public interface ChatOutboundSender {
             send(message);
         }
     }
+
+    default void sendBatch(Long roomId,
+                           List<ChatMessageDto> messages,
+                           boolean realtimeComplete,
+                           int omittedCount,
+                           Long lastSequence) {
+        sendBatch(roomId, messages);
+    }
 }

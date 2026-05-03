@@ -36,8 +36,12 @@ public class ChatFanoutService {
     private final long superHotBatchWindowMillis;
     private final int maxBatchSize;
     private final int maxFlushBatchesPerRun;
+    private final boolean controlledRealtimeEnabled;
+    private final int hotLiveMaxMessagesPerSecond;
+    private final int superHotLiveMaxMessagesPerSecond;
     private final ChatPipelineMetrics chatPipelineMetrics;
     private final RoomTrafficMonitor roomTrafficMonitor;
+    private final ConcurrentHashMap<Long, RoomLiveCapState> liveCapStates = new ConcurrentHashMap<>();
 
     @Value("${app.instance-id:local}")
     private String instanceId;
@@ -46,7 +50,8 @@ public class ChatFanoutService {
     private static final long DEDUPE_TTL_MS = 60_000;
 
     public ChatFanoutService(ChatOutboundSender outboundSender) {
-        this(outboundSender, true, 20, 30, 50, 100, 64, 16, ChatPipelineMetrics.noop(), new RoomTrafficMonitor());
+        this(outboundSender, true, 20, 30, 100, 250, 64, 16,
+                true, 100, 50, ChatPipelineMetrics.noop(), new RoomTrafficMonitor());
     }
 
     public ChatFanoutService(ChatOutboundSender outboundSender,
@@ -54,7 +59,22 @@ public class ChatFanoutService {
                              long batchWindowMillis,
                              int maxBatchSize) {
         this(outboundSender, batchEnabled, batchWindowMillis, 30, 50, 100, maxBatchSize, 16,
-                ChatPipelineMetrics.noop(), new RoomTrafficMonitor());
+                true, 100, 50, ChatPipelineMetrics.noop(), new RoomTrafficMonitor());
+    }
+
+    public ChatFanoutService(ChatOutboundSender outboundSender,
+                             boolean batchEnabled,
+                             long batchWindowMillis,
+                             long warmBatchWindowMillis,
+                             long hotBatchWindowMillis,
+                             long superHotBatchWindowMillis,
+                             int maxBatchSize,
+                             int maxFlushBatchesPerRun,
+                             ChatPipelineMetrics chatPipelineMetrics,
+                             RoomTrafficMonitor roomTrafficMonitor) {
+        this(outboundSender, batchEnabled, batchWindowMillis, warmBatchWindowMillis, hotBatchWindowMillis,
+                superHotBatchWindowMillis, maxBatchSize, maxFlushBatchesPerRun,
+                true, 100, 50, chatPipelineMetrics, roomTrafficMonitor);
     }
 
     @Autowired
@@ -62,10 +82,13 @@ public class ChatFanoutService {
                              @Value("${app.websocket.batch.enabled:true}") boolean batchEnabled,
                              @Value("${app.websocket.batch.window-ms:20}") long batchWindowMillis,
                              @Value("${app.websocket.batch.warm-window-ms:30}") long warmBatchWindowMillis,
-                             @Value("${app.websocket.batch.hot-window-ms:50}") long hotBatchWindowMillis,
-                             @Value("${app.websocket.batch.super-hot-window-ms:100}") long superHotBatchWindowMillis,
+                             @Value("${app.websocket.batch.hot-window-ms:100}") long hotBatchWindowMillis,
+                             @Value("${app.websocket.batch.super-hot-window-ms:250}") long superHotBatchWindowMillis,
                              @Value("${app.websocket.batch.max-size:64}") int maxBatchSize,
                              @Value("${app.websocket.batch.max-flush-batches-per-run:16}") int maxFlushBatchesPerRun,
+                             @Value("${app.websocket.controlled-realtime.enabled:true}") boolean controlledRealtimeEnabled,
+                             @Value("${app.websocket.controlled-realtime.hot-max-messages-per-sec:100}") int hotLiveMaxMessagesPerSecond,
+                             @Value("${app.websocket.controlled-realtime.super-hot-max-messages-per-sec:50}") int superHotLiveMaxMessagesPerSecond,
                              ChatPipelineMetrics chatPipelineMetrics,
                              RoomTrafficMonitor roomTrafficMonitor) {
         this.outboundSender = outboundSender;
@@ -76,6 +99,9 @@ public class ChatFanoutService {
         this.superHotBatchWindowMillis = Math.max(this.hotBatchWindowMillis, superHotBatchWindowMillis);
         this.maxBatchSize = Math.max(1, maxBatchSize);
         this.maxFlushBatchesPerRun = Math.max(1, maxFlushBatchesPerRun);
+        this.controlledRealtimeEnabled = controlledRealtimeEnabled;
+        this.hotLiveMaxMessagesPerSecond = Math.max(1, hotLiveMaxMessagesPerSecond);
+        this.superHotLiveMaxMessagesPerSecond = Math.max(1, superHotLiveMaxMessagesPerSecond);
         this.chatPipelineMetrics = chatPipelineMetrics;
         this.roomTrafficMonitor = roomTrafficMonitor;
         this.cleanerExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -198,13 +224,59 @@ public class ChatFanoutService {
 
     private void sendFlushedMessages(Long roomId, List<ChatMessageDto> messages) {
         long sendStartNanos = System.nanoTime();
-        if (messages.size() == 1) {
-            outboundSender.send(messages.get(0));
+        RoomHotState state = roomTrafficMonitor.state(roomId);
+        LiveBatch liveBatch = applyControlledRealtimePolicy(roomId, messages, state);
+        if (liveBatch.messages().isEmpty()) {
+            chatPipelineMetrics.recordStage("fanout.batch.outbound_omitted", sendStartNanos);
+            return;
+        }
+
+        if (liveBatch.messages().size() == 1 && liveBatch.realtimeComplete()) {
+            outboundSender.send(liveBatch.messages().get(0));
             chatPipelineMetrics.recordStage("fanout.batch.outbound_single", sendStartNanos);
             return;
         }
-        outboundSender.sendBatch(roomId, messages);
+        outboundSender.sendBatch(
+                roomId,
+                liveBatch.messages(),
+                liveBatch.realtimeComplete(),
+                liveBatch.omittedCount(),
+                liveBatch.lastSequence()
+        );
         chatPipelineMetrics.recordStage("fanout.batch.outbound_batch", sendStartNanos);
+    }
+
+    private LiveBatch applyControlledRealtimePolicy(Long roomId, List<ChatMessageDto> messages, RoomHotState state) {
+        Long lastSequence = sequenceOf(messages.get(messages.size() - 1));
+        if (!controlledRealtimeEnabled || state == RoomHotState.NORMAL || state == RoomHotState.WATCHED || state == RoomHotState.WARM) {
+            return new LiveBatch(messages, true, 0, lastSequence);
+        }
+
+        int maxMessagesPerSecond = state == RoomHotState.SUPER_HOT
+                ? superHotLiveMaxMessagesPerSecond
+                : hotLiveMaxMessagesPerSecond;
+        RoomLiveCapState capState = liveCapStates.computeIfAbsent(roomId, ignored -> new RoomLiveCapState());
+        LivePermit permit = capState.reserve(maxMessagesPerSecond, messages.size(), System.currentTimeMillis());
+        chatPipelineMetrics.recordDistribution("openchat_pipeline_live_visible_messages", state.name().toLowerCase(), permit.visibleCount());
+        chatPipelineMetrics.recordDistribution("openchat_pipeline_live_omitted_messages", state.name().toLowerCase(), permit.omittedCount());
+
+        if (permit.visibleCount() <= 0) {
+            log.debug("[FANOUT LIVE OMIT] roomId={} state={} omitted={} lastSequence={}",
+                    roomId, state, permit.omittedCount(), lastSequence);
+            return new LiveBatch(List.of(), false, permit.omittedCount(), lastSequence);
+        }
+
+        List<ChatMessageDto> visibleMessages = messages.subList(0, permit.visibleCount());
+        return new LiveBatch(
+                List.copyOf(visibleMessages),
+                permit.omittedCount() == 0,
+                permit.omittedCount(),
+                lastSequence
+        );
+    }
+
+    private Long sequenceOf(ChatMessageDto message) {
+        return message.getSequence() != null ? message.getSequence() : message.getId();
     }
 
     private boolean hasProcessedLocally(String messageId) {
@@ -308,6 +380,43 @@ public class ChatFanoutService {
                 drained.add(message);
             }
             return drained;
+        }
+    }
+
+    private record LiveBatch(List<ChatMessageDto> messages,
+                             boolean realtimeComplete,
+                             int omittedCount,
+                             Long lastSequence) {
+    }
+
+    private record LivePermit(int visibleCount, int omittedCount) {
+    }
+
+    private static class RoomLiveCapState {
+        private long currentSecond = -1;
+        private int emittedInCurrentSecond = 0;
+        private int omittedSinceLastVisible = 0;
+
+        synchronized LivePermit reserve(int maxMessagesPerSecond, int requestedMessages, long nowMillis) {
+            long second = nowMillis / 1000;
+            if (second != currentSecond) {
+                currentSecond = second;
+                emittedInCurrentSecond = 0;
+            }
+
+            int remaining = Math.max(0, maxMessagesPerSecond - emittedInCurrentSecond);
+            int visible = Math.min(requestedMessages, remaining);
+            emittedInCurrentSecond += visible;
+
+            int omittedNow = requestedMessages - visible;
+            if (visible == 0) {
+                omittedSinceLastVisible += omittedNow;
+                return new LivePermit(0, omittedNow);
+            }
+
+            int omittedForEnvelope = omittedSinceLastVisible + omittedNow;
+            omittedSinceLastVisible = 0;
+            return new LivePermit(visible, omittedForEnvelope);
         }
     }
 }

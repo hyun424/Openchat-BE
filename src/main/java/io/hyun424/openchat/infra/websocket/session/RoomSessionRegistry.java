@@ -213,11 +213,19 @@ public class RoomSessionRegistry {
      * 단건 payload 호환성을 위해 메시지가 1개뿐이면 기존 단건 경로를 사용한다.
      */
     public void sendBatchToRoom(Long roomId, List<ChatMessageDto> messages) {
+        sendBatchToRoom(roomId, messages, true, 0, null);
+    }
+
+    public void sendBatchToRoom(Long roomId,
+                                List<ChatMessageDto> messages,
+                                boolean realtimeComplete,
+                                int omittedCount,
+                                Long lastSequence) {
         long broadcastStartNanos = System.nanoTime();
         if (messages == null || messages.isEmpty()) {
             return;
         }
-        if (messages.size() == 1) {
+        if (messages.size() == 1 && realtimeComplete && omittedCount <= 0) {
             sendToRoom(roomId, messages.get(0));
             return;
         }
@@ -228,7 +236,7 @@ public class RoomSessionRegistry {
             return;
         }
 
-        TextMessage textMessage = serializeBatchMessage(roomId, messages);
+        TextMessage textMessage = serializeBatchMessage(roomId, messages, realtimeComplete, omittedCount, lastSequence);
         if (textMessage == null) {
             return;
         }
@@ -269,9 +277,19 @@ public class RoomSessionRegistry {
     }
 
     private TextMessage serializeBatchMessage(Long roomId, List<ChatMessageDto> messages) {
+        return serializeBatchMessage(roomId, messages, true, 0, null);
+    }
+
+    private TextMessage serializeBatchMessage(Long roomId,
+                                              List<ChatMessageDto> messages,
+                                              boolean realtimeComplete,
+                                              int omittedCount,
+                                              Long lastSequence) {
         long startNanos = System.nanoTime();
         try {
-            TextMessage textMessage = new TextMessage(objectMapper.writeValueAsString(ChatBatchMessageDto.from(roomId, messages)));
+            Long resolvedLastSequence = lastSequence != null ? lastSequence : sequenceOf(messages.get(messages.size() - 1));
+            TextMessage textMessage = new TextMessage(objectMapper.writeValueAsString(
+                    ChatBatchMessageDto.from(roomId, messages, realtimeComplete, omittedCount, resolvedLastSequence)));
             chatPipelineMetrics.recordStage("ws.serialize.batch", startNanos);
             return textMessage;
         } catch (Exception e) {
@@ -279,6 +297,27 @@ public class RoomSessionRegistry {
             log.error("[WS BATCH SERIALIZE FAIL] roomId={} count={}",
                     roomId, messages.size(), e);
             return null;
+        }
+    }
+
+    private Long sequenceOf(ChatMessageDto message) {
+        return message.getSequence() != null ? message.getSequence() : message.getId();
+    }
+
+    public void sendControlToSession(String sessionId, Object payload, String payloadType) {
+        WebSocketSession session = sessionsById.get(sessionId);
+        if (session == null || !session.isOpen()) {
+            return;
+        }
+
+        long startNanos = System.nanoTime();
+        try {
+            session.sendMessage(new TextMessage(objectMapper.writeValueAsString(payload)));
+            chatPipelineMetrics.recordStage("ws.control." + payloadType + ".send", startNanos);
+        } catch (Exception e) {
+            chatPipelineMetrics.recordStage("ws.control." + payloadType + ".send.fail", startNanos);
+            chatPipelineMetrics.incrementCounter("ws.control." + payloadType + ".send.fail");
+            log.warn("[WS CONTROL SEND FAIL] sessionId={} type={}", sessionId, payloadType, e);
         }
     }
 

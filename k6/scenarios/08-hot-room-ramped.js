@@ -41,7 +41,8 @@ export const options = {
     ws_connect_success_rate: ['rate>0.99'],
     ws_connect_failure_rate: ['rate<0.01'],
     ws_connect_duration_ms: ['p(95)<5000', 'p(99)<10000'],
-    ws_message_roundtrip_ms: ['p(95)<100'],
+    chat_ack_roundtrip_ms: ['p(95)<300'],
+    ws_visible_freshness_ms: ['p(95)<300'],
   },
   tags: {
     testType: 'hot-room-ramped',
@@ -139,6 +140,9 @@ export default function (data) {
     sendInterval: SEND_INTERVAL_MS,
     messageText: MESSAGE_TEXT,
     onMessage: (msg) => {
+      if (msg.type === 'chat.ack') {
+        return;
+      }
       hotRoomBroadcastReceived.add(1);
 
       if (msg.senderId === userId) {

@@ -58,6 +58,23 @@ class MessageServiceTest {
         assertEquals(500, pageableCaptor.getValue().getPageSize());
     }
 
+    @Test
+    @DisplayName("cursor=0 조회는 live에서 생략된 메시지 복구의 시작점으로 허용한다")
+    void getMessagesAfterCursor_zeroCursorAllowedForRecovery() {
+        Long roomId = 1L;
+        String userId = "user-1";
+        long joinedAt = 1000L;
+        List<Message> messages = List.of(message(1L));
+        when(roomMemberService.getJoinedAtMillis(roomId, userId)).thenReturn(joinedAt);
+        when(messageRepository.findMessagesAfterCursor(eq(roomId), eq(joinedAt), eq(0L), org.mockito.ArgumentMatchers.any(Pageable.class)))
+                .thenReturn(messages);
+
+        MessagePageResponse response = messageService.getMessagesAfterCursor(roomId, userId, 0L, 500);
+
+        assertEquals(1, response.getMessages().size());
+        assertEquals(1L, response.getMessages().get(0).getSequence());
+    }
+
     private Message message(Long id) {
         Message message = mock(Message.class);
         when(message.getId()).thenReturn(id);

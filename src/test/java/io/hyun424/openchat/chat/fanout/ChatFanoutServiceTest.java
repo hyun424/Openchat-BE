@@ -67,7 +67,7 @@ class ChatFanoutServiceTest {
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<ChatMessageDto>> captor = ArgumentCaptor.forClass(List.class);
-        verify(outboundSender).sendBatch(eq(1L), captor.capture());
+        verify(outboundSender).sendBatch(eq(1L), captor.capture(), eq(true), eq(0), eq(11L));
         verify(outboundSender, never()).send(any(ChatMessageDto.class));
         assertEquals(List.of(first, second), captor.getValue());
     }
@@ -123,9 +123,43 @@ class ChatFanoutServiceTest {
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<ChatMessageDto>> captor = ArgumentCaptor.forClass(List.class);
-        verify(outboundSender).sendBatch(eq(1L), captor.capture());
+        verify(outboundSender).sendBatch(eq(1L), captor.capture(), eq(true), eq(0), eq(15L));
         assertEquals(List.of(first, second), captor.getValue());
         adaptiveFanout.shutdown();
+    }
+
+    @Test
+    @DisplayName("hot room은 live cap을 넘긴 메시지를 batch envelope에서 생략 표시한다")
+    void fanout_hotRoom_appliesControlledRealtimeCap() throws Exception {
+        RoomTrafficMonitor roomTrafficMonitor = mock(RoomTrafficMonitor.class);
+        when(roomTrafficMonitor.state(1L)).thenReturn(RoomHotState.HOT);
+        ChatFanoutService controlledFanout = new ChatFanoutService(
+                outboundSender,
+                true,
+                1,
+                1,
+                1,
+                1,
+                64,
+                16,
+                true,
+                1,
+                1,
+                ChatPipelineMetrics.noop(),
+                roomTrafficMonitor
+        );
+        ChatMessageDto first = message("message-9", 21L);
+        ChatMessageDto second = message("message-10", 22L);
+
+        controlledFanout.fanout(first);
+        controlledFanout.fanout(second);
+        assertTrue(controlledFanout.awaitBatchIdle(500));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ChatMessageDto>> captor = ArgumentCaptor.forClass(List.class);
+        verify(outboundSender).sendBatch(eq(1L), captor.capture(), eq(false), eq(1), eq(22L));
+        assertEquals(List.of(first), captor.getValue());
+        controlledFanout.shutdown();
     }
 
     private ChatMessageDto message(String messageId) {

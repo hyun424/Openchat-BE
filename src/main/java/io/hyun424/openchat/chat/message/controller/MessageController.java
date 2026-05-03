@@ -44,7 +44,7 @@ public class MessageController {
     public MessagePageResponse getMessagesBefore(
             @RequestHeader("Authorization") String authorization,
             @PathVariable @Positive Long roomId,
-            @RequestParam @Positive Long cursor,
+            @RequestParam @Min(0) Long cursor,
             @RequestParam(defaultValue = "30") @Min(1) @Max(100) int limit
     ) {
         String userId = authUserResolver.extractUserId(authorization);

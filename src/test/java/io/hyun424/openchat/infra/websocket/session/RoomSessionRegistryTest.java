@@ -126,6 +126,25 @@ class RoomSessionRegistryTest {
     }
 
     @Test
+    @DisplayName("controlled realtime batch는 생략 정보와 원본 lastSequence를 envelope에 담는다")
+    void sendBatchToRoom_incompleteRealtime_includesGapMetadata() throws Exception {
+        RoomSessionRegistry registry = new RoomSessionRegistry(new ObjectMapper(), 1, 16);
+        WebSocketSession session = mockOpenSession("session-1");
+        registry.add(1L, session);
+
+        registry.sendBatchToRoom(1L, List.of(message(1L, "message-1")), false, 3, 4L);
+
+        ArgumentCaptor<TextMessage> captor = forClass(TextMessage.class);
+        verify(session, timeout(500)).sendMessage(captor.capture());
+        String payload = captor.getValue().getPayload();
+        assertTrue(payload.contains("\"type\":\"chat.batch\""));
+        assertTrue(payload.contains("\"realtimeComplete\":false"));
+        assertTrue(payload.contains("\"omittedCount\":3"));
+        assertTrue(payload.contains("\"lastSequence\":4"));
+        registry.shutdownExecutor();
+    }
+
+    @Test
     @DisplayName("batch 전송은 실제 socket send 완료를 기다리지 않고 반환한다")
     void sendBatchToRoom_enqueuesLaneTaskWithoutWaitingForSocketSend() throws Exception {
         RoomSessionRegistry registry = new RoomSessionRegistry(new ObjectMapper(), 1, 16);

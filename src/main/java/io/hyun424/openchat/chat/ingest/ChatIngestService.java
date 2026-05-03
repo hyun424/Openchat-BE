@@ -94,7 +94,7 @@ public class ChatIngestService {
         cacheCleaner.shutdown();
     }
 
-    public void ingest(
+    public ChatMessageDto ingest(
             Long roomId,
             String senderId,
             String nickname,
@@ -104,9 +104,12 @@ public class ChatIngestService {
         long ingestStartNanos = System.nanoTime();
         String normalizedClientMessageId = normalizeClientMessageId(clientMessageId);
 
-        if (isDuplicateClientMessage(roomId, senderId, normalizedClientMessageId)) {
+        Message duplicate = findDuplicateClientMessage(roomId, senderId, normalizedClientMessageId);
+        if (duplicate != null) {
             chatPipelineMetrics.incrementCounter("ingest.dedupe_skip");
-            return;
+            ChatMessageDto duplicateDto = ChatMessageDto.from(duplicate);
+            duplicateDto.setClientMessageId(normalizedClientMessageId);
+            return duplicateDto;
         }
 
         roomTrafficMonitor.recordInboundMessage(roomId);
@@ -130,15 +133,16 @@ public class ChatIngestService {
 
         log.debug("[INGEST DONE][{}] roomId={} messageId={} latency={}ms",
                 instanceId, roomId, messageId, System.currentTimeMillis() - createdAt);
+        return dto;
     }
 
     private String normalizeClientMessageId(String clientMessageId) {
         return StringUtils.hasText(clientMessageId) ? clientMessageId.trim() : null;
     }
 
-    private boolean isDuplicateClientMessage(Long roomId, String senderId, String clientMessageId) {
+    private Message findDuplicateClientMessage(Long roomId, String senderId, String clientMessageId) {
         if (clientMessageId == null) {
-            return false;
+            return null;
         }
 
         long cacheStartNanos = System.nanoTime();
@@ -147,7 +151,7 @@ public class ChatIngestService {
             chatPipelineMetrics.recordStage("ingest.dedupe.cache_check", cacheStartNanos);
             log.info("[INGEST DEDUPE CACHE][{}] roomId={} senderId={} clientMessageId={}",
                     instanceId, roomId, senderId, clientMessageId);
-            return true;
+            return messageService.findByClientMessageId(roomId, senderId, clientMessageId);
         }
         chatPipelineMetrics.recordStage("ingest.dedupe.cache_check", cacheStartNanos);
 
@@ -155,13 +159,13 @@ public class ChatIngestService {
         Message existing = messageService.findByClientMessageId(roomId, senderId, clientMessageId);
         chatPipelineMetrics.recordStage("ingest.dedupe.db_lookup", dbLookupStartNanos);
         if (existing == null) {
-            return false;
+            return null;
         }
 
         rememberClientMessageId(roomId, senderId, clientMessageId);
         log.info("[INGEST DEDUPE][{}] roomId={} senderId={} clientMessageId={} messageId={}",
                 instanceId, roomId, senderId, clientMessageId, existing.getMessageId());
-        return true;
+        return existing;
     }
 
     private Message saveMessageFirst(Long roomId,

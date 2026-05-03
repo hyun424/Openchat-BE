@@ -4,7 +4,8 @@ import { makeUUID } from './data-factory.js';
 import {
   wsConnectDuration, wsMessageRoundtrip, wsConnectSuccess,
   wsConnectFailure, wsConnectFailures, wsMsgSent, wsMsgReceived,
-  wsFramesReceived,
+  wsFramesReceived, chatAckRoundtrip, wsVisibleFreshness, wsAcksReceived,
+  wsRealtimeIncompleteFrames, wsRealtimeOmittedMessages,
 } from './metrics.js';
 
 const WS_BASE_URL = __ENV.WS_BASE_URL || 'ws://localhost:8080';
@@ -47,12 +48,33 @@ export function connectAndChat(opts) {
       wsFramesReceived.add(1);
       try {
         const msg = JSON.parse(data);
+        if (msg && msg.type === 'chat.ack') {
+          wsAcksReceived.add(1);
+          if (msg.clientMessageId && pendingMessages[msg.clientMessageId]) {
+            const ackRtt = Date.now() - pendingMessages[msg.clientMessageId];
+            chatAckRoundtrip.add(ackRtt);
+            delete pendingMessages[msg.clientMessageId];
+          }
+          if (onMessage) {
+            onMessage(msg);
+          }
+          return;
+        }
+
+        if (msg && msg.type === 'chat.batch' && msg.realtimeComplete === false) {
+          wsRealtimeIncompleteFrames.add(1);
+          wsRealtimeOmittedMessages.add(Number(msg.omittedCount || 0));
+        }
+
         const messages = msg && msg.type === 'chat.batch' && Array.isArray(msg.messages)
           ? msg.messages
           : [msg];
 
         for (const logicalMsg of messages) {
           wsMsgReceived.add(1);
+          if (logicalMsg.createdAt) {
+            wsVisibleFreshness.add(Date.now() - Number(logicalMsg.createdAt));
+          }
 
           // 에코된 자기 메시지의 라운드트립 측정
           if (logicalMsg.clientMessageId && pendingMessages[logicalMsg.clientMessageId]) {

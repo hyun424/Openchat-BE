@@ -23,4 +23,13 @@ public class WebSocketOutboundSender implements ChatOutboundSender {
     public void sendBatch(Long roomId, List<ChatMessageDto> messages) {
         roomSessionRegistry.sendBatchToRoom(roomId, messages);
     }
+
+    @Override
+    public void sendBatch(Long roomId,
+                          List<ChatMessageDto> messages,
+                          boolean realtimeComplete,
+                          int omittedCount,
+                          Long lastSequence) {
+        roomSessionRegistry.sendBatchToRoom(roomId, messages, realtimeComplete, omittedCount, lastSequence);
+    }
 }

@@ -1,5 +1,6 @@
 package io.hyun424.openchat.chat.ingest;
 
+import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
 import io.hyun424.openchat.chat.message.entity.Message;
 import io.hyun424.openchat.chat.message.service.MessageService;
 import io.hyun424.openchat.chat.metrics.ChatPipelineMetrics;
@@ -19,6 +20,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ZSetOperations;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
@@ -73,9 +75,11 @@ class ChatIngestServiceTest {
                 .thenReturn(saved);
 
         // when
-        chatIngestService.ingest(ROOM_ID, SENDER_ID, NICKNAME, CONTENT, CLIENT_MSG_ID);
+        ChatMessageDto result = chatIngestService.ingest(ROOM_ID, SENDER_ID, NICKNAME, CONTENT, CLIENT_MSG_ID);
 
         // then
+        assertEquals(CLIENT_MSG_ID, result.getClientMessageId());
+        assertEquals(ROOM_ID, result.getRoomId());
         verify(messageService).save(eq(ROOM_ID), eq(SENDER_ID), eq(NICKNAME), eq(CONTENT),
                 eq(CLIENT_MSG_ID), anyString(), anyLong());
         verify(roomTrafficMonitor).recordInboundMessage(ROOM_ID);
