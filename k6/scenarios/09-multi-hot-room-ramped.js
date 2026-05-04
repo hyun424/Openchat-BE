@@ -15,6 +15,7 @@ import { connectAndChat } from '../lib/ws.js';
 import { restCreateRoom, httpErrorRate } from '../lib/metrics.js';
 
 const HOT_ROOMS = Number(__ENV.HOT_ROOMS || '3');
+const ROOM_INDEX_OFFSET = Number(__ENV.ROOM_INDEX_OFFSET || '0');
 const RAW_VUS_PER_ROOM = Number(__ENV.VUS_PER_ROOM || '0');
 const DEFAULT_VUS_PER_ROOM = RAW_VUS_PER_ROOM > 0 ? RAW_VUS_PER_ROOM : 500;
 const DEFAULT_TARGET_VUS = HOT_ROOMS * DEFAULT_VUS_PER_ROOM;
@@ -25,6 +26,7 @@ const CHAT_DURATION_SECONDS = Number(__ENV.CHAT_DURATION_SECONDS || '120');
 const SEND_INTERVAL_MS = Number(__ENV.SEND_INTERVAL_MS || '1000');
 const MESSAGE_TEXT = __ENV.MESSAGE_TEXT || makeChatMessage(8);
 const TEST_LABEL = __ENV.TEST_LABEL || `multi-hot-${HOT_ROOMS}x${VUS_PER_ROOM}`;
+const HOT_ROOM_DETAIL_METRICS = (__ENV.HOT_ROOM_DETAIL_METRICS || 'false') === 'true';
 
 export const hotRoomBroadcastReceived = new Counter('hot_room_broadcast_received_total');
 export const hotRoomUniqueReceived = new Counter('hot_room_unique_received_total');
@@ -43,7 +45,7 @@ function buildThresholds() {
   };
 
   for (let i = 0; i < HOT_ROOMS; i++) {
-    const tag = `room-${i}`;
+    const tag = `room-${ROOM_INDEX_OFFSET + i}`;
     thresholds[`ws_connect_success_rate{roomIndex:${tag}}`] = ['rate>0.99'];
     thresholds[`chat_ack_roundtrip_ms{roomIndex:${tag}}`] = ['p(95)<300', 'p(99)<1000'];
     thresholds[`ws_visible_freshness_ms{roomIndex:${tag}}`] = ['p(95)<500', 'p(99)<1000'];
@@ -77,25 +79,26 @@ export const options = {
 
 function createUnlimitedHotRoom(token, roomIndex) {
   const body = JSON.stringify({
-    name: `mhr-${TEST_LABEL}-room-${roomIndex}-${Date.now().toString(36)}`,
-    description: `Multi hot room load test room ${roomIndex}`,
+    name: `mhr-${ROOM_INDEX_OFFSET + roomIndex}-${Date.now().toString(36)}`,
+    description: `Multi hot room load test room ${ROOM_INDEX_OFFSET + roomIndex}`,
     category: 'loadtest',
     requiresApproval: false,
   });
 
   const res = http.post(`${BASE_URL}/api/rooms`, body, {
     headers: authHeaders(token),
-    tags: { name: 'create_multi_hot_room', roomIndex: `room-${roomIndex}` },
+    tags: { name: 'create_multi_hot_room', roomIndex: `room-${ROOM_INDEX_OFFSET + roomIndex}` },
   });
 
-  restCreateRoom.add(res.timings.duration, { roomIndex: `room-${roomIndex}` });
-  httpErrorRate.add(res.status >= 400, { roomIndex: `room-${roomIndex}` });
+  restCreateRoom.add(res.timings.duration, { roomIndex: `room-${ROOM_INDEX_OFFSET + roomIndex}` });
+  httpErrorRate.add(res.status >= 400, { roomIndex: `room-${ROOM_INDEX_OFFSET + roomIndex}` });
 
   check(res, {
     'createMultiHotRoom status 2xx': (r) => r.status >= 200 && r.status < 300,
     'createMultiHotRoom has id': (r) => {
       try {
-        return !!JSON.parse(r.body).id;
+        const body = JSON.parse(r.body);
+        return !!(body.id || (body.data && body.data.id));
       } catch (e) {
         return false;
       }
@@ -108,7 +111,8 @@ function createUnlimitedHotRoom(token, roomIndex) {
   }
 
   try {
-    return JSON.parse(res.body).id;
+    const body = JSON.parse(res.body);
+    return body.id || (body.data && body.data.id) || null;
   } catch (e) {
     console.error(`Setup: failed to parse room response roomIndex=${roomIndex}`);
     return null;
@@ -128,11 +132,11 @@ export function setup() {
   for (let i = 0; i < HOT_ROOMS; i++) {
     const roomId = createUnlimitedHotRoom(token, i);
     if (roomId) {
-      rooms.push({ roomId, roomIndex: i });
+      rooms.push({ roomId, roomIndex: ROOM_INDEX_OFFSET + i });
     }
   }
 
-  console.log(`Setup: created ${rooms.length}/${HOT_ROOMS} rooms targetVus=${TARGET_VUS} vusPerRoom=${VUS_PER_ROOM}`);
+  console.log(`Setup: created ${rooms.length}/${HOT_ROOMS} rooms targetVus=${TARGET_VUS} vusPerRoom=${VUS_PER_ROOM} roomIndexOffset=${ROOM_INDEX_OFFSET}`);
   return { rooms };
 }
 
@@ -150,9 +154,10 @@ export default function (data) {
   }
 
   const vuId = __VU;
-  const roomIndex = (vuId - 1) % HOT_ROOMS;
+  const localRoomIndex = (vuId - 1) % HOT_ROOMS;
+  const roomIndex = ROOM_INDEX_OFFSET + localRoomIndex;
   const userOrdinalInRoom = Math.floor((vuId - 1) / HOT_ROOMS) + 1;
-  const room = rooms[roomIndex];
+  const room = rooms[localRoomIndex];
   const roomTag = `room-${roomIndex}`;
   const tags = { roomIndex: roomTag };
   hotRoomAssignedUsers.add(1, tags);
@@ -180,6 +185,9 @@ export default function (data) {
     tags,
     onMessage: (msg) => {
       if (msg.type === 'chat.ack') {
+        return;
+      }
+      if (!HOT_ROOM_DETAIL_METRICS) {
         return;
       }
       hotRoomBroadcastReceived.add(1, tags);
