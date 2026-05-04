@@ -71,9 +71,16 @@ http {
     access_log /var/log/nginx/access.log;
     error_log /var/log/nginx/error.log warn;
 
-    upstream openchat_app {
+    upstream openchat_api {
         least_conn;
-%{ for ip in app_ips ~}
+%{ for ip in api_ips ~}
+        server ${ip}:8080 max_fails=3 fail_timeout=10s;
+%{ endfor ~}
+    }
+
+    upstream openchat_realtime {
+        least_conn;
+%{ for ip in realtime_ips ~}
         server ${ip}:8080 max_fails=3 fail_timeout=10s;
 %{ endfor ~}
     }
@@ -81,8 +88,20 @@ http {
     server {
         listen 8080;
 
+        location /ws/ {
+            proxy_pass http://openchat_realtime;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_buffering off;
+            proxy_read_timeout 3600s;
+            proxy_send_timeout 3600s;
+        }
+
         location / {
-            proxy_pass http://openchat_app;
+            proxy_pass http://openchat_api;
             proxy_http_version 1.1;
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection "upgrade";
@@ -108,7 +127,42 @@ nginx -t
 systemctl enable --now nginx
 systemctl reload nginx
 
-echo "[lb] waiting for upstream health through nginx"
+API_IPS="%{ for ip in api_ips ~}${ip} %{ endfor ~}"
+REALTIME_IPS="%{ for ip in realtime_ips ~}${ip} %{ endfor ~}"
+
+wait_for_upstreams() {
+  local group_name="$1"
+  local ips="$2"
+  set -- $ips
+  local total_count="$#"
+
+  echo "[lb] waiting for $group_name upstream health"
+  for attempt in $(seq 1 180); do
+    local healthy_count=0
+    local ip
+    for ip in "$@"; do
+      if curl --max-time 3 -sf "http://$${ip}:8080/actuator/health" >/dev/null; then
+        healthy_count=$((healthy_count + 1))
+      fi
+    done
+
+    if [ "$healthy_count" -eq "$total_count" ]; then
+      echo "[lb] $group_name upstreams healthy count=$healthy_count"
+      return 0
+    fi
+
+    if [ "$attempt" -eq 180 ]; then
+      echo "[lb] $group_name upstreams did not become healthy count=$healthy_count/$total_count" >&2
+      return 1
+    fi
+    sleep 2
+  done
+}
+
+wait_for_upstreams "api" "$API_IPS"
+wait_for_upstreams "realtime" "$REALTIME_IPS"
+
+echo "[lb] waiting for routed health through nginx"
 for attempt in $(seq 1 180); do
   if curl --max-time 3 -sf http://127.0.0.1:8080/actuator/health >/dev/null; then
     echo "[lb] healthy"

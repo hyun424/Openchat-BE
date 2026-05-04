@@ -1,0 +1,197 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+RUN_ID="${run_id}"
+BUCKET_NAME="${bucket_name}"
+SOURCE_OBJECT="${source_object}"
+LB_INTERNAL_IP="${lb_internal_ip}"
+MYSQL_IP="${mysql_ip}"
+REDIS_IP="${redis_ip}"
+WORKDIR="/opt/openchat"
+MONITOR_DIR="/opt/openchat-monitoring"
+LOG_DIR="/var/log/openchat-loadtest"
+
+mkdir -p "$LOG_DIR" "$MONITOR_DIR/prometheus" "$MONITOR_DIR/grafana/provisioning/datasources" "$MONITOR_DIR/grafana/provisioning/dashboards"
+exec > >(tee -a "$LOG_DIR/monitoring-startup.log") 2>&1
+
+echo "[monitoring] startup begin run_id=$RUN_ID lb=$LB_INTERNAL_IP mysql=$MYSQL_IP redis=$REDIS_IP"
+
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y docker.io unzip curl jq gnupg ca-certificates iproute2
+systemctl enable --now docker
+
+if ! command -v gcloud >/dev/null 2>&1; then
+  curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+    | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+  echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
+    > /etc/apt/sources.list.d/google-cloud-sdk.list
+  apt-get update
+  apt-get install -y google-cloud-cli
+fi
+
+rm -rf "$WORKDIR"
+mkdir -p "$WORKDIR"
+for attempt in $(seq 1 30); do
+  if gcloud storage cp "gs://$BUCKET_NAME/$SOURCE_OBJECT" /tmp/openchat-source.zip; then
+    break
+  fi
+  if [ "$attempt" -eq 30 ]; then
+    echo "[monitoring] failed to download source archive" >&2
+    exit 1
+  fi
+  sleep 5
+done
+unzip -q /tmp/openchat-source.zip -d "$WORKDIR"
+
+cat > "$MONITOR_DIR/prometheus/prometheus.yml" <<EOF
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: openchat-lb
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets:
+          - "$LB_INTERNAL_IP:8080"
+        labels:
+          application: openchat
+          role: lb
+
+  - job_name: openchat-api
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets:
+%{ for ip in api_ips ~}
+          - "${ip}:8080"
+%{ endfor ~}
+        labels:
+          application: openchat
+          role: api
+
+  - job_name: openchat-realtime
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets:
+%{ for ip in realtime_ips ~}
+          - "${ip}:8080"
+%{ endfor ~}
+        labels:
+          application: openchat
+          role: realtime
+
+  - job_name: mysql
+    static_configs:
+      - targets:
+          - "127.0.0.1:9104"
+
+  - job_name: redis
+    static_configs:
+      - targets:
+          - "127.0.0.1:9121"
+
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - "127.0.0.1:9090"
+EOF
+
+cat > "$MONITOR_DIR/grafana/provisioning/datasources/datasources.yml" <<EOF
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://127.0.0.1:9090
+    isDefault: true
+    editable: true
+
+  - name: InfluxDB-k6
+    uid: InfluxDB-k6
+    type: influxdb
+    access: proxy
+    url: http://127.0.0.1:8086
+    database: k6
+    isDefault: false
+    editable: true
+EOF
+
+cat > "$MONITOR_DIR/grafana/provisioning/dashboards/dashboards.yml" <<EOF
+apiVersion: 1
+
+providers:
+  - name: OpenChat Load Tests
+    orgId: 1
+    folder: OpenChat Load Tests
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
+EOF
+
+if [ -d "$WORKDIR/infra/gcp-loadtest/grafana/dashboards" ]; then
+  cp "$WORKDIR"/infra/gcp-loadtest/grafana/dashboards/*.json "$MONITOR_DIR/grafana/provisioning/dashboards/" || true
+fi
+
+docker rm -f openchat-influxdb openchat-prometheus openchat-grafana openchat-mysql-exporter openchat-redis-exporter >/dev/null 2>&1 || true
+
+docker run -d \
+  --name openchat-influxdb \
+  --restart unless-stopped \
+  --network host \
+  -e INFLUXDB_DB=k6 \
+  -e INFLUXDB_HTTP_AUTH_ENABLED=false \
+  -e INFLUXDB_HTTP_MAX_BODY_SIZE=0 \
+  influxdb:1.8
+
+docker run -d \
+  --name openchat-mysql-exporter \
+  --restart unless-stopped \
+  --network host \
+  -e DATA_SOURCE_NAME="openchat:openchat@($MYSQL_IP:3306)/openchat" \
+  prom/mysqld-exporter:v0.14.0
+
+docker run -d \
+  --name openchat-redis-exporter \
+  --restart unless-stopped \
+  --network host \
+  -e REDIS_ADDR="redis://$REDIS_IP:6379" \
+  oliver006/redis_exporter:v1.58.0
+
+docker run -d \
+  --name openchat-prometheus \
+  --restart unless-stopped \
+  --network host \
+  -v "$MONITOR_DIR/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
+  prom/prometheus:v2.51.0 \
+  --config.file=/etc/prometheus/prometheus.yml \
+  --storage.tsdb.retention.time=6h
+
+docker run -d \
+  --name openchat-grafana \
+  --restart unless-stopped \
+  --network host \
+  -e GF_SECURITY_ADMIN_USER=admin \
+  -e GF_SECURITY_ADMIN_PASSWORD=admin \
+  -e GF_AUTH_ANONYMOUS_ENABLED=true \
+  -e GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer \
+  -v "$MONITOR_DIR/grafana/provisioning:/etc/grafana/provisioning:ro" \
+  grafana/grafana:10.4.0
+
+echo "[monitoring] waiting for grafana"
+for attempt in $(seq 1 120); do
+  if curl --max-time 3 -sf http://127.0.0.1:3000/api/health >/dev/null; then
+    echo "[monitoring] grafana healthy"
+    exit 0
+  fi
+  if [ "$attempt" -eq 120 ]; then
+    echo "[monitoring] grafana did not become healthy" >&2
+    docker ps -a | tee "$LOG_DIR/docker-ps-failed.txt" || true
+    exit 1
+  fi
+  sleep 2
+done

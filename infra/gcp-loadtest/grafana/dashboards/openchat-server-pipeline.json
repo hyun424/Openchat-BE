@@ -1,0 +1,139 @@
+{
+  "uid": "openchat-server-pipeline",
+  "title": "OpenChat Server Pipeline",
+  "tags": ["openchat", "loadtest", "server"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": { "from": "now-30m", "to": "now" },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Ack Since Client Sent p95",
+      "gridPos": { "x": 0, "y": 0, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "openchat_pipeline_since_created_seconds{stage=~\"ws\\\\.ack\\\\..*since_client_sent\",quantile=\"0.95\"}", "legendFormat": "{{role}} {{instance}} {{stage}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Broadcast Since Created p95",
+      "gridPos": { "x": 8, "y": 0, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "openchat_pipeline_since_created_seconds{stage=~\"ws\\\\.broadcast\\\\..*since_created\",quantile=\"0.95\"}", "legendFormat": "{{role}} {{instance}} {{stage}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Live Publish / Redis Publish p95",
+      "gridPos": { "x": 16, "y": 0, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "openchat_pipeline_stage_seconds{stage=~\"live_publish\\\\..*|publish\\\\.redis\\\\..*\",quantile=\"0.95\"}", "legendFormat": "{{role}} {{instance}} {{stage}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Broadcast Lane p95",
+      "gridPos": { "x": 0, "y": 8, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "openchat_pipeline_stage_seconds{stage=~\"ws\\\\.broadcast\\\\.lane\\\\..*\",quantile=\"0.95\"}", "legendFormat": "{{role}} {{instance}} {{stage}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Inbound / Ingest p95",
+      "gridPos": { "x": 8, "y": 8, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "openchat_pipeline_stage_seconds{stage=~\"ws\\\\.inbound\\\\..*|ingest\\\\..*\",quantile=\"0.95\"}", "legendFormat": "{{role}} {{instance}} {{stage}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Outbox Published Marker",
+      "gridPos": { "x": 16, "y": 8, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "openchat_pipeline_stage_seconds{stage=\"outbox.published_marker.flush\",quantile=\"0.95\"}", "legendFormat": "{{role}} {{instance}} flush p95" },
+        { "expr": "rate(openchat_pipeline_events_total{event=~\"outbox\\\\.published_marker\\\\..*\"}[1m])", "legendFormat": "{{role}} {{instance}} {{event}}/s" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "TPS - Input / Ack / DB Insert",
+      "gridPos": { "x": 0, "y": 16, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "rate(openchat_pipeline_stage_seconds_count{stage=\"ws.inbound.total\"}[1m])", "legendFormat": "{{role}} {{instance}} input msg/s" },
+        { "expr": "rate(openchat_pipeline_since_created_seconds_count{stage=\"ws.ack.after_send.since_client_sent\"}[1m])", "legendFormat": "{{role}} {{instance}} ack/s" },
+        { "expr": "rate(openchat_pipeline_events_total{event=\"ingest.db_insert.success\"}[1m])", "legendFormat": "{{role}} {{instance}} db insert/s" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "TPS - WebSocket Delivery",
+      "gridPos": { "x": 8, "y": 16, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "rate(openchat_pipeline_events_total{event=\"ws.send.succeeded\"}[1m])", "legendFormat": "{{role}} {{instance}} logical deliveries/s" },
+        { "expr": "rate(openchat_pipeline_events_total{event=\"ws.send.frame.succeeded\"}[1m])", "legendFormat": "{{role}} {{instance}} frames/s" },
+        { "expr": "rate(openchat_pipeline_events_total{event=\"ws.send.failed\"}[1m])", "legendFormat": "{{role}} {{instance}} failed deliveries/s" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "WebSocket Send Bytes",
+      "gridPos": { "x": 16, "y": 16, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "rate(openchat_pipeline_events_total{event=\"ws.send.bytes\"}[1m])", "legendFormat": "{{role}} {{instance}} bytes/s" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "Bps" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "WebSocket Send Duration p95 / p99",
+      "gridPos": { "x": 0, "y": 24, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "openchat_pipeline_stage_seconds{stage=\"ws.send.duration\",quantile=\"0.95\"}", "legendFormat": "{{role}} {{instance}} p95" },
+        { "expr": "openchat_pipeline_stage_seconds{stage=\"ws.send.duration\",quantile=\"0.99\"}", "legendFormat": "{{role}} {{instance}} p99" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Broadcast Lane Done vs Delivery TPS",
+      "gridPos": { "x": 8, "y": 24, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "openchat_pipeline_since_created_seconds{stage=\"ws.broadcast.lane_done.since_created\",quantile=\"0.95\"}", "legendFormat": "{{role}} {{instance}} lane_done p95" },
+        { "expr": "rate(openchat_pipeline_events_total{event=\"ws.send.succeeded\"}[1m]) / 1000000", "legendFormat": "{{role}} {{instance}} delivery M/s" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "WebSocket Send Failures",
+      "gridPos": { "x": 16, "y": 24, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "rate(openchat_pipeline_events_total{event=~\"ws\\\\.send\\\\.fail\\\\..*|ws\\\\.send\\\\.frame\\\\.failed\"}[1m])", "legendFormat": "{{role}} {{instance}} {{event}}/s" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] }
+    }
+  ]
+}

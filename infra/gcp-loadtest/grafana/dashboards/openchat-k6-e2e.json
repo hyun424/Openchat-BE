@@ -1,0 +1,78 @@
+{
+  "uid": "openchat-k6-e2e",
+  "title": "OpenChat k6 E2E",
+  "tags": ["openchat", "loadtest", "k6"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": { "from": "now-30m", "to": "now" },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Ack RTT p95/p99",
+      "gridPos": { "x": 0, "y": 0, "w": 8, "h": 8 },
+      "datasource": { "type": "influxdb", "uid": "InfluxDB-k6" },
+      "targets": [
+        { "rawQuery": true, "query": "SELECT percentile(\"value\", 95) FROM \"chat_ack_roundtrip_ms\" WHERE $timeFilter GROUP BY time($__interval), \"workerIndex\", \"roomIndex\" fill(null)", "refId": "A", "resultFormat": "time_series", "alias": "p95 $tag_workerIndex $tag_roomIndex" },
+        { "rawQuery": true, "query": "SELECT percentile(\"value\", 99) FROM \"chat_ack_roundtrip_ms\" WHERE $timeFilter GROUP BY time($__interval), \"workerIndex\", \"roomIndex\" fill(null)", "refId": "B", "resultFormat": "time_series", "alias": "p99 $tag_workerIndex $tag_roomIndex" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Visible Freshness p95/p99",
+      "gridPos": { "x": 8, "y": 0, "w": 8, "h": 8 },
+      "datasource": { "type": "influxdb", "uid": "InfluxDB-k6" },
+      "targets": [
+        { "rawQuery": true, "query": "SELECT percentile(\"value\", 95) FROM \"ws_visible_freshness_ms\" WHERE $timeFilter GROUP BY time($__interval), \"workerIndex\", \"roomIndex\" fill(null)", "refId": "A", "resultFormat": "time_series", "alias": "p95 $tag_workerIndex $tag_roomIndex" },
+        { "rawQuery": true, "query": "SELECT percentile(\"value\", 99) FROM \"ws_visible_freshness_ms\" WHERE $timeFilter GROUP BY time($__interval), \"workerIndex\", \"roomIndex\" fill(null)", "refId": "B", "resultFormat": "time_series", "alias": "p99 $tag_workerIndex $tag_roomIndex" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Connect Duration p95/p99",
+      "gridPos": { "x": 16, "y": 0, "w": 8, "h": 8 },
+      "datasource": { "type": "influxdb", "uid": "InfluxDB-k6" },
+      "targets": [
+        { "rawQuery": true, "query": "SELECT percentile(\"value\", 95) FROM \"ws_connect_duration_ms\" WHERE $timeFilter GROUP BY time($__interval), \"workerIndex\", \"roomIndex\" fill(null)", "refId": "A", "resultFormat": "time_series", "alias": "p95 $tag_workerIndex $tag_roomIndex" },
+        { "rawQuery": true, "query": "SELECT percentile(\"value\", 99) FROM \"ws_connect_duration_ms\" WHERE $timeFilter GROUP BY time($__interval), \"workerIndex\", \"roomIndex\" fill(null)", "refId": "B", "resultFormat": "time_series", "alias": "p99 $tag_workerIndex $tag_roomIndex" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Connect Success / Failure",
+      "gridPos": { "x": 0, "y": 8, "w": 8, "h": 8 },
+      "datasource": { "type": "influxdb", "uid": "InfluxDB-k6" },
+      "targets": [
+        { "rawQuery": true, "query": "SELECT mean(\"value\") FROM \"ws_connect_success_rate\" WHERE $timeFilter GROUP BY time($__interval), \"workerIndex\", \"roomIndex\" fill(null)", "refId": "A", "resultFormat": "time_series", "alias": "success $tag_workerIndex $tag_roomIndex" },
+        { "rawQuery": true, "query": "SELECT mean(\"value\") FROM \"ws_connect_failure_rate\" WHERE $timeFilter GROUP BY time($__interval), \"workerIndex\", \"roomIndex\" fill(null)", "refId": "B", "resultFormat": "time_series", "alias": "failure $tag_workerIndex $tag_roomIndex" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Messages Sent / Received",
+      "gridPos": { "x": 8, "y": 8, "w": 8, "h": 8 },
+      "datasource": { "type": "influxdb", "uid": "InfluxDB-k6" },
+      "targets": [
+        { "rawQuery": true, "query": "SELECT non_negative_derivative(sum(\"value\"), 1s) FROM \"ws_messages_sent_total\" WHERE $timeFilter GROUP BY time($__interval), \"workerIndex\", \"roomIndex\" fill(null)", "refId": "A", "resultFormat": "time_series", "alias": "sent/s $tag_workerIndex $tag_roomIndex" },
+        { "rawQuery": true, "query": "SELECT non_negative_derivative(sum(\"value\"), 1s) FROM \"ws_messages_received_total\" WHERE $timeFilter GROUP BY time($__interval), \"workerIndex\", \"roomIndex\" fill(null)", "refId": "B", "resultFormat": "time_series", "alias": "received/s $tag_workerIndex $tag_roomIndex" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Received / Omitted Frames",
+      "gridPos": { "x": 16, "y": 8, "w": 8, "h": 8 },
+      "datasource": { "type": "influxdb", "uid": "InfluxDB-k6" },
+      "targets": [
+        { "rawQuery": true, "query": "SELECT non_negative_derivative(sum(\"value\"), 1s) FROM \"ws_frames_received_total\" WHERE $timeFilter GROUP BY time($__interval), \"workerIndex\", \"roomIndex\" fill(null)", "refId": "A", "resultFormat": "time_series", "alias": "frames/s $tag_workerIndex $tag_roomIndex" },
+        { "rawQuery": true, "query": "SELECT non_negative_derivative(sum(\"value\"), 1s) FROM \"ws_realtime_omitted_messages_total\" WHERE $timeFilter GROUP BY time($__interval), \"workerIndex\", \"roomIndex\" fill(null)", "refId": "B", "resultFormat": "time_series", "alias": "omitted/s $tag_workerIndex $tag_roomIndex" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] }
+    }
+  ]
+}

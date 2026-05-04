@@ -4,6 +4,7 @@ set -euo pipefail
 RUN_ID="${run_id}"
 BUCKET_NAME="${bucket_name}"
 SOURCE_OBJECT="${source_object}"
+APP_ROLE="${app_role}"
 APP_INDEX="${app_index}"
 MYSQL_IP="${mysql_ip}"
 REDIS_IP="${redis_ip}"
@@ -39,7 +40,30 @@ collect_socket_snapshot() {
   } > "$out_dir/$name.txt" 2>&1
 }
 
-echo "[app] startup begin run_id=$RUN_ID app_index=$APP_INDEX mysql=$MYSQL_IP redis=$REDIS_IP"
+case "$APP_ROLE" in
+  api)
+    WEBSOCKET_ENABLED=false
+    REDIS_SUBSCRIBER_ENABLED=false
+    LIVE_PUBLISH_ENABLED=false
+    OUTBOX_PUBLISHED_MARKER_ENABLED=false
+    OUTBOX_ENABLED=false
+    ROOM_METADATA_ENABLED=false
+    ;;
+  realtime|combined)
+    WEBSOCKET_ENABLED=true
+    REDIS_SUBSCRIBER_ENABLED=true
+    LIVE_PUBLISH_ENABLED=true
+    OUTBOX_PUBLISHED_MARKER_ENABLED=true
+    OUTBOX_ENABLED=true
+    ROOM_METADATA_ENABLED=true
+    ;;
+  *)
+    echo "[app] unsupported app_role=$APP_ROLE" >&2
+    exit 1
+    ;;
+esac
+
+echo "[app] startup begin run_id=$RUN_ID role=$APP_ROLE app_index=$APP_INDEX mysql=$MYSQL_IP redis=$REDIS_IP"
 apply_socket_tuning
 collect_socket_snapshot "app-socket-before"
 
@@ -111,8 +135,9 @@ docker run -d \
   -e SPRING_DATA_REDIS_PORT=6379 \
   -e APP_KAFKA_ENABLED=false \
   -e KAFKA_SERVERS=127.0.0.1:9092 \
-  -e INSTANCE_ID="gcp-app-$APP_INDEX" \
-  -e APP_INSTANCE_ID="gcp-app-$APP_INDEX" \
+  -e APP_ROLE="$APP_ROLE" \
+  -e INSTANCE_ID="gcp-$APP_ROLE-$APP_INDEX" \
+  -e APP_INSTANCE_ID="gcp-$APP_ROLE-$APP_INDEX" \
   -e JWT_SECRET=loadtest-secret-key-minimum-32-characters \
   -e CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000 \
   -e SERVER_TOMCAT_MAX_CONNECTIONS=20000 \
@@ -128,16 +153,22 @@ docker run -d \
   -e WS_CONTROLLED_REALTIME_ENABLED=true \
   -e WS_HOT_LIVE_MAX_MESSAGES_PER_SEC=100 \
   -e WS_SUPER_HOT_LIVE_MAX_MESSAGES_PER_SEC=50 \
-  -e LIVE_PUBLISH_ENABLED=true \
+  -e WEBSOCKET_ENABLED="$WEBSOCKET_ENABLED" \
+  -e REDIS_SUBSCRIBER_ENABLED="$REDIS_SUBSCRIBER_ENABLED" \
+  -e LIVE_PUBLISH_ENABLED="$LIVE_PUBLISH_ENABLED" \
   -e LIVE_PUBLISH_THREADS=8 \
   -e LIVE_PUBLISH_QUEUE_CAPACITY=100000 \
-  -e OUTBOX_ENABLED=true \
+  -e OUTBOX_PUBLISHED_MARKER_ENABLED="$OUTBOX_PUBLISHED_MARKER_ENABLED" \
+  -e OUTBOX_PUBLISHED_MARKER_QUEUE_CAPACITY=200000 \
+  -e OUTBOX_PUBLISHED_MARKER_BATCH_SIZE=500 \
+  -e OUTBOX_PUBLISHED_MARKER_FLUSH_INTERVAL_MS=25 \
+  -e OUTBOX_ENABLED="$OUTBOX_ENABLED" \
   -e OUTBOX_POLL_INTERVAL_MS=100 \
   -e OUTBOX_BATCH_SIZE=100 \
   -e OUTBOX_MAX_ATTEMPTS=20 \
   -e OUTBOX_PROCESSING_TIMEOUT_MS=30000 \
   -e OUTBOX_INITIAL_RETRY_DELAY_MS=1000 \
-  -e ROOM_METADATA_ENABLED=true \
+  -e ROOM_METADATA_ENABLED="$ROOM_METADATA_ENABLED" \
   -e ROOM_METADATA_FLUSH_INTERVAL_MS=1000 \
   -e WS_BROADCAST_LANES=${websocket_broadcast_lanes} \
   -e WS_BROADCAST_QUEUE_CAPACITY_PER_LANE=10000 \

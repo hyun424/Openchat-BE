@@ -102,7 +102,7 @@ variable "app_machine_type" {
 }
 
 variable "app_count" {
-  description = "Number of backend app VMs behind the load balancer."
+  description = "Legacy backend app VM count. Used as realtime_count when realtime_count is 0."
   type        = number
   default     = 2
 
@@ -110,6 +110,40 @@ variable "app_count" {
     condition     = var.app_count >= 1
     error_message = "app_count must be at least 1."
   }
+}
+
+variable "api_count" {
+  description = "Number of API-role backend VMs for non-WebSocket HTTP traffic."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.api_count >= 1
+    error_message = "api_count must be at least 1."
+  }
+}
+
+variable "realtime_count" {
+  description = "Number of realtime-role backend VMs for WebSocket traffic. Set 0 to reuse app_count."
+  type        = number
+  default     = 0
+
+  validation {
+    condition     = var.realtime_count >= 0
+    error_message = "realtime_count must be zero or greater."
+  }
+}
+
+variable "api_machine_type" {
+  description = "API-role backend VM machine type. Empty value reuses app_machine_type."
+  type        = string
+  default     = ""
+}
+
+variable "realtime_machine_type" {
+  description = "Realtime-role backend VM machine type. Empty value reuses app_machine_type."
+  type        = string
+  default     = ""
 }
 
 variable "lb_machine_type" {
@@ -134,6 +168,65 @@ variable "k6_machine_type" {
   description = "k6 runner VM machine type."
   type        = string
   default     = "e2-standard-8"
+}
+
+variable "k6_worker_count" {
+  description = "Number of k6 runner VMs. Values greater than 1 split hot rooms and VUs evenly unless shared_room_mode is true."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.k6_worker_count >= 1
+    error_message = "k6_worker_count must be at least 1."
+  }
+}
+
+variable "shared_room_mode" {
+  description = "When true, distributed k6 workers join one coordinator-created room instead of splitting hot rooms."
+  type        = bool
+  default     = false
+}
+
+variable "k6_sender_ratio" {
+  description = "Role-aware hot-room k6 sender client ratio."
+  type        = number
+  default     = 0.94
+}
+
+variable "k6_observer_ratio" {
+  description = "Role-aware hot-room k6 observer client ratio."
+  type        = number
+  default     = 0.05
+}
+
+variable "k6_validator_ratio" {
+  description = "Role-aware hot-room k6 validator client ratio."
+  type        = number
+  default     = 0.01
+}
+
+variable "observer_send_interval_ms" {
+  description = "Send interval for observer clients. Zero disables observer sends."
+  type        = number
+  default     = 0
+}
+
+variable "enable_monitoring" {
+  description = "Whether to create a monitoring VM that runs Prometheus, Grafana, InfluxDB, and exporters."
+  type        = bool
+  default     = false
+}
+
+variable "monitoring_machine_type" {
+  description = "Monitoring VM machine type."
+  type        = string
+  default     = "e2-standard-2"
+}
+
+variable "grafana_source_ranges" {
+  description = "CIDR ranges allowed to access Grafana on port 3000. Empty keeps Grafana closed externally."
+  type        = list(string)
+  default     = []
 }
 
 variable "app_disk_size_gb" {
@@ -162,6 +255,12 @@ variable "redis_disk_size_gb" {
 
 variable "k6_disk_size_gb" {
   description = "k6 VM boot disk size."
+  type        = number
+  default     = 30
+}
+
+variable "monitoring_disk_size_gb" {
+  description = "Monitoring VM boot disk size."
   type        = number
   default     = 30
 }
