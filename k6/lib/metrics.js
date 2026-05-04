@@ -3,9 +3,21 @@ import { Trend, Rate, Counter } from 'k6/metrics';
 // ── WebSocket Metrics ──
 export const wsConnectDuration = new Trend('ws_connect_duration_ms', true);
 export const wsMessageRoundtrip = new Trend('ws_message_roundtrip_ms', true);
+export const chatAckRoundtrip = new Trend('chat_ack_roundtrip_ms', true);
+export const wsVisibleFreshness = new Trend('ws_visible_freshness_ms', true);
 export const wsConnectSuccess = new Rate('ws_connect_success_rate');
+export const wsConnectFailure = new Rate('ws_connect_failure_rate');
+export const wsConnectFailures = new Counter('ws_connect_failures_total');
 export const wsMsgSent = new Counter('ws_messages_sent_total');
 export const wsMsgReceived = new Counter('ws_messages_received_total');
+export const wsFramesReceived = new Counter('ws_frames_received_total');
+export const wsAcksReceived = new Counter('ws_acks_received_total');
+export const wsRealtimeIncompleteFrames = new Counter('ws_realtime_incomplete_frames_total');
+export const wsRealtimeOmittedMessages = new Counter('ws_realtime_omitted_messages_total');
+export const wsMessageHandlerDuration = new Trend('ws_message_handler_duration_ms', true);
+export const wsJsonParseDuration = new Trend('ws_json_parse_duration_ms', true);
+export const wsBatchMessagesPerFrame = new Trend('ws_batch_messages_per_frame', false);
+export const wsObserverVisibleSamples = new Counter('ws_observer_visible_samples_total');
 
 // ── REST API Metrics (per endpoint) ──
 export const restLogin = new Trend('rest_login_duration_ms', true);

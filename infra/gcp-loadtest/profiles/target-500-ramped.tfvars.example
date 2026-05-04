@@ -1,0 +1,23 @@
+# Self-managed 500-user ramped admission profile.
+# Uses the same split VM shape as the 1000-user target profile, but runs only
+# the official 500-user ramped scenario.
+
+profile              = "target-500-ramped"
+app_count            = 4
+app_machine_type     = "e2-standard-8"
+lb_machine_type      = "e2-standard-2"
+mysql_machine_type   = "e2-standard-4"
+redis_machine_type   = "e2-standard-4"
+k6_machine_type      = "e2-standard-16"
+vus_list             = "500"
+chat_duration_seconds = 120
+send_interval_ms     = 1000
+connect_ramp_seconds = 60
+scenario             = "k6/scenarios/08-hot-room-ramped.js"
+websocket_broadcast_lanes = 16
+
+app_disk_size_gb   = 30
+lb_disk_size_gb    = 10
+mysql_disk_size_gb = 50
+redis_disk_size_gb = 10
+k6_disk_size_gb    = 30

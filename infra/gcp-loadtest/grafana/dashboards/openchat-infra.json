@@ -1,0 +1,122 @@
+{
+  "uid": "openchat-infra",
+  "title": "OpenChat Infra",
+  "tags": ["openchat", "loadtest", "infra"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": { "from": "now-30m", "to": "now" },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "JVM CPU",
+      "gridPos": { "x": 0, "y": 0, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "process_cpu_usage{application=\"openchat\"}", "legendFormat": "{{role}} {{instance}}" },
+        { "expr": "system_cpu_usage{application=\"openchat\"}", "legendFormat": "system {{role}} {{instance}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "JVM Threads",
+      "gridPos": { "x": 8, "y": 0, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "jvm_threads_live_threads{application=\"openchat\"}", "legendFormat": "live {{role}} {{instance}}" },
+        { "expr": "jvm_threads_daemon_threads{application=\"openchat\"}", "legendFormat": "daemon {{role}} {{instance}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "GC Pause p95",
+      "gridPos": { "x": 16, "y": 0, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "jvm_gc_pause_seconds{application=\"openchat\",quantile=\"0.95\"}", "legendFormat": "{{role}} {{instance}} {{action}} {{cause}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Hikari Connections",
+      "gridPos": { "x": 0, "y": 8, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "hikaricp_connections_active{application=\"openchat\"}", "legendFormat": "active {{role}} {{instance}}" },
+        { "expr": "hikaricp_connections_idle{application=\"openchat\"}", "legendFormat": "idle {{role}} {{instance}}" },
+        { "expr": "hikaricp_connections_pending{application=\"openchat\"}", "legendFormat": "pending {{role}} {{instance}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "MySQL Exporter",
+      "gridPos": { "x": 8, "y": 8, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "mysql_up", "legendFormat": "mysql_up {{instance}}" },
+        { "expr": "mysql_global_status_threads_connected", "legendFormat": "threads_connected" },
+        { "expr": "rate(mysql_global_status_questions[1m])", "legendFormat": "questions/s" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Redis Exporter",
+      "gridPos": { "x": 16, "y": 8, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "redis_up", "legendFormat": "redis_up {{instance}}" },
+        { "expr": "redis_connected_clients", "legendFormat": "connected_clients" },
+        { "expr": "rate(redis_commands_processed_total[1m])", "legendFormat": "commands/s" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Prometheus Targets",
+      "gridPos": { "x": 0, "y": 16, "w": 24, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "up", "legendFormat": "{{job}} {{instance}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "JVM Memory Used",
+      "gridPos": { "x": 0, "y": 24, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "jvm_memory_used_bytes{application=\"openchat\",area=\"heap\"}", "legendFormat": "heap {{role}} {{instance}}" },
+        { "expr": "jvm_memory_used_bytes{application=\"openchat\",area=\"nonheap\"}", "legendFormat": "nonheap {{role}} {{instance}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Realtime Delivery Egress Approx",
+      "gridPos": { "x": 8, "y": 24, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "rate(openchat_pipeline_events_total{role=\"realtime\",event=\"ws.send.bytes\"}[1m])", "legendFormat": "{{instance}} ws bytes/s" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "Bps" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Room Hot State / Fanout",
+      "gridPos": { "x": 16, "y": 24, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "openchat_room_hot_state_rooms", "legendFormat": "{{role}} {{instance}} rooms {{state}}" },
+        { "expr": "openchat_room_hot_state_outbound_fanout_max_per_second", "legendFormat": "{{role}} {{instance}} max fanout/s" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    }
+  ]
+}

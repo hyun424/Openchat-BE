@@ -28,7 +28,10 @@ class ChatWebSocketMessageParser {
         String clientMessageId = node.has("clientMessageId")
                 ? node.get("clientMessageId").asText()
                 : null;
-        return new ChatWebSocketMessage(sanitize(content), clientMessageId);
+        Long clientSentAt = node.has("clientSentAt") && node.get("clientSentAt").canConvertToLong()
+                ? node.get("clientSentAt").asLong()
+                : null;
+        return new ChatWebSocketMessage(sanitize(content), clientMessageId, clientSentAt);
     }
 
     private String sanitize(String content) {

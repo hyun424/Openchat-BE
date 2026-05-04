@@ -1,0 +1,39 @@
+# Shared-room distributed k6 profile for isolating the 1800-user hot-room bottleneck.
+# All k6 workers join one coordinator-created room; only the k6 observation path is split.
+
+profile               = "hot-room-1800-shared-k6"
+api_count             = 1
+realtime_count        = 4
+api_machine_type      = "e2-standard-4"
+realtime_machine_type = "e2-standard-8"
+app_machine_type      = "e2-standard-8"
+lb_machine_type       = "e2-standard-2"
+mysql_machine_type    = "e2-standard-4"
+redis_machine_type    = "e2-standard-4"
+k6_machine_type       = "e2-standard-8"
+k6_worker_count       = 2
+shared_room_mode      = true
+vus_list              = "1800"
+chat_duration_seconds = 120
+send_interval_ms      = 1000
+connect_ramp_seconds  = 120
+hot_rooms             = 1
+scenario              = "k6/scenarios/08-hot-room-ramped.js"
+websocket_broadcast_lanes = 16
+k6_sender_ratio           = 0.94
+k6_observer_ratio         = 0.05
+k6_validator_ratio        = 0.01
+observer_send_interval_ms = 0
+
+app_disk_size_gb        = 25
+lb_disk_size_gb         = 10
+mysql_disk_size_gb      = 30
+redis_disk_size_gb      = 10
+k6_disk_size_gb         = 10
+monitoring_disk_size_gb = 15
+
+# Grafana/Prometheus/InfluxDB monitoring. Use grafana_source_ranges=["x.x.x.x/32"]
+# when enable_monitoring=true, otherwise Grafana is not reachable from outside.
+enable_monitoring       = false
+monitoring_machine_type = "e2-standard-2"
+grafana_source_ranges   = []

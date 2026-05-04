@@ -1,0 +1,33 @@
+# Single 1000-user hot room on the API/Realtime split VM shape.
+# Use this before 1000x3 aggregate tests to isolate one-room fan-out/send limits.
+
+profile               = "hot-room-1000-role-split"
+api_count             = 1
+realtime_count        = 4
+api_machine_type      = "e2-standard-4"
+realtime_machine_type = "e2-standard-8"
+app_machine_type      = "e2-standard-8"
+lb_machine_type       = "e2-standard-2"
+mysql_machine_type    = "e2-standard-4"
+redis_machine_type    = "e2-standard-4"
+k6_machine_type       = "e2-standard-16"
+k6_worker_count       = 1
+vus_list              = "1000"
+chat_duration_seconds = 120
+send_interval_ms      = 1000
+connect_ramp_seconds  = 120
+scenario              = "k6/scenarios/08-hot-room-ramped.js"
+websocket_broadcast_lanes = 16
+
+app_disk_size_gb   = 25
+lb_disk_size_gb    = 10
+mysql_disk_size_gb = 30
+redis_disk_size_gb = 10
+k6_disk_size_gb    = 10
+
+# Grafana/Prometheus/InfluxDB monitoring. Use grafana_source_ranges=["x.x.x.x/32"]
+# when enable_monitoring=true, otherwise Grafana is not reachable from outside.
+enable_monitoring       = false
+monitoring_machine_type = "e2-standard-2"
+monitoring_disk_size_gb = 15
+grafana_source_ranges   = []

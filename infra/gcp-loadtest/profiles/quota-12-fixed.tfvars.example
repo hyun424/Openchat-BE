@@ -1,0 +1,13 @@
+# Fits the current 12 vCPU CPUS_ALL_REGIONS quota.
+# Use this only for small fixed-infra baselines, not for the 1000-user target.
+
+profile               = "quota-12-fixed"
+app_count             = 2
+app_machine_type      = "e2-standard-2"
+lb_machine_type       = "e2-small"
+mysql_machine_type    = "e2-standard-2"
+redis_machine_type    = "e2-standard-2"
+k6_machine_type       = "e2-standard-2"
+vus_list              = "100 200 300"
+chat_duration_seconds = 120
+send_interval_ms      = 1000

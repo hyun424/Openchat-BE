@@ -1,0 +1,20 @@
+# Self-managed 1000-user target profile.
+# Requires at least 58 available vCPUs for this Terraform stack.
+# Keep MySQL and Redis on VMs; do not use Cloud SQL or Memorystore.
+
+profile               = "target-1000-self-managed"
+app_count             = 4
+app_machine_type      = "e2-standard-8"
+lb_machine_type       = "e2-standard-2"
+mysql_machine_type    = "e2-standard-4"
+redis_machine_type    = "e2-standard-4"
+k6_machine_type       = "e2-standard-16"
+vus_list              = "300 500 1000"
+chat_duration_seconds = 120
+send_interval_ms      = 1000
+
+app_disk_size_gb   = 30
+lb_disk_size_gb    = 10
+mysql_disk_size_gb = 50
+redis_disk_size_gb = 10
+k6_disk_size_gb    = 30

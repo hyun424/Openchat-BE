@@ -9,6 +9,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.util.*;
 
 @Slf4j
@@ -20,6 +21,26 @@ public class HotChatService {
     private final RedisHealthState redisHealthState;
 
     private static final int CANDIDATE_MULTIPLIER = 3;
+
+    /**
+     * 채팅 전송 후처리 경로에서 호출한다.
+     * Redis 장애가 있어도 메시지 DB 저장/ack 의미를 깨지 않도록 예외는 삼키고 Redis down만 표시한다.
+     */
+    public void recordMessageActivity(Long roomId, String messageId) {
+        if (!redisHealthState.isUp()) {
+            return;
+        }
+
+        try {
+            String bucketKey = BucketKeyUtil.currentBucketKey();
+            redisTemplate.opsForZSet()
+                    .incrementScore(bucketKey, "room:" + roomId, 1);
+            redisTemplate.expire(bucketKey, Duration.ofMinutes(7));
+        } catch (Exception e) {
+            redisHealthState.markDown();
+            log.warn("[HOTCHAT FAIL] roomId={} messageId={} - marking Redis down", roomId, messageId, e);
+        }
+    }
 
     public List<HotChatResult> getHotChats(int windowMinutes, int limit) {
         // Skip if Redis is down

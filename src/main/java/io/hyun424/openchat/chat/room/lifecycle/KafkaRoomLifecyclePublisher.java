@@ -8,7 +8,7 @@ import org.springframework.stereotype.Component;
 
 @Slf4j
 @Component
-@ConditionalOnProperty(name = "spring.kafka.bootstrap-servers")
+@ConditionalOnProperty(name = "app.kafka.enabled", havingValue = "true", matchIfMissing = true)
 public class KafkaRoomLifecyclePublisher implements RoomLifecyclePublisher {
 
     public static final String ROOM_LIFECYCLE_TOPIC = "room-lifecycle";

@@ -44,11 +44,26 @@ public class MessageController {
     public MessagePageResponse getMessagesBefore(
             @RequestHeader("Authorization") String authorization,
             @PathVariable @Positive Long roomId,
-            @RequestParam @Positive Long cursor,
+            @RequestParam @Min(0) Long cursor,
             @RequestParam(defaultValue = "30") @Min(1) @Max(100) int limit
     ) {
         String userId = authUserResolver.extractUserId(authorization);
         return messageService.getMessagesBeforeCursor(roomId, userId, cursor, limit);
+    }
+
+    /**
+     * WebSocket batch/재연결 보정을 위해 cursor 이후 메시지를 조회한다.
+     * cursor는 마지막으로 처리한 Message.id 또는 sequence 값을 사용한다.
+     */
+    @GetMapping("/{roomId}/messages/after")
+    public MessagePageResponse getMessagesAfter(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable @Positive Long roomId,
+            @RequestParam @Positive Long cursor,
+            @RequestParam(defaultValue = "100") @Min(1) @Max(500) int limit
+    ) {
+        String userId = authUserResolver.extractUserId(authorization);
+        return messageService.getMessagesAfterCursor(roomId, userId, cursor, limit);
     }
 
     /**

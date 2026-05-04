@@ -3,6 +3,7 @@ package io.hyun424.openchat.chat.member.service;
 import io.hyun424.openchat.chat.member.entity.MemberStatus;
 import io.hyun424.openchat.chat.member.entity.RoomMember;
 import io.hyun424.openchat.chat.member.repository.RoomMemberRepository;
+import io.hyun424.openchat.chat.metrics.ChatPipelineMetrics;
 import io.hyun424.openchat.chat.room.domain.Room;
 import io.hyun424.openchat.chat.room.repository.RoomRepository;
 import io.hyun424.openchat.global.exception.ApiException;
@@ -26,6 +27,7 @@ public class RoomMemberService {
 
     private final RoomMemberRepository roomMemberRepository;
     private final RoomRepository roomRepository;
+    private final ChatPipelineMetrics chatPipelineMetrics;
 
     /**
      * 메시지 접근 기준 시점 조회
@@ -33,20 +35,31 @@ public class RoomMemberService {
      */
     @Transactional(readOnly = true)
     public Instant getJoinedAtOrThrow(Long roomId, String userId) {
-        return roomMemberRepository
-                .findByRoomIdAndUserIdAndLeftAtIsNullAndStatus(roomId, userId, MemberStatus.APPROVED)
-                .map(RoomMember::getJoinedAt)
-                .orElseThrow(() ->
-                        new ApiException(ErrorCode.NOT_JOINED, "방에 먼저 입장해야 합니다.")
-                );
+        long startNanos = System.nanoTime();
+        try {
+            return roomMemberRepository
+                    .findByRoomIdAndUserIdAndLeftAtIsNullAndStatus(roomId, userId, MemberStatus.APPROVED)
+                    .map(RoomMember::getJoinedAt)
+                    .orElseThrow(() ->
+                            new ApiException(ErrorCode.NOT_JOINED, "방에 먼저 입장해야 합니다.")
+                    );
+        } finally {
+            chatPipelineMetrics.recordStage("room_member.get_joined_at", startNanos);
+        }
     }
 
     public long getJoinedAtMillis(Long roomId, String userId) {
-        RoomMember member = roomMemberRepository
-                .findByRoomIdAndUserIdAndLeftAtIsNullAndStatus(roomId, userId, MemberStatus.APPROVED)
-                .orElseThrow(() ->
-                        new ApiException(ErrorCode.NOT_JOINED, "방에 먼저 입장해야 합니다.")
-                );
+        long startNanos = System.nanoTime();
+        RoomMember member;
+        try {
+            member = roomMemberRepository
+                    .findByRoomIdAndUserIdAndLeftAtIsNullAndStatus(roomId, userId, MemberStatus.APPROVED)
+                    .orElseThrow(() ->
+                            new ApiException(ErrorCode.NOT_JOINED, "방에 먼저 입장해야 합니다.")
+                    );
+        } finally {
+            chatPipelineMetrics.recordStage("room_member.get_joined_at_millis", startNanos);
+        }
 
         return member.getJoinedAt().toEpochMilli();
     }
@@ -60,9 +73,14 @@ public class RoomMemberService {
      */
     @Transactional
     public JoinResult join(Long roomId, String userId) {
+        long totalStartNanos = System.nanoTime();
+        long lockStartNanos = System.nanoTime();
         acquireJoinLockOrThrow(roomId, userId);
+        chatPipelineMetrics.recordStage("room_member.join.lock_acquire", lockStartNanos);
         try {
+            long roomLookupStartNanos = System.nanoTime();
             Room room = getRoomOrThrow(roomId);
+            chatPipelineMetrics.recordStage("room_member.join.room_lookup", roomLookupStartNanos);
             ensureRoomAccessible(room);
 
             if (userId.equals(room.getOwnerId())) {
@@ -73,10 +91,13 @@ public class RoomMemberService {
             ensureRoomHasCapacity(room);
 
             boolean requiresApproval = Boolean.TRUE.equals(room.getRequiresApproval());
+            long saveStartNanos = System.nanoTime();
             RoomMember member = createNewMemberWithRaceHandling(roomId, userId, requiresApproval);
+            chatPipelineMetrics.recordStage("room_member.join.save", saveStartNanos);
             return new JoinResult(member.getStatus(), requiresApproval);
         } finally {
             releaseJoinLock(roomId, userId);
+            chatPipelineMetrics.recordStage("room_member.join.total", totalStartNanos);
         }
     }
 
