@@ -89,7 +89,14 @@ public class ChatPipelineMetrics {
         if (!enabled || message == null || message.getCreatedAt() == null) {
             return;
         }
-        long elapsedMillis = System.currentTimeMillis() - message.getCreatedAt();
+        recordSinceEpochMillis(stage, message.getCreatedAt());
+    }
+
+    public void recordSinceEpochMillis(String stage, Long epochMillis) {
+        if (!enabled || epochMillis == null) {
+            return;
+        }
+        long elapsedMillis = System.currentTimeMillis() - epochMillis;
         long safeMillis = Math.max(0, elapsedMillis);
         durationStats.computeIfAbsent("since." + stage, ignored -> new DurationAccumulator())
                 .record(TimeUnit.MILLISECONDS.toNanos(safeMillis));
@@ -97,13 +104,44 @@ public class ChatPipelineMetrics {
     }
 
     public void incrementCounter(String event) {
+        incrementCounter(event, 1);
+    }
+
+    public void incrementCounter(String event, double amount) {
         if (!enabled) {
             return;
         }
-        counterStats.computeIfAbsent(event, ignored -> new LongAdder()).increment();
+        double safeAmount = Math.max(0, amount);
+        if (safeAmount == 0) {
+            return;
+        }
+        counterStats.computeIfAbsent(event, ignored -> new LongAdder()).add(Math.round(safeAmount));
         counters.computeIfAbsent(event, key -> Counter.builder("openchat_pipeline_events")
                 .tag("event", key)
-                .register(meterRegistry)).increment();
+                .register(meterRegistry)).increment(safeAmount);
+    }
+
+    public void recordWebSocketSendAttempt(int logicalDeliveries) {
+        int safeDeliveries = Math.max(1, logicalDeliveries);
+        incrementCounter("ws.send.attempted", safeDeliveries);
+        incrementCounter("ws.send.frame.attempted");
+    }
+
+    public void recordWebSocketSendSuccess(int logicalDeliveries, int payloadBytes, long startNanos) {
+        int safeDeliveries = Math.max(1, logicalDeliveries);
+        incrementCounter("ws.send.succeeded", safeDeliveries);
+        incrementCounter("ws.send.frame.succeeded");
+        incrementCounter("ws.send.bytes", Math.max(0, payloadBytes));
+        recordStage("ws.send.duration", startNanos);
+    }
+
+    public void recordWebSocketSendFailure(int logicalDeliveries, String reason, long startNanos) {
+        int safeDeliveries = Math.max(1, logicalDeliveries);
+        String safeReason = reason == null || reason.isBlank() ? "unknown" : reason;
+        incrementCounter("ws.send.failed", safeDeliveries);
+        incrementCounter("ws.send.frame.failed");
+        incrementCounter("ws.send.fail." + safeReason);
+        recordStage("ws.send.duration.fail", startNanos);
     }
 
     public void recordDistribution(String name, String type, double amount) {

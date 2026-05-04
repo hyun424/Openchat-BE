@@ -6,8 +6,8 @@ import io.hyun424.openchat.chat.publish.ChatMessagePublisher;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -15,31 +15,25 @@ import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Service
+@ConditionalOnExpression("'${app.role:combined}'.toLowerCase() != 'api'")
 public class PostCommitLivePublishService {
 
     private final boolean enabled;
-    private final OutboxEventRepository outboxEventRepository;
     private final ChatMessagePublisher publisher;
     private final ChatPipelineMetrics chatPipelineMetrics;
-    private final TransactionTemplate transactionTemplate;
+    private final OutboxPublishedMarker outboxPublishedMarker;
     private final ThreadPoolExecutor executor;
-    private final int maxAttempts;
 
-    public PostCommitLivePublishService(OutboxEventRepository outboxEventRepository,
-                                        ChatMessagePublisher publisher,
+    public PostCommitLivePublishService(ChatMessagePublisher publisher,
                                         ChatPipelineMetrics chatPipelineMetrics,
-                                        TransactionTemplate transactionTemplate,
+                                        OutboxPublishedMarker outboxPublishedMarker,
                                         @Value("${app.live-publish.enabled:true}") boolean enabled,
                                         @Value("${app.live-publish.threads:8}") int threads,
-                                        @Value("${app.live-publish.queue-capacity:100000}") int queueCapacity,
-                                        @Value("${app.outbox.processing-timeout-ms:30000}") long processingTimeoutMs,
-                                        @Value("${app.outbox.max-attempts:20}") int maxAttempts) {
-        this.outboxEventRepository = outboxEventRepository;
+                                        @Value("${app.live-publish.queue-capacity:100000}") int queueCapacity) {
         this.enabled = enabled;
         this.publisher = publisher;
         this.chatPipelineMetrics = chatPipelineMetrics;
-        this.transactionTemplate = transactionTemplate;
-        this.maxAttempts = maxAttempts;
+        this.outboxPublishedMarker = outboxPublishedMarker;
         this.executor = new ThreadPoolExecutor(
                 Math.max(1, threads),
                 Math.max(1, threads),
@@ -56,11 +50,15 @@ public class PostCommitLivePublishService {
     }
 
     public void publishAsync(ChatMessageDto message) {
+        publishAsync(message, null);
+    }
+
+    public void publishAsync(ChatMessageDto message, Long outboxEventId) {
         if (!enabled) {
             return;
         }
         try {
-            executor.execute(() -> publishClaimed(message));
+            executor.execute(() -> publishLive(message, outboxEventId));
             chatPipelineMetrics.recordDistribution(
                     "openchat_live_publish_queue_size",
                     "pending",
@@ -73,52 +71,21 @@ public class PostCommitLivePublishService {
         }
     }
 
-    private void publishClaimed(ChatMessageDto message) {
+    private void publishLive(ChatMessageDto message, Long outboxEventId) {
         long totalStartNanos = System.nanoTime();
         try {
             long publishStartNanos = System.nanoTime();
             publisher.publish(message);
             chatPipelineMetrics.recordStage("live_publish.redis", publishStartNanos);
-            markPublished(message.getMessageId());
+            outboxPublishedMarker.enqueue(outboxEventId);
             chatPipelineMetrics.recordStage("live_publish.total", totalStartNanos);
             chatPipelineMetrics.incrementCounter("live_publish.success");
         } catch (Exception e) {
             chatPipelineMetrics.recordStage("live_publish.fail", totalStartNanos);
             chatPipelineMetrics.incrementCounter("live_publish.fail");
-            markFailure(message.getMessageId(), e);
+            log.warn("[LIVE PUBLISH FAIL] roomId={} messageId={} - outbox will retry",
+                    message.getRoomId(), message.getMessageId(), e);
         }
-    }
-
-    private void markPublished(String messageId) {
-        transactionTemplate.executeWithoutResult(status -> {
-            OutboxEvent event = outboxEventRepository.findFirstByMessageIdOrderByIdAsc(messageId)
-                    .orElseThrow(() -> new IllegalStateException("Outbox event not found: " + messageId));
-            if (event.getStatus() == OutboxEventStatus.PUBLISHED) {
-                return;
-            }
-            event.markPublished(System.currentTimeMillis());
-        });
-    }
-
-    private void markFailure(String messageId, Exception e) {
-        transactionTemplate.executeWithoutResult(status -> {
-            OutboxEvent event = outboxEventRepository.findFirstByMessageIdOrderByIdAsc(messageId)
-                    .orElseThrow(() -> new IllegalStateException("Outbox event not found: " + messageId));
-            if (event.getStatus() == OutboxEventStatus.PUBLISHED) {
-                return;
-            }
-            String error = e.getClass().getSimpleName() + ": " + e.getMessage();
-            if (event.getAttemptCount() + 1 >= maxAttempts) {
-                event.markFailed(error);
-                return;
-            }
-            long nextRetryAt = System.currentTimeMillis() + backoffMillis(event.getAttemptCount() + 1);
-            event.markPendingForRetry(nextRetryAt, error);
-        });
-    }
-
-    private long backoffMillis(int attempt) {
-        return Math.min(30_000L, 100L * (1L << Math.min(attempt, 8)));
     }
 
     @PreDestroy

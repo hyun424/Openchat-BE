@@ -16,6 +16,7 @@ import io.hyun424.openchat.global.ratelimit.RateLimiter;
 import io.hyun424.openchat.infra.websocket.session.RoomSessionRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.*;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
@@ -29,6 +30,7 @@ import java.nio.charset.StandardCharsets;
  */
 @Slf4j
 @Component
+@ConditionalOnExpression("'${app.role:combined}'.toLowerCase() != 'api' && '${app.websocket.enabled:true}'.toLowerCase() == 'true'")
 public class ChatWebSocketHandler extends TextWebSocketHandler {
 
     private final RoomMemberService roomMemberService;
@@ -136,6 +138,7 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
             long parseStartNanos = System.nanoTime();
             ChatWebSocketMessage message = messageParser.parse(textMessage);
             chatPipelineMetrics.recordStage("ws.inbound.parse", parseStartNanos);
+            chatPipelineMetrics.recordSinceEpochMillis("ws.inbound.received.since_client_sent", message.clientSentAt());
             if (!validateContent(session, message, roomId, senderId)) {
                 return;
             }
@@ -155,9 +158,9 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
             if (ingestResult == null) {
                 return;
             }
-            sendAck(session, ingestResult.message());
+            sendAck(session, ingestResult.message(), message.clientSentAt());
             if (ingestResult.newMessage()) {
-                postCommitLivePublishService.publishAsync(ingestResult.message());
+                postCommitLivePublishService.publishAsync(ingestResult.message(), ingestResult.outboxEventId());
                 roomMetadataUpdateBuffer.enqueue(ingestResult.message());
             }
             chatPipelineMetrics.recordStage("ws.inbound.ingest", ingestStartNanos);
@@ -169,16 +172,18 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         }
     }
 
-    private void sendAck(WebSocketSession session, ChatMessageDto savedMessage) {
+    private void sendAck(WebSocketSession session, ChatMessageDto savedMessage, Long clientSentAt) {
         if (savedMessage == null) {
             return;
         }
         long startNanos = System.nanoTime();
+        chatPipelineMetrics.recordSinceEpochMillis("ws.ack.before_send.since_client_sent", clientSentAt);
         roomSessionRegistry.sendControlToSession(
                 session.getId(),
                 ChatAckMessageDto.from(savedMessage),
                 "ack"
         );
+        chatPipelineMetrics.recordSinceEpochMillis("ws.ack.after_send.since_client_sent", clientSentAt);
         chatPipelineMetrics.recordStage("ack.after_commit", startNanos);
     }
 

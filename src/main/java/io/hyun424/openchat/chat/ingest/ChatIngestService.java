@@ -90,7 +90,7 @@ public class ChatIngestService {
             chatPipelineMetrics.incrementCounter("ingest.dedupe_skip");
             ChatMessageDto duplicateDto = ChatMessageDto.from(duplicate);
             duplicateDto.setClientMessageId(normalizedClientMessageId);
-            return new ChatIngestResult(duplicateDto, false);
+            return new ChatIngestResult(duplicateDto, false, null);
         }
 
         roomTrafficMonitor.recordInboundMessage(roomId);
@@ -108,7 +108,7 @@ public class ChatIngestService {
 
         log.debug("[INGEST DONE][{}] roomId={} messageId={} latency={}ms",
                 instanceId, roomId, messageId, System.currentTimeMillis() - createdAt);
-        return new ChatIngestResult(persisted.dto(), true);
+        return new ChatIngestResult(persisted.dto(), true, persisted.outboxEvent().getId());
     }
 
     private String normalizeClientMessageId(String clientMessageId) {

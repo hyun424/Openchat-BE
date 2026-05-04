@@ -38,15 +38,24 @@ public class ChatMessagePersistenceService {
                                                   long createdAt) {
         long totalStartNanos = System.nanoTime();
         long dbStartNanos = System.nanoTime();
-        Message saved = messageRepository.save(Message.builder()
-                .messageId(messageId)
-                .roomId(roomId)
-                .senderId(senderId)
-                .clientMessageId(StringUtils.hasText(clientMessageId) ? clientMessageId : null)
-                .senderNickname(nickname)
-                .content(content)
-                .createdAt(createdAt)
-                .build());
+        chatPipelineMetrics.incrementCounter("ingest.db_insert.attempted");
+        Message saved;
+        try {
+            saved = messageRepository.save(Message.builder()
+                    .messageId(messageId)
+                    .roomId(roomId)
+                    .senderId(senderId)
+                    .clientMessageId(StringUtils.hasText(clientMessageId) ? clientMessageId : null)
+                    .senderNickname(nickname)
+                    .content(content)
+                    .createdAt(createdAt)
+                    .build());
+            chatPipelineMetrics.incrementCounter("ingest.db_insert.success");
+        } catch (RuntimeException e) {
+            chatPipelineMetrics.incrementCounter("ingest.db_insert.fail");
+            chatPipelineMetrics.recordStage("ingest.db_save.fail", dbStartNanos);
+            throw e;
+        }
         chatPipelineMetrics.recordStage("ingest.db_save", dbStartNanos);
 
         ChatMessageDto dto = ChatMessageDto.from(saved);

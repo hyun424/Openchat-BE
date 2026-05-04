@@ -149,7 +149,7 @@ class ChatWebSocketHandlerTest {
                 .createdAt(1000L)
                 .build();
         when(chatIngestService.ingest(eq(1L), eq("user1"), eq("TestUser"), anyString(), eq("c1")))
-                .thenReturn(new ChatIngestResult(saved, true));
+                .thenReturn(new ChatIngestResult(saved, true, 99L));
 
         handler.handleTextMessage(session, msg);
 
@@ -174,13 +174,13 @@ class ChatWebSocketHandlerTest {
                 .createdAt(1000L)
                 .build();
         when(chatIngestService.ingest(eq(1L), eq("user1"), eq("TestUser"), anyString(), eq("c1")))
-                .thenReturn(new ChatIngestResult(saved, true));
+                .thenReturn(new ChatIngestResult(saved, true, 99L));
 
         handler.handleTextMessage(session, msg);
 
         InOrder inOrder = inOrder(roomSessionRegistry, postCommitLivePublishService, roomMetadataUpdateBuffer);
         inOrder.verify(roomSessionRegistry).sendControlToSession(eq("session-1"), any(), eq("ack"));
-        inOrder.verify(postCommitLivePublishService).publishAsync(saved);
+        inOrder.verify(postCommitLivePublishService).publishAsync(saved, 99L);
         inOrder.verify(roomMetadataUpdateBuffer).enqueue(saved);
     }
 
@@ -197,12 +197,12 @@ class ChatWebSocketHandlerTest {
                 .createdAt(1000L)
                 .build();
         when(chatIngestService.ingest(eq(1L), eq("user1"), eq("TestUser"), anyString(), eq("c1")))
-                .thenReturn(new ChatIngestResult(saved, false));
+                .thenReturn(new ChatIngestResult(saved, false, null));
 
         handler.handleTextMessage(session, msg);
 
         verify(roomSessionRegistry).sendControlToSession(eq("session-1"), any(), eq("ack"));
-        verify(postCommitLivePublishService, never()).publishAsync(any());
+        verify(postCommitLivePublishService, never()).publishAsync(any(), any());
         verify(roomMetadataUpdateBuffer, never()).enqueue(any());
     }
 

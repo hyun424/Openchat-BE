@@ -49,4 +49,11 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEvent, Long> 
     Long findOldestCreatedAtByStatus(@Param("status") OutboxEventStatus status);
 
     Optional<OutboxEvent> findFirstByMessageIdOrderByIdAsc(String messageId);
+
+    @Modifying
+    @Query("UPDATE OutboxEvent e SET e.status = :published, e.publishedAt = :publishedAt, e.lastError = null " +
+            "WHERE e.id IN :ids AND e.status <> :published")
+    int markPublishedByIds(@Param("ids") List<Long> ids,
+                           @Param("published") OutboxEventStatus published,
+                           @Param("publishedAt") long publishedAt);
 }

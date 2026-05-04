@@ -17,6 +17,7 @@ import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.ConcurrentWebSocketSessionDecorator;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -201,7 +202,8 @@ public class RoomSessionRegistry {
         if (createdAt != null) {
             roomTrafficMonitor.recordDeliveryLag(roomId, createdAt);
         }
-        int taskCount = enqueueBroadcast(roomId, sessionSnapshot, textMessage, "single");
+        chatPipelineMetrics.recordSinceCreated("ws.broadcast.enqueue.since_created", message);
+        int taskCount = enqueueBroadcast(roomId, sessionSnapshot, textMessage, "single", List.of(message));
         chatPipelineMetrics.recordStage("ws.broadcast.single.total", broadcastStartNanos);
 
         log.debug("[WS BROADCAST] roomId={} messageId={} sessions={} laneTasks={}",
@@ -251,9 +253,10 @@ public class RoomSessionRegistry {
             if (createdAt != null) {
                 roomTrafficMonitor.recordDeliveryLag(roomId, createdAt);
             }
+            chatPipelineMetrics.recordSinceCreated("ws.broadcast.enqueue.since_created", message);
         }
 
-        int taskCount = enqueueBroadcast(roomId, sessionSnapshot, textMessage, "batch");
+        int taskCount = enqueueBroadcast(roomId, sessionSnapshot, textMessage, "batch", List.copyOf(messages));
         chatPipelineMetrics.recordStage("ws.broadcast.batch.total", broadcastStartNanos);
         chatPipelineMetrics.recordDistribution("openchat_pipeline_batch_size", "ws.broadcast", messages.size());
         chatPipelineMetrics.recordDistribution("openchat_pipeline_batch_sessions", "ws.broadcast", sessionSnapshot.size());
@@ -324,7 +327,8 @@ public class RoomSessionRegistry {
     private int enqueueBroadcast(Long roomId,
                                  List<WebSocketSession> sessions,
                                  TextMessage textMessage,
-                                 String payloadType) {
+                                 String payloadType,
+                                 List<ChatMessageDto> messages) {
         long enqueueStartNanos = System.nanoTime();
         List<List<WebSocketSession>> laneSessions = new ArrayList<>(broadcastLaneCount);
         for (int i = 0; i < broadcastLaneCount; i++) {
@@ -336,6 +340,7 @@ public class RoomSessionRegistry {
         }
 
         int taskCount = 0;
+        int payloadBytes = textMessage.getPayload().getBytes(StandardCharsets.UTF_8).length;
         for (int laneIndex = 0; laneIndex < laneSessions.size(); laneIndex++) {
             List<WebSocketSession> laneBatch = laneSessions.get(laneIndex);
             if (laneBatch.isEmpty()) {
@@ -346,6 +351,8 @@ public class RoomSessionRegistry {
                     laneIndex,
                     payloadType,
                     textMessage,
+                    payloadBytes,
+                    messages,
                     List.copyOf(laneBatch),
                     System.nanoTime()
             );
@@ -382,12 +389,23 @@ public class RoomSessionRegistry {
     private void runBroadcastTask(BroadcastTask task) {
         long startNanos = System.nanoTime();
         chatPipelineMetrics.recordStageNanos("ws.broadcast.lane.queue_wait", startNanos - task.enqueuedNanos());
+        recordSinceCreatedForTask("ws.broadcast.lane_start.since_created", task);
         Set<WebSocketSession> deadSessions = ConcurrentHashMap.newKeySet();
         AtomicInteger successCount = new AtomicInteger(0);
+        int logicalDeliveriesPerFrame = Math.max(1, task.messages().size());
         for (WebSocketSession session : task.sessions()) {
-            sendToSingleSession(task.roomId(), session, task.textMessage(), deadSessions, successCount);
+            sendToSingleSession(
+                    task.roomId(),
+                    session,
+                    task.textMessage(),
+                    task.payloadBytes(),
+                    logicalDeliveriesPerFrame,
+                    deadSessions,
+                    successCount
+            );
         }
         removeDeadSessions(task.roomId(), deadSessions);
+        recordSinceCreatedForTask("ws.broadcast.lane_done.since_created", task);
         chatPipelineMetrics.recordStage("ws.broadcast.lane.worker.total", startNanos);
         chatPipelineMetrics.recordDistribution("openchat_pipeline_batch_sessions",
                 "ws.lane." + task.payloadType(), task.sessions().size());
@@ -397,21 +415,33 @@ public class RoomSessionRegistry {
                 successCount.get(), deadSessions.size());
     }
 
+    private void recordSinceCreatedForTask(String stage, BroadcastTask task) {
+        for (ChatMessageDto message : task.messages()) {
+            chatPipelineMetrics.recordSinceCreated(stage, message);
+        }
+    }
+
     private void sendToSingleSession(Long roomId,
                                      WebSocketSession session,
                                      TextMessage textMessage,
+                                     int payloadBytes,
+                                     int logicalDeliveries,
                                      Set<WebSocketSession> deadSessions,
                                      AtomicInteger successCount) {
         long sendStartNanos = System.nanoTime();
+        chatPipelineMetrics.recordWebSocketSendAttempt(logicalDeliveries);
         try {
             if (!session.isOpen()) {
+                chatPipelineMetrics.recordWebSocketSendFailure(logicalDeliveries, "closed", sendStartNanos);
                 deadSessions.add(session);
                 return;
             }
             session.sendMessage(textMessage);
             successCount.incrementAndGet();
+            chatPipelineMetrics.recordWebSocketSendSuccess(logicalDeliveries, payloadBytes, sendStartNanos);
             chatPipelineMetrics.recordStage("ws.broadcast.lane.send.total", sendStartNanos);
         } catch (Exception e) {
+            chatPipelineMetrics.recordWebSocketSendFailure(logicalDeliveries, "exception", sendStartNanos);
             chatPipelineMetrics.recordStage("ws.broadcast.lane.send.fail", sendStartNanos);
             chatPipelineMetrics.incrementCounter("ws.broadcast.lane.send.fail");
             log.warn("[WS SEND FAIL] roomId={} sessionId={}", roomId, session.getId(), e);
@@ -511,6 +541,8 @@ public class RoomSessionRegistry {
                                  int laneIndex,
                                  String payloadType,
                                  TextMessage textMessage,
+                                 int payloadBytes,
+                                 List<ChatMessageDto> messages,
                                  List<WebSocketSession> sessions,
                                  long enqueuedNanos) {
     }
