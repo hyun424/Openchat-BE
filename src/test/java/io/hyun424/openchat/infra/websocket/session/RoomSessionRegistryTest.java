@@ -2,13 +2,19 @@ package io.hyun424.openchat.infra.websocket.session;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
+import io.hyun424.openchat.chat.metrics.ChatPipelineMetrics;
 import io.hyun424.openchat.chat.room.hot.RoomTrafficMonitor;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
+import org.springframework.web.socket.handler.SessionLimitExceededException;
 
+import java.io.IOException;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
@@ -27,6 +33,7 @@ import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 
 class RoomSessionRegistryTest {
 
@@ -77,6 +84,105 @@ class RoomSessionRegistryTest {
         verify(closedSession, never()).sendMessage(any(TextMessage.class));
         awaitRoomCount(registry, 1L, 0);
         registry.shutdownExecutor();
+    }
+
+    @Test
+    @DisplayName("닫힌 세션 전송 실패는 closed_before_send로 기록한다")
+    void sendToRoom_closedSession_recordsClosedBeforeSendReason() throws Exception {
+        SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+        ChatPipelineMetrics metrics = new ChatPipelineMetrics(meterRegistry);
+        RoomSessionRegistry registry = registryWithMetrics(metrics);
+        WebSocketSession closedSession = mockSession("closed-session", false);
+        registry.add(1L, closedSession);
+
+        registry.sendToRoom(1L, message());
+
+        awaitCounter(meterRegistry, "ws.send.fail.closed_before_send", 1);
+        assertCounter(meterRegistry, "ws.send.failed", 1);
+        assertCounter(meterRegistry, "ws.send.frame.failed", 1);
+        awaitRoomCount(registry, 1L, 0);
+        registry.shutdownExecutor();
+        metrics.shutdown();
+    }
+
+    @Test
+    @DisplayName("전송 중 IOException은 io_exception으로 기록한다")
+    void sendToRoom_ioException_recordsIoExceptionReason() throws Exception {
+        SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+        ChatPipelineMetrics metrics = new ChatPipelineMetrics(meterRegistry);
+        RoomSessionRegistry registry = registryWithMetrics(metrics);
+        WebSocketSession session = mockOpenSession("session-1");
+        doThrow(new IOException("write failed")).when(session).sendMessage(any(TextMessage.class));
+        registry.add(1L, session);
+
+        registry.sendToRoom(1L, message());
+
+        awaitCounter(meterRegistry, "ws.send.fail.io_exception", 1);
+        assertCounter(meterRegistry, "ws.send.failed", 1);
+        assertCounter(meterRegistry, "ws.send.frame.failed", 1);
+        awaitRoomCount(registry, 1L, 0);
+        registry.shutdownExecutor();
+        metrics.shutdown();
+    }
+
+    @Test
+    @DisplayName("전송 중 IllegalStateException은 illegal_state로 기록한다")
+    void sendToRoom_illegalStateException_recordsIllegalStateReason() throws Exception {
+        SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+        ChatPipelineMetrics metrics = new ChatPipelineMetrics(meterRegistry);
+        RoomSessionRegistry registry = registryWithMetrics(metrics);
+        WebSocketSession session = mockOpenSession("session-1");
+        doThrow(new IllegalStateException("bad lifecycle state")).when(session).sendMessage(any(TextMessage.class));
+        registry.add(1L, session);
+
+        registry.sendToRoom(1L, message());
+
+        awaitCounter(meterRegistry, "ws.send.fail.illegal_state", 1);
+        assertCounter(meterRegistry, "ws.send.failed", 1);
+        assertCounter(meterRegistry, "ws.send.frame.failed", 1);
+        awaitRoomCount(registry, 1L, 0);
+        registry.shutdownExecutor();
+        metrics.shutdown();
+    }
+
+    @Test
+    @DisplayName("send time limit 초과는 send_time_limit으로 기록한다")
+    void sendToRoom_sendTimeLimit_recordsSendTimeLimitReason() throws Exception {
+        SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+        ChatPipelineMetrics metrics = new ChatPipelineMetrics(meterRegistry);
+        RoomSessionRegistry registry = registryWithMetrics(metrics);
+        WebSocketSession session = mockOpenSession("session-1");
+        doThrow(new SessionLimitExceededException("Send time 5001 (ms) exceeded", CloseStatus.SESSION_NOT_RELIABLE))
+                .when(session).sendMessage(any(TextMessage.class));
+        registry.add(1L, session);
+
+        registry.sendToRoom(1L, message());
+
+        awaitCounter(meterRegistry, "ws.send.fail.send_time_limit", 1);
+        assertCounter(meterRegistry, "ws.send.failed", 1);
+        awaitRoomCount(registry, 1L, 0);
+        registry.shutdownExecutor();
+        metrics.shutdown();
+    }
+
+    @Test
+    @DisplayName("buffer limit 초과는 buffer_limit으로 기록한다")
+    void sendToRoom_bufferLimit_recordsBufferLimitReason() throws Exception {
+        SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+        ChatPipelineMetrics metrics = new ChatPipelineMetrics(meterRegistry);
+        RoomSessionRegistry registry = registryWithMetrics(metrics);
+        WebSocketSession session = mockOpenSession("session-1");
+        doThrow(new SessionLimitExceededException("Buffer size 65537 bytes exceeds", CloseStatus.SESSION_NOT_RELIABLE))
+                .when(session).sendMessage(any(TextMessage.class));
+        registry.add(1L, session);
+
+        registry.sendToRoom(1L, message());
+
+        awaitCounter(meterRegistry, "ws.send.fail.buffer_limit", 1);
+        assertCounter(meterRegistry, "ws.send.failed", 1);
+        awaitRoomCount(registry, 1L, 0);
+        registry.shutdownExecutor();
+        metrics.shutdown();
     }
 
     @Test
@@ -178,6 +284,33 @@ class RoomSessionRegistryTest {
             Thread.sleep(10);
         }
         assertEquals(expected, registry.count(roomId));
+    }
+
+    private void awaitCounter(SimpleMeterRegistry registry, String event, double expected) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + 500;
+        while (System.currentTimeMillis() < deadline) {
+            if (counter(registry, event) == expected) {
+                return;
+            }
+            Thread.sleep(10);
+        }
+        assertCounter(registry, event, expected);
+    }
+
+    private void assertCounter(SimpleMeterRegistry registry, String event, double expected) {
+        assertEquals(expected, counter(registry, event));
+    }
+
+    private double counter(SimpleMeterRegistry registry, String event) {
+        Counter counter = registry.find("openchat_pipeline_events")
+                .tag("event", event)
+                .counter();
+        return counter == null ? 0 : counter.count();
+    }
+
+    private RoomSessionRegistry registryWithMetrics(ChatPipelineMetrics metrics) {
+        return new RoomSessionRegistry(new ObjectMapper(), new RoomTrafficMonitor(), metrics,
+                1, 0, 16, 5000);
     }
 
     private WebSocketSession mockSession(String sessionId) {

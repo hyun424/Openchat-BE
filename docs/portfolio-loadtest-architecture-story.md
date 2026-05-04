@@ -12,6 +12,8 @@
 
 role-aware k6 재측정 결과, 1800명 단일방 shared room에서 DB rows와 ack count가 `201,538`건으로 일치했고, observer visible p95는 worker별 `191ms / 173ms`, 서버 `ws.broadcast.lane_done` p95는 worst node `142.5ms`, `ws.send.duration` p95는 `0.180ms`였다. 이 결과는 서버 성능이 갑자기 좋아졌다는 뜻이 아니라, 기존 full-parse k6 관측 방식이 결과를 오염시킬 수 있음을 분리해낸 것이다.
 
+이후에는 남은 `ws.send.failed` 신호도 그냥 무시하지 않고, `closed_before_send`, `closed_during_send`, `send_time_limit`, `buffer_limit`, `io_exception`, `illegal_state`처럼 저카디널리티 reason으로 나눠 기록하도록 보강했다. 이로써 다음 부하테스트에서는 실패 총량뿐 아니라 정상적인 종료 경계인지 실제 WebSocket backpressure/전송 실패인지까지 설명할 수 있다.
+
 상세 정리: [k6 측정 신뢰도 개선과 1800명 단일방 재검증](./role-aware-k6-measurement-reliability-20260504.md)
 
 ## 문제 상황

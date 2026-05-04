@@ -15,12 +15,14 @@ import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
 import org.springframework.web.socket.handler.ConcurrentWebSocketSessionDecorator;
+import org.springframework.web.socket.handler.SessionLimitExceededException;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.*;
@@ -432,7 +434,7 @@ public class RoomSessionRegistry {
         chatPipelineMetrics.recordWebSocketSendAttempt(logicalDeliveries);
         try {
             if (!session.isOpen()) {
-                chatPipelineMetrics.recordWebSocketSendFailure(logicalDeliveries, "closed", sendStartNanos);
+                chatPipelineMetrics.recordWebSocketSendFailure(logicalDeliveries, "closed_before_send", sendStartNanos);
                 deadSessions.add(session);
                 return;
             }
@@ -441,12 +443,51 @@ public class RoomSessionRegistry {
             chatPipelineMetrics.recordWebSocketSendSuccess(logicalDeliveries, payloadBytes, sendStartNanos);
             chatPipelineMetrics.recordStage("ws.broadcast.lane.send.total", sendStartNanos);
         } catch (Exception e) {
-            chatPipelineMetrics.recordWebSocketSendFailure(logicalDeliveries, "exception", sendStartNanos);
+            String reason = classifySendFailure(e);
+            chatPipelineMetrics.recordWebSocketSendFailure(logicalDeliveries, reason, sendStartNanos);
             chatPipelineMetrics.recordStage("ws.broadcast.lane.send.fail", sendStartNanos);
             chatPipelineMetrics.incrementCounter("ws.broadcast.lane.send.fail");
-            log.warn("[WS SEND FAIL] roomId={} sessionId={}", roomId, session.getId(), e);
+            log.warn("[WS SEND FAIL] roomId={} sessionId={} reason={} exceptionClass={} message={} sessionOpen={}",
+                    roomId, session.getId(), reason, e.getClass().getName(), e.getMessage(), session.isOpen());
+            log.debug("[WS SEND FAIL TRACE] roomId={} sessionId={} reason={}", roomId, session.getId(), reason, e);
             deadSessions.add(session);
         }
+    }
+
+    private String classifySendFailure(Exception e) {
+        if (e instanceof SessionLimitExceededException) {
+            String message = lowerMessage(e);
+            if (message.contains("send time")) {
+                return "send_time_limit";
+            }
+            if (message.contains("buffer size")) {
+                return "buffer_limit";
+            }
+        }
+        if (isClosedSessionFailure(e)) {
+            return "closed_during_send";
+        }
+        if (e instanceof IOException) {
+            return "io_exception";
+        }
+        if (e instanceof IllegalStateException) {
+            return "illegal_state";
+        }
+        return "unknown_exception";
+    }
+
+    private boolean isClosedSessionFailure(Exception e) {
+        String message = lowerMessage(e);
+        return message.contains("closed")
+                || message.contains("close")
+                || message.contains("broken pipe")
+                || message.contains("connection reset")
+                || message.contains("eof");
+    }
+
+    private String lowerMessage(Exception e) {
+        String message = e.getMessage();
+        return message == null ? "" : message.toLowerCase(Locale.ROOT);
     }
 
     private void removeDeadSessions(Long roomId, Set<WebSocketSession> deadSessions) {

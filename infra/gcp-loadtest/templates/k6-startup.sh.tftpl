@@ -267,6 +267,13 @@ collect_prometheus_tps_summary() {
     write_prometheus_field "ws_frame_increase_window" "sum(increase(openchat_pipeline_events_total{event=\"ws.send.frame.succeeded\"}[$${window_seconds}s]))" false
     write_prometheus_field "ws_send_bytes_increase_window" "sum(increase(openchat_pipeline_events_total{event=\"ws.send.bytes\"}[$${window_seconds}s]))" false
     write_prometheus_field "ws_send_failed_increase_window" "sum(increase(openchat_pipeline_events_total{event=\"ws.send.failed\"}[$${window_seconds}s]))" false
+    write_prometheus_field "ws_send_fail_closed_before_send_increase_window" "sum(increase(openchat_pipeline_events_total{event=\"ws.send.fail.closed_before_send\"}[$${window_seconds}s]))" false
+    write_prometheus_field "ws_send_fail_closed_during_send_increase_window" "sum(increase(openchat_pipeline_events_total{event=\"ws.send.fail.closed_during_send\"}[$${window_seconds}s]))" false
+    write_prometheus_field "ws_send_fail_send_time_limit_increase_window" "sum(increase(openchat_pipeline_events_total{event=\"ws.send.fail.send_time_limit\"}[$${window_seconds}s]))" false
+    write_prometheus_field "ws_send_fail_buffer_limit_increase_window" "sum(increase(openchat_pipeline_events_total{event=\"ws.send.fail.buffer_limit\"}[$${window_seconds}s]))" false
+    write_prometheus_field "ws_send_fail_io_exception_increase_window" "sum(increase(openchat_pipeline_events_total{event=\"ws.send.fail.io_exception\"}[$${window_seconds}s]))" false
+    write_prometheus_field "ws_send_fail_illegal_state_increase_window" "sum(increase(openchat_pipeline_events_total{event=\"ws.send.fail.illegal_state\"}[$${window_seconds}s]))" false
+    write_prometheus_field "ws_send_fail_unknown_exception_increase_window" "sum(increase(openchat_pipeline_events_total{event=\"ws.send.fail.unknown_exception\"}[$${window_seconds}s]))" false
     write_prometheus_field "ack_after_send_p95_seconds" 'max(openchat_pipeline_since_created_seconds{stage="ws.ack.after_send.since_client_sent",quantile="0.95"})' false
     write_prometheus_field "broadcast_lane_done_p95_seconds" 'max(openchat_pipeline_since_created_seconds{stage="ws.broadcast.lane_done.since_created",quantile="0.95"})' false
     write_prometheus_field "ws_send_duration_p95_seconds" 'max(openchat_pipeline_stage_seconds{stage="ws.send.duration",quantile="0.95"})' false
