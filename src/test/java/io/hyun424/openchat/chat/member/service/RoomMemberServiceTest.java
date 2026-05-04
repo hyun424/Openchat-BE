@@ -3,6 +3,7 @@ package io.hyun424.openchat.chat.member.service;
 import io.hyun424.openchat.chat.member.entity.MemberStatus;
 import io.hyun424.openchat.chat.member.entity.RoomMember;
 import io.hyun424.openchat.chat.member.repository.RoomMemberRepository;
+import io.hyun424.openchat.chat.metrics.ChatPipelineMetrics;
 import io.hyun424.openchat.chat.room.domain.Room;
 import io.hyun424.openchat.chat.room.repository.RoomRepository;
 import io.hyun424.openchat.global.exception.ApiException;
@@ -26,6 +27,7 @@ class RoomMemberServiceTest {
 
     @Mock private RoomMemberRepository roomMemberRepository;
     @Mock private RoomRepository roomRepository;
+    @Mock private ChatPipelineMetrics chatPipelineMetrics;
 
     @InjectMocks
     private RoomMemberService roomMemberService;

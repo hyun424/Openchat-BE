@@ -41,6 +41,20 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
     );
 
     /**
+     * WebSocket reconnect/sync: Load newer messages after cursor (by id).
+     */
+    @Query("SELECT m FROM Message m WHERE m.roomId = :roomId " +
+           "AND m.createdAt >= :joinedAt " +
+           "AND m.id > :cursorId " +
+           "ORDER BY m.id ASC")
+    List<Message> findMessagesAfterCursor(
+            @Param("roomId") Long roomId,
+            @Param("joinedAt") Long joinedAt,
+            @Param("cursorId") Long cursorId,
+            Pageable pageable
+    );
+
+    /**
      * Legacy: All messages since joined (for backward compatibility)
      */
     List<Message> findByRoomIdAndCreatedAtGreaterThanEqualOrderByIdAsc(

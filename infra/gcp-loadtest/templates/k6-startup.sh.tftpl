@@ -1,0 +1,593 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_ID="${project_id}"
+ZONE="${zone}"
+LB_VM_NAME="${lb_vm_name}"
+MYSQL_VM_NAME="${mysql_vm_name}"
+MYSQL_INTERNAL_IP="${mysql_internal_ip}"
+REDIS_VM_NAME="${redis_vm_name}"
+APP_VM_NAMES="${app_vm_names}"
+K6_VM_NAME="${k6_vm_name}"
+K6_VM_NAMES="${k6_vm_names}"
+K6_WORKER_INDEX="${k6_worker_index}"
+K6_WORKER_COUNT="${k6_worker_count}"
+K6_IS_COORDINATOR="${k6_is_coordinator}"
+MONITORING_VM_NAME="${monitoring_vm_name}"
+MONITORING_INTERNAL_IP="${monitoring_internal_ip}"
+ENABLE_MONITORING="${enable_monitoring}"
+LB_INTERNAL_IP="${lb_internal_ip}"
+APP_INTERNAL_IPS="${app_internal_ips}"
+BUCKET_NAME="${bucket_name}"
+SOURCE_OBJECT="${source_object}"
+RUN_ID="${run_id}"
+PROFILE="${profile}"
+VUS_LIST="${vus_list}"
+CHAT_DURATION_SECONDS="${chat_duration_seconds}"
+SEND_INTERVAL_MS="${send_interval_ms}"
+CONNECT_RAMP_SECONDS="${connect_ramp_seconds}"
+HOT_ROOMS="${hot_rooms}"
+VUS_PER_ROOM="${vus_per_room}"
+SCENARIO="${scenario}"
+SHARED_ROOM_MODE="${shared_room_mode}"
+K6_SENDER_RATIO="${k6_sender_ratio}"
+K6_OBSERVER_RATIO="${k6_observer_ratio}"
+K6_VALIDATOR_RATIO="${k6_validator_ratio}"
+OBSERVER_SEND_INTERVAL_MS="${observer_send_interval_ms}"
+SHARED_ROOM_ID=""
+SHARED_TEST_LABEL=""
+
+WORKDIR="/opt/openchat"
+RESULT_ROOT="/opt/openchat-results"
+LOG_DIR="/var/log/openchat-loadtest"
+BASE_URL="http://$LB_INTERNAL_IP:8080"
+WS_BASE_URL="ws://$LB_INTERNAL_IP:8080"
+WORKER_LABEL="single"
+if [ "$K6_WORKER_COUNT" -gt 1 ]; then
+  WORKER_LABEL="worker-$K6_WORKER_INDEX"
+fi
+
+mkdir -p "$LOG_DIR" "$RESULT_ROOT/k6/$PROFILE/$WORKER_LABEL" "$RESULT_ROOT/metrics"
+exec > >(tee -a "$LOG_DIR/k6-startup.log") 2>&1
+
+apply_socket_tuning() {
+  ulimit -n 1048576 || ulimit -n 65535 || true
+  sysctl -w net.core.somaxconn=65535 || true
+  sysctl -w net.ipv4.tcp_max_syn_backlog=65535 || true
+  sysctl -w net.core.netdev_max_backlog=250000 || true
+  sysctl -w net.ipv4.tcp_fin_timeout=15 || true
+  sysctl -w net.ipv4.ip_local_port_range="1024 65535" || true
+  sysctl -w net.ipv4.tcp_tw_reuse=1 || true
+}
+
+collect_socket_snapshot() {
+  local name="$1"
+  {
+    echo "timestamp=$(date -Iseconds)"
+    echo "ulimit_n=$(ulimit -n)"
+    sysctl net.core.somaxconn net.ipv4.tcp_max_syn_backlog net.core.netdev_max_backlog \
+      net.ipv4.tcp_fin_timeout net.ipv4.ip_local_port_range net.ipv4.tcp_tw_reuse 2>/dev/null || true
+    echo
+    ss -s || true
+    echo
+    ss -tan state established | head -n 2000 || true
+    echo
+    ss -tan state syn-recv | head -n 2000 || true
+  } > "$RESULT_ROOT/metrics/k6-$WORKER_LABEL-$name.txt" 2>&1
+}
+
+collect_db_message_count() {
+  local label="$1"
+  local output_dir="$2"
+  local safe_label="$${label//\'/}"
+  local output_file="$output_dir/$${safe_label}-db-message-count.json"
+
+  if ! command -v mysql >/dev/null 2>&1; then
+    echo "{\"label\":\"$safe_label\",\"error\":\"mysql client not installed\"}" > "$output_file"
+    return 0
+  fi
+
+  local db_count
+  db_count=$(mysql \
+    --connect-timeout=5 \
+    -h "$MYSQL_INTERNAL_IP" \
+    -uopenchat \
+    -popenchat \
+    -D openchat \
+    -N -B \
+    -e "SELECT COUNT(*) FROM chat_message WHERE client_message_id LIKE '$${safe_label}-%';" 2>"$output_dir/$${safe_label}-db-message-count.err" || true)
+
+  if [ -z "$db_count" ]; then
+    echo "{\"label\":\"$safe_label\",\"error\":\"query failed\"}" > "$output_file"
+    return 0
+  fi
+
+  cat > "$output_file" <<EOF
+{
+  "label": "$safe_label",
+  "clientMessageIdPrefix": "$safe_label",
+  "dbMessageRows": $db_count
+}
+EOF
+}
+
+create_shared_room() {
+  local admin_id="shared-room-admin-$RUN_ID"
+  local admin_nickname="SharedAdmin$K6_WORKER_INDEX"
+  local login_body
+  local login_response
+  local token
+  local room_body
+  local room_response
+  local room_id
+
+  login_body=$(jq -nc \
+    --arg userId "$admin_id" \
+    --arg nickname "$admin_nickname" \
+    '{userId: $userId, nickname: $nickname}')
+  login_response=$(curl --max-time 10 -sf \
+    -H "Content-Type: application/json" \
+    -d "$login_body" \
+    "$BASE_URL/api/auth/login" || true)
+  token=$(printf '%s' "$login_response" | jq -r '.token // empty')
+  if [ -z "$token" ]; then
+    echo "[k6] shared room admin login failed response=$login_response" >&2
+    return 1
+  fi
+
+  room_body=$(jq -nc \
+    --arg name "shared-hr-$RUN_ID" \
+    '{name: $name, description: "Shared k6 hot room load test", category: "loadtest", requiresApproval: false}')
+  room_response=$(curl --max-time 10 -sf \
+    -H "Authorization: Bearer $token" \
+    -H "Content-Type: application/json" \
+    -d "$room_body" \
+    "$BASE_URL/api/rooms" || true)
+  room_id=$(printf '%s' "$room_response" | jq -r '.id // .data.id // empty')
+  if [ -z "$room_id" ]; then
+    echo "[k6] shared room create failed response=$room_response" >&2
+    return 1
+  fi
+
+  SHARED_ROOM_ID="$room_id"
+  jq -nc \
+    --arg runId "$RUN_ID" \
+    --arg roomId "$SHARED_ROOM_ID" \
+    --arg createdAt "$(date -Iseconds)" \
+    --arg coordinator "$WORKER_LABEL" \
+    '{runId: $runId, roomId: $roomId, createdAt: $createdAt, coordinator: $coordinator}' \
+    > /tmp/openchat-shared-room.json
+  gcloud storage cp /tmp/openchat-shared-room.json "gs://$BUCKET_NAME/runs/$RUN_ID/shared-room.json"
+  cp /tmp/openchat-shared-room.json "$RESULT_ROOT/metrics/shared-room.json"
+  echo "[k6] created shared room room_id=$SHARED_ROOM_ID"
+}
+
+wait_for_shared_room() {
+  echo "[k6] waiting for shared room marker"
+  for attempt in $(seq 1 180); do
+    if gcloud storage cp "gs://$BUCKET_NAME/runs/$RUN_ID/shared-room.json" /tmp/openchat-shared-room.json >/dev/null 2>&1; then
+      SHARED_ROOM_ID=$(jq -r '.roomId // empty' /tmp/openchat-shared-room.json)
+      if [ -n "$SHARED_ROOM_ID" ]; then
+        cp /tmp/openchat-shared-room.json "$RESULT_ROOT/metrics/shared-room.json"
+        echo "[k6] found shared room room_id=$SHARED_ROOM_ID"
+        return 0
+      fi
+    fi
+    if [ "$attempt" -eq 180 ]; then
+      echo "[k6] shared room marker timeout" >&2
+      return 1
+    fi
+    sleep 2
+  done
+}
+
+prometheus_query_json() {
+  local query="$1"
+  local response
+  response=$(curl --max-time 10 -sfG \
+    --data-urlencode "query=$query" \
+    "http://$MONITORING_INTERNAL_IP:9090/api/v1/query" 2>/dev/null || true)
+
+  if [ -z "$response" ]; then
+    printf '{"status":"error","error":"query failed"}'
+    return 0
+  fi
+
+  printf '%s' "$response" | jq -c '{status, resultType: .data.resultType, result: .data.result}'
+}
+
+write_prometheus_field() {
+  local name="$1"
+  local query="$2"
+  local first="$3"
+
+  if [ "$first" != "true" ]; then
+    printf ',\n'
+  fi
+  printf '    "%s": ' "$name"
+  prometheus_query_json "$query"
+}
+
+collect_prometheus_tps_summary() {
+  local label="$1"
+  local output_dir="$2"
+  local safe_label="$${label//\'/}"
+  local output_file="$output_dir/$${safe_label}-prometheus-tps-summary.json"
+  local window_seconds=$((CONNECT_RAMP_SECONDS + CHAT_DURATION_SECONDS + 90))
+
+  if [ "$ENABLE_MONITORING" != "true" ] || [ -z "$MONITORING_INTERNAL_IP" ]; then
+    echo "{\"label\":\"$safe_label\",\"error\":\"monitoring disabled\"}" > "$output_file"
+    return 0
+  fi
+
+  if ! curl --max-time 3 -sf "http://$MONITORING_INTERNAL_IP:9090/-/healthy" >/dev/null; then
+    echo "{\"label\":\"$safe_label\",\"error\":\"prometheus unavailable\"}" > "$output_file"
+    return 0
+  fi
+
+  {
+    printf '{\n'
+    printf '  "label": "%s",\n' "$safe_label"
+    printf '  "collectedAt": "%s",\n' "$(date -Iseconds)"
+    printf '  "rateWindow": "1m",\n'
+    printf '  "peakRateWindow": "30s",\n'
+    printf '  "increaseWindow": "%ss",\n' "$window_seconds"
+    printf '  "queries": {\n'
+
+    write_prometheus_field "input_msg_per_sec_1m" 'sum(rate(openchat_pipeline_stage_seconds_count{stage="ws.inbound.total"}[1m]))' true
+    write_prometheus_field "ack_after_send_per_sec_1m" 'sum(rate(openchat_pipeline_since_created_seconds_count{stage="ws.ack.after_send.since_client_sent"}[1m]))' false
+    write_prometheus_field "db_insert_per_sec_1m" 'sum(rate(openchat_pipeline_events_total{event="ingest.db_insert.success"}[1m]))' false
+    write_prometheus_field "ws_delivery_per_sec_1m" 'sum(rate(openchat_pipeline_events_total{event="ws.send.succeeded"}[1m]))' false
+    write_prometheus_field "ws_frame_per_sec_1m" 'sum(rate(openchat_pipeline_events_total{event="ws.send.frame.succeeded"}[1m]))' false
+    write_prometheus_field "ws_send_bytes_per_sec_1m" 'sum(rate(openchat_pipeline_events_total{event="ws.send.bytes"}[1m]))' false
+    write_prometheus_field "ws_send_failed_per_sec_1m" 'sum(rate(openchat_pipeline_events_total{event="ws.send.failed"}[1m]))' false
+    write_prometheus_field "input_msg_per_sec_30s_max" "max_over_time(sum(rate(openchat_pipeline_stage_seconds_count{stage=\"ws.inbound.total\"}[30s]))[$${window_seconds}s:5s])" false
+    write_prometheus_field "input_msg_per_sec_30s_avg" "avg_over_time(sum(rate(openchat_pipeline_stage_seconds_count{stage=\"ws.inbound.total\"}[30s]))[$${window_seconds}s:5s])" false
+    write_prometheus_field "ack_after_send_per_sec_30s_max" "max_over_time(sum(rate(openchat_pipeline_since_created_seconds_count{stage=\"ws.ack.after_send.since_client_sent\"}[30s]))[$${window_seconds}s:5s])" false
+    write_prometheus_field "ack_after_send_per_sec_30s_avg" "avg_over_time(sum(rate(openchat_pipeline_since_created_seconds_count{stage=\"ws.ack.after_send.since_client_sent\"}[30s]))[$${window_seconds}s:5s])" false
+    write_prometheus_field "db_insert_per_sec_30s_max" "max_over_time(sum(rate(openchat_pipeline_events_total{event=\"ingest.db_insert.success\"}[30s]))[$${window_seconds}s:5s])" false
+    write_prometheus_field "db_insert_per_sec_30s_avg" "avg_over_time(sum(rate(openchat_pipeline_events_total{event=\"ingest.db_insert.success\"}[30s]))[$${window_seconds}s:5s])" false
+    write_prometheus_field "ws_delivery_per_sec_30s_max" "max_over_time(sum(rate(openchat_pipeline_events_total{event=\"ws.send.succeeded\"}[30s]))[$${window_seconds}s:5s])" false
+    write_prometheus_field "ws_delivery_per_sec_30s_avg" "avg_over_time(sum(rate(openchat_pipeline_events_total{event=\"ws.send.succeeded\"}[30s]))[$${window_seconds}s:5s])" false
+    write_prometheus_field "ws_frame_per_sec_30s_max" "max_over_time(sum(rate(openchat_pipeline_events_total{event=\"ws.send.frame.succeeded\"}[30s]))[$${window_seconds}s:5s])" false
+    write_prometheus_field "ws_frame_per_sec_30s_avg" "avg_over_time(sum(rate(openchat_pipeline_events_total{event=\"ws.send.frame.succeeded\"}[30s]))[$${window_seconds}s:5s])" false
+    write_prometheus_field "ws_send_bytes_per_sec_30s_max" "max_over_time(sum(rate(openchat_pipeline_events_total{event=\"ws.send.bytes\"}[30s]))[$${window_seconds}s:5s])" false
+    write_prometheus_field "ws_send_bytes_per_sec_30s_avg" "avg_over_time(sum(rate(openchat_pipeline_events_total{event=\"ws.send.bytes\"}[30s]))[$${window_seconds}s:5s])" false
+    write_prometheus_field "ws_send_failed_per_sec_30s_max" "max_over_time(sum(rate(openchat_pipeline_events_total{event=\"ws.send.failed\"}[30s]))[$${window_seconds}s:5s])" false
+    write_prometheus_field "process_cpu_usage_30s_max" "max_over_time(max(process_cpu_usage{application=\"openchat\"})[$${window_seconds}s:5s])" false
+    write_prometheus_field "process_cpu_usage_30s_avg" "avg_over_time(max(process_cpu_usage{application=\"openchat\"})[$${window_seconds}s:5s])" false
+    write_prometheus_field "realtime_process_cpu_usage_30s_max" "max_over_time(max(process_cpu_usage{application=\"openchat\",role=\"realtime\"})[$${window_seconds}s:5s])" false
+    write_prometheus_field "realtime_process_cpu_usage_30s_avg" "avg_over_time(max(process_cpu_usage{application=\"openchat\",role=\"realtime\"})[$${window_seconds}s:5s])" false
+    write_prometheus_field "gc_pause_per_sec_30s_max" "max_over_time(sum(rate(jvm_gc_pause_seconds_count{application=\"openchat\"}[30s]))[$${window_seconds}s:5s])" false
+    write_prometheus_field "jvm_threads_live_max" "max_over_time(max(jvm_threads_live_threads{application=\"openchat\"})[$${window_seconds}s:5s])" false
+    write_prometheus_field "input_msg_increase_window" "sum(increase(openchat_pipeline_stage_seconds_count{stage=\"ws.inbound.total\"}[$${window_seconds}s]))" false
+    write_prometheus_field "ack_after_send_increase_window" "sum(increase(openchat_pipeline_since_created_seconds_count{stage=\"ws.ack.after_send.since_client_sent\"}[$${window_seconds}s]))" false
+    write_prometheus_field "db_insert_increase_window" "sum(increase(openchat_pipeline_events_total{event=\"ingest.db_insert.success\"}[$${window_seconds}s]))" false
+    write_prometheus_field "ws_delivery_increase_window" "sum(increase(openchat_pipeline_events_total{event=\"ws.send.succeeded\"}[$${window_seconds}s]))" false
+    write_prometheus_field "ws_frame_increase_window" "sum(increase(openchat_pipeline_events_total{event=\"ws.send.frame.succeeded\"}[$${window_seconds}s]))" false
+    write_prometheus_field "ws_send_bytes_increase_window" "sum(increase(openchat_pipeline_events_total{event=\"ws.send.bytes\"}[$${window_seconds}s]))" false
+    write_prometheus_field "ws_send_failed_increase_window" "sum(increase(openchat_pipeline_events_total{event=\"ws.send.failed\"}[$${window_seconds}s]))" false
+    write_prometheus_field "ack_after_send_p95_seconds" 'max(openchat_pipeline_since_created_seconds{stage="ws.ack.after_send.since_client_sent",quantile="0.95"})' false
+    write_prometheus_field "broadcast_lane_done_p95_seconds" 'max(openchat_pipeline_since_created_seconds{stage="ws.broadcast.lane_done.since_created",quantile="0.95"})' false
+    write_prometheus_field "ws_send_duration_p95_seconds" 'max(openchat_pipeline_stage_seconds{stage="ws.send.duration",quantile="0.95"})' false
+    write_prometheus_field "targets_up" 'up' false
+
+    printf '\n  }\n'
+    printf '}\n'
+  } > "$output_file"
+}
+
+sync_results() {
+  gcloud storage rsync -r "$RESULT_ROOT" "gs://$BUCKET_NAME/runs/$RUN_ID" || true
+  gcloud storage cp --recursive "$LOG_DIR" "gs://$BUCKET_NAME/runs/$RUN_ID/logs/k6-vm/$WORKER_LABEL/" || true
+}
+
+write_done_marker() {
+  local marker="/tmp/openchat-k6-$WORKER_LABEL.done"
+  date -Iseconds > "$marker"
+  gcloud storage cp "$marker" "gs://$BUCKET_NAME/runs/$RUN_ID/workers/$WORKER_LABEL.done" || true
+}
+
+wait_for_workers_done() {
+  echo "[k6] waiting for $K6_WORKER_COUNT worker done markers"
+  for attempt in $(seq 1 180); do
+    local done_count
+    done_count=$(gcloud storage ls "gs://$BUCKET_NAME/runs/$RUN_ID/workers/*.done" 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$done_count" -ge "$K6_WORKER_COUNT" ]; then
+      echo "[k6] all worker done markers found count=$done_count"
+      return 0
+    fi
+    if [ "$attempt" -eq 180 ]; then
+      echo "[k6] worker done marker timeout count=$done_count/$K6_WORKER_COUNT" >&2
+      return 1
+    fi
+    sleep 2
+  done
+}
+
+delete_vm() {
+  local vm="$1"
+  if [ -n "$vm" ]; then
+    echo "[k6] deleting vm $vm"
+    gcloud compute instances delete "$vm" --project "$PROJECT_ID" --zone "$ZONE" --quiet || true
+  fi
+}
+
+cleanup() {
+  local exit_code=$?
+  echo "[k6] cleanup begin worker=$WORKER_LABEL coordinator=$K6_IS_COORDINATOR exit_code=$exit_code"
+
+  collect_socket_snapshot "socket-after"
+  sync_results
+  write_done_marker
+
+  if [ "$K6_IS_COORDINATOR" != "true" ]; then
+    echo "[k6] non-coordinator scheduling self delete $K6_VM_NAME"
+    (sleep 5; gcloud compute instances delete "$K6_VM_NAME" --project "$PROJECT_ID" --zone "$ZONE" --quiet) >/tmp/openchat-self-delete.log 2>&1 &
+    exit "$exit_code"
+  fi
+
+  wait_for_workers_done || true
+
+  if [ "$SHARED_ROOM_MODE" = "true" ] && [ -n "$SHARED_TEST_LABEL" ]; then
+    shared_output_dir="$RESULT_ROOT/k6/$PROFILE/shared"
+    mkdir -p "$shared_output_dir"
+    collect_db_message_count "$SHARED_TEST_LABEL" "$shared_output_dir"
+    collect_prometheus_tps_summary "$SHARED_TEST_LABEL" "$shared_output_dir"
+    sync_results
+  fi
+
+  curl --max-time 10 -sf "$BASE_URL/actuator/health" > "$RESULT_ROOT/metrics/lb-health-after.json" || true
+  curl --max-time 10 -sf "$BASE_URL/actuator/prometheus" > "$RESULT_ROOT/metrics/lb-prometheus-after.txt" || true
+
+  app_index=1
+  for app_ip in $APP_INTERNAL_IPS; do
+    curl --max-time 10 -sf "http://$app_ip:8080/actuator/health" > "$RESULT_ROOT/metrics/app-$${app_index}-health-after.json" || true
+    curl --max-time 10 -sf "http://$app_ip:8080/actuator/prometheus" > "$RESULT_ROOT/metrics/app-$${app_index}-prometheus-after.txt" || true
+    app_index=$((app_index + 1))
+  done
+
+  sync_results
+
+  delete_vm "$LB_VM_NAME"
+  for vm in $APP_VM_NAMES; do
+    delete_vm "$vm"
+  done
+  delete_vm "$MYSQL_VM_NAME"
+  delete_vm "$REDIS_VM_NAME"
+  delete_vm "$MONITORING_VM_NAME"
+
+  for vm in $K6_VM_NAMES; do
+    if [ "$vm" != "$K6_VM_NAME" ]; then
+      delete_vm "$vm"
+    fi
+  done
+
+  echo "[k6] scheduling self delete $K6_VM_NAME"
+  (sleep 5; gcloud compute instances delete "$K6_VM_NAME" --project "$PROJECT_ID" --zone "$ZONE" --quiet) >/tmp/openchat-self-delete.log 2>&1 &
+
+  exit "$exit_code"
+}
+trap cleanup EXIT
+
+echo "[k6] startup begin run_id=$RUN_ID worker=$WORKER_LABEL/$K6_WORKER_COUNT profile=$PROFILE vus_list=$VUS_LIST base=$BASE_URL connect_ramp_seconds=$CONNECT_RAMP_SECONDS hot_rooms=$HOT_ROOMS vus_per_room=$VUS_PER_ROOM monitoring=$ENABLE_MONITORING shared_room_mode=$SHARED_ROOM_MODE"
+apply_socket_tuning
+collect_socket_snapshot "socket-before"
+
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y unzip curl jq gnupg ca-certificates iproute2 default-mysql-client
+
+if ! command -v gcloud >/dev/null 2>&1; then
+  curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+    | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+  echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
+    > /etc/apt/sources.list.d/google-cloud-sdk.list
+fi
+
+curl -fsSL https://dl.k6.io/key.gpg | gpg --dearmor -o /usr/share/keyrings/k6-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
+  > /etc/apt/sources.list.d/k6.list
+apt-get update
+apt-get install -y k6 google-cloud-cli iproute2 default-mysql-client
+
+rm -rf "$WORKDIR"
+mkdir -p "$WORKDIR"
+for attempt in $(seq 1 30); do
+  if gcloud storage cp "gs://$BUCKET_NAME/$SOURCE_OBJECT" /tmp/openchat-source.zip; then
+    break
+  fi
+  if [ "$attempt" -eq 30 ]; then
+    echo "[k6] failed to download source archive" >&2
+    exit 1
+  fi
+  sleep 5
+done
+unzip -q /tmp/openchat-source.zip -d "$WORKDIR"
+cd "$WORKDIR"
+
+echo "[k6] waiting for lb health at $BASE_URL"
+for attempt in $(seq 1 240); do
+  if curl --max-time 3 -sf "$BASE_URL/actuator/health" >/dev/null; then
+    echo "[k6] lb healthy"
+    break
+  fi
+  if [ "$attempt" -eq 240 ]; then
+    echo "[k6] lb did not become healthy" >&2
+    exit 1
+  fi
+  sleep 2
+done
+
+if [ "$ENABLE_MONITORING" = "true" ] && [ -n "$MONITORING_INTERNAL_IP" ]; then
+  echo "[k6] waiting for influxdb at $MONITORING_INTERNAL_IP"
+  for attempt in $(seq 1 180); do
+    if curl --max-time 3 -sf "http://$MONITORING_INTERNAL_IP:8086/ping" >/dev/null; then
+      echo "[k6] influxdb healthy"
+      break
+    fi
+    if [ "$attempt" -eq 180 ]; then
+      echo "[k6] influxdb did not become healthy" >&2
+      exit 1
+    fi
+    sleep 2
+  done
+fi
+
+if [ "$SHARED_ROOM_MODE" = "true" ]; then
+  if [ "$HOT_ROOMS" -ne 1 ]; then
+    echo "[k6] shared_room_mode requires hot_rooms=1" >&2
+    exit 1
+  fi
+
+  if [ "$K6_IS_COORDINATOR" = "true" ]; then
+    create_shared_room
+  else
+    wait_for_shared_room
+  fi
+fi
+
+echo "[k6] writing ready marker"
+ready_marker="/tmp/openchat-k6-$WORKER_LABEL.ready"
+date -Iseconds > "$ready_marker"
+gcloud storage cp "$ready_marker" "gs://$BUCKET_NAME/runs/$RUN_ID/workers/$WORKER_LABEL.ready" || true
+
+echo "[k6] waiting for $K6_WORKER_COUNT ready markers"
+for attempt in $(seq 1 180); do
+  ready_count=$(gcloud storage ls "gs://$BUCKET_NAME/runs/$RUN_ID/workers/*.ready" 2>/dev/null | wc -l | tr -d ' ')
+  if [ "$ready_count" -ge "$K6_WORKER_COUNT" ]; then
+    echo "[k6] all ready markers found count=$ready_count"
+    break
+  fi
+  if [ "$attempt" -eq 180 ]; then
+    echo "[k6] ready marker timeout count=$ready_count/$K6_WORKER_COUNT" >&2
+    exit 1
+  fi
+  sleep 2
+done
+
+if [ "$SHARED_ROOM_MODE" != "true" ] && [ "$K6_WORKER_COUNT" -gt 1 ] && [ $((HOT_ROOMS % K6_WORKER_COUNT)) -ne 0 ]; then
+  echo "[k6] HOT_ROOMS must be divisible by K6_WORKER_COUNT for distributed workers" >&2
+  exit 1
+fi
+
+worker_hot_rooms="$HOT_ROOMS"
+room_index_offset=0
+if [ "$SHARED_ROOM_MODE" = "true" ]; then
+  worker_hot_rooms=1
+elif [ "$K6_WORKER_COUNT" -gt 1 ]; then
+  worker_hot_rooms=$((HOT_ROOMS / K6_WORKER_COUNT))
+  room_index_offset=$(((K6_WORKER_INDEX - 1) * worker_hot_rooms))
+fi
+
+for vus in $VUS_LIST; do
+  worker_vus="$vus"
+  if [ "$K6_WORKER_COUNT" -gt 1 ]; then
+    if [ $((vus % K6_WORKER_COUNT)) -ne 0 ]; then
+      echo "[k6] VU value $vus must be divisible by K6_WORKER_COUNT=$K6_WORKER_COUNT" >&2
+      exit 1
+    fi
+    worker_vus=$((vus / K6_WORKER_COUNT))
+  fi
+
+  vu_index_offset=0
+  if [ "$SHARED_ROOM_MODE" = "true" ]; then
+    vu_index_offset=$(((K6_WORKER_INDEX - 1) * worker_vus))
+  fi
+
+  label="$PROFILE-$WORKER_LABEL-$${worker_vus}vu"
+  test_label="$label"
+  if [ "$SHARED_ROOM_MODE" = "true" ]; then
+    test_label="$PROFILE-shared-$${vus}vu"
+    SHARED_TEST_LABEL="$test_label"
+  fi
+  output_dir="$RESULT_ROOT/k6/$PROFILE/$WORKER_LABEL"
+  echo "[k6] running $label test_label=$test_label worker_vus=$worker_vus total_vus=$vus worker_hot_rooms=$worker_hot_rooms room_index_offset=$room_index_offset vu_index_offset=$vu_index_offset shared_room_id=$SHARED_ROOM_ID"
+
+  influx_args=()
+  if [ "$ENABLE_MONITORING" = "true" ] && [ -n "$MONITORING_INTERNAL_IP" ]; then
+    influx_args=(--out "influxdb=http://$MONITORING_INTERNAL_IP:8086/k6")
+  fi
+
+  set +e
+  K6_INFLUXDB_PAYLOAD_SIZE=5000000 \
+  K6_INFLUXDB_CONCURRENT_WRITES=16 \
+  k6 run \
+    "$${influx_args[@]}" \
+    --summary-export "$output_dir/$${worker_vus}vu-summary.json" \
+    -e BASE_URL="$BASE_URL" \
+    -e WS_BASE_URL="$WS_BASE_URL" \
+    -e TARGET_VUS="$worker_vus" \
+    -e TOTAL_TARGET_VUS="$vus" \
+    -e TEST_LABEL="$test_label" \
+    -e SEND_INTERVAL_MS="$SEND_INTERVAL_MS" \
+    -e CHAT_DURATION_SECONDS="$CHAT_DURATION_SECONDS" \
+    -e CONNECT_RAMP_SECONDS="$CONNECT_RAMP_SECONDS" \
+    -e HOT_ROOMS="$worker_hot_rooms" \
+    -e VUS_PER_ROOM="$VUS_PER_ROOM" \
+    -e ROOM_INDEX_OFFSET="$room_index_offset" \
+    -e VU_INDEX_OFFSET="$vu_index_offset" \
+    -e K6_WORKER_INDEX="$K6_WORKER_INDEX" \
+    -e K6_WORKER_COUNT="$K6_WORKER_COUNT" \
+    -e SHARED_ROOM_MODE="$SHARED_ROOM_MODE" \
+    -e SHARED_ROOM_ID="$SHARED_ROOM_ID" \
+    -e K6_SENDER_RATIO="$K6_SENDER_RATIO" \
+    -e K6_OBSERVER_RATIO="$K6_OBSERVER_RATIO" \
+    -e K6_VALIDATOR_RATIO="$K6_VALIDATOR_RATIO" \
+    -e OBSERVER_SEND_INTERVAL_MS="$OBSERVER_SEND_INTERVAL_MS" \
+    -e K6_COUNTER_FLUSH_INTERVAL_MS="5000" \
+    -e K6_VISIBLE_FRESHNESS_SAMPLE_EVERY="100" \
+    "$SCENARIO" 2>&1 | tee "$output_dir/$${worker_vus}vu.log"
+  k6_status=$${PIPESTATUS[0]}
+  set -e
+
+  echo "$k6_status" > "$output_dir/$${worker_vus}vu-exit-code.txt"
+  if [ "$ENABLE_MONITORING" = "true" ] && [ -n "$MONITORING_INTERNAL_IP" ]; then
+    sleep 10
+  fi
+  if [ "$SHARED_ROOM_MODE" = "true" ]; then
+    echo "[k6] shared mode defers global DB/prometheus summary to coordinator cleanup"
+  else
+    collect_db_message_count "$test_label" "$output_dir"
+    collect_prometheus_tps_summary "$test_label" "$output_dir"
+  fi
+  echo "[k6] finished $label exit_code=$k6_status"
+done
+
+cat > "$RESULT_ROOT/run-metadata-$WORKER_LABEL.json" <<EOF
+{
+  "runId": "$RUN_ID",
+  "profile": "$PROFILE",
+  "workerLabel": "$WORKER_LABEL",
+  "workerIndex": $K6_WORKER_INDEX,
+  "workerCount": $K6_WORKER_COUNT,
+  "vusList": "$VUS_LIST",
+  "chatDurationSeconds": $CHAT_DURATION_SECONDS,
+  "sendIntervalMs": $SEND_INTERVAL_MS,
+  "connectRampSeconds": $CONNECT_RAMP_SECONDS,
+  "hotRooms": $HOT_ROOMS,
+  "workerHotRooms": $worker_hot_rooms,
+  "vusPerRoom": $VUS_PER_ROOM,
+  "roomIndexOffset": $room_index_offset,
+  "sharedRoomMode": "$SHARED_ROOM_MODE",
+  "sharedRoomId": "$SHARED_ROOM_ID",
+  "sharedTestLabel": "$SHARED_TEST_LABEL",
+  "totalTargetVus": "$VUS_LIST",
+  "workerTargetVus": "$worker_vus",
+  "k6SenderRatio": "$K6_SENDER_RATIO",
+  "k6ObserverRatio": "$K6_OBSERVER_RATIO",
+  "k6ValidatorRatio": "$K6_VALIDATOR_RATIO",
+  "observerSendIntervalMs": "$OBSERVER_SEND_INTERVAL_MS",
+  "baseUrl": "$BASE_URL",
+  "wsBaseUrl": "$WS_BASE_URL",
+  "lbVmName": "$LB_VM_NAME",
+  "appVmNames": "$APP_VM_NAMES",
+  "mysqlVmName": "$MYSQL_VM_NAME",
+  "redisVmName": "$REDIS_VM_NAME",
+  "monitoringVmName": "$MONITORING_VM_NAME",
+  "k6VmName": "$K6_VM_NAME",
+  "k6VmNames": "$K6_VM_NAMES"
+}
+EOF
+
+echo "[k6] completed worker=$WORKER_LABEL"

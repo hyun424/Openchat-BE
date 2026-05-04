@@ -2,6 +2,7 @@ package io.hyun424.openchat.chat.publish;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
+import io.hyun424.openchat.chat.metrics.ChatPipelineMetrics;
 import io.hyun424.openchat.infra.redis.health.RedisHealthState;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -25,6 +26,7 @@ class ChatCompositePublisherTest {
     @Mock private ObjectMapper objectMapper;
     @Mock private KafkaTemplate<String, ChatMessageDto> kafkaTemplate;
     @Mock private RedisHealthState redisHealthState;
+    @Mock private ChatPipelineMetrics chatPipelineMetrics;
 
     @Test
     @DisplayName("수정 전 장애 재현: Kafka send 실패가 발생해도 publish()는 예외를 던지지 않는다")
@@ -34,7 +36,8 @@ class ChatCompositePublisherTest {
                 redisTemplate,
                 objectMapper,
                 kafkaTemplate,
-                redisHealthState
+                redisHealthState,
+                chatPipelineMetrics
         );
         ChatMessageDto message = ChatMessageDto.builder()
                 .roomId(1L)

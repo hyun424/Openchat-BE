@@ -130,6 +130,41 @@ public class MessageService {
     }
 
     /**
+     * WebSocket 보정: 클라이언트가 마지막으로 확인한 Message.id 이후 메시지를 조회한다.
+     */
+    @Transactional(readOnly = true)
+    public MessagePageResponse getMessagesAfterCursor(
+            Long roomId,
+            String userId,
+            Long cursorId,
+            int limit
+    ) {
+        long joinedAt = roomMemberService.getJoinedAtMillis(roomId, userId);
+        int pageSize = limit > 0 ? limit : DEFAULT_PAGE_SIZE;
+
+        List<Message> messages = messageRepository.findMessagesAfterCursor(
+                roomId,
+                joinedAt,
+                cursorId,
+                PageRequest.of(0, pageSize)
+        );
+
+        List<ChatMessageDto> dtos = messages.stream()
+                .map(ChatMessageDto::from)
+                .toList();
+
+        boolean hasMore = messages.size() == pageSize;
+        String nextCursor = hasMore && !messages.isEmpty()
+                ? String.valueOf(messages.get(messages.size() - 1).getId())
+                : null;
+
+        log.debug("[SYNC AFTER] roomId={} cursorId={} count={} hasMore={}",
+                roomId, cursorId, messages.size(), hasMore);
+
+        return new MessagePageResponse(dtos, nextCursor, hasMore);
+    }
+
+    /**
      * Legacy method for backward compatibility
      */
     @Transactional(readOnly = true)

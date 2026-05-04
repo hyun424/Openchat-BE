@@ -18,6 +18,9 @@ public class ChatMessageDto {
     /** DB PK (sequence for ordering tiebreaker) */
     private Long id;
 
+    /** Server sequence alias backed by Message.id */
+    private Long sequence;
+
     /** Server-generated message ID (dedupe / idempotency key) */
     private String messageId;
 
@@ -42,6 +45,7 @@ public class ChatMessageDto {
     public static ChatMessageDto from(Message entity) {
         return ChatMessageDto.builder()
                 .id(entity.getId())
+                .sequence(entity.getId())
                 .messageId(entity.getMessageId())
                 .clientMessageId(null)
                 .roomId(entity.getRoomId())
