@@ -14,6 +14,10 @@ export const wsFramesReceived = new Counter('ws_frames_received_total');
 export const wsAcksReceived = new Counter('ws_acks_received_total');
 export const wsRealtimeIncompleteFrames = new Counter('ws_realtime_incomplete_frames_total');
 export const wsRealtimeOmittedMessages = new Counter('ws_realtime_omitted_messages_total');
+export const wsMessageHandlerDuration = new Trend('ws_message_handler_duration_ms', true);
+export const wsJsonParseDuration = new Trend('ws_json_parse_duration_ms', true);
+export const wsBatchMessagesPerFrame = new Trend('ws_batch_messages_per_frame', false);
+export const wsObserverVisibleSamples = new Counter('ws_observer_visible_samples_total');
 
 // ── REST API Metrics (per endpoint) ──
 export const restLogin = new Trend('rest_login_duration_ms', true);

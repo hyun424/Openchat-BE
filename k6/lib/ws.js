@@ -6,9 +6,52 @@ import {
   wsConnectFailure, wsConnectFailures, wsMsgSent, wsMsgReceived,
   wsFramesReceived, chatAckRoundtrip, wsVisibleFreshness, wsAcksReceived,
   wsRealtimeIncompleteFrames, wsRealtimeOmittedMessages,
+  wsMessageHandlerDuration, wsJsonParseDuration, wsBatchMessagesPerFrame,
+  wsObserverVisibleSamples,
 } from './metrics.js';
 
 const WS_BASE_URL = __ENV.WS_BASE_URL || 'ws://localhost:8080';
+const COUNTER_FLUSH_INTERVAL_MS = Number(__ENV.K6_COUNTER_FLUSH_INTERVAL_MS || '5000');
+const VISIBLE_FRESHNESS_SAMPLE_EVERY = Math.max(1, Number(__ENV.K6_VISIBLE_FRESHNESS_SAMPLE_EVERY || '1'));
+const VALID_CLIENT_MODES = {
+  sender: true,
+  observer: true,
+  validator: true,
+};
+
+function resolveClientMode(mode) {
+  const resolved = String(mode || __ENV.K6_WS_CLIENT_MODE || 'validator').toLowerCase();
+  return VALID_CLIENT_MODES[resolved] ? resolved : 'validator';
+}
+
+function parseJsonWithMetric(data, metricTags) {
+  const parseStart = Date.now();
+  const msg = JSON.parse(data);
+  wsJsonParseDuration.add(Date.now() - parseStart, metricTags);
+  return msg;
+}
+
+function countBatchMessagesFromText(data) {
+  const matches = String(data).match(/"messageId":/g);
+  return matches ? matches.length : 0;
+}
+
+function recordBatchEnvelopeFromText(data, counters, metricTags, recordBatchSize) {
+  if (!String(data).includes('"type":"chat.batch"')) {
+    return;
+  }
+  if (String(data).includes('"realtimeComplete":false')) {
+    counters.incompleteFrames += 1;
+    const omittedMatch = String(data).match(/"omittedCount":(\d+)/);
+    counters.omittedMessages += omittedMatch ? Number(omittedMatch[1]) : 0;
+  }
+  if (recordBatchSize) {
+    const messageCount = countBatchMessagesFromText(data);
+    if (messageCount > 0) {
+      wsBatchMessagesPerFrame.add(messageCount, metricTags);
+    }
+  }
+}
 
 /**
  * WebSocket 연결 후 메시지 송수신 수행
@@ -19,6 +62,9 @@ const WS_BASE_URL = __ENV.WS_BASE_URL || 'ws://localhost:8080';
  * @param {number} opts.duration    - 연결 유지 시간(초)
  * @param {number} opts.sendInterval - 메시지 전송 간격(ms), 기본 200
  * @param {string} opts.messageText - 전송할 메시지 텍스트
+ * @param {string} opts.clientMessageIdPrefix - DB row count 검증용 clientMessageId prefix (선택)
+ * @param {number} opts.drainDurationMs - 전송 종료 후 ack/수신 대기 시간(ms), 기본 max(2000, sendInterval*2)
+ * @param {string} opts.clientMode - sender, observer, validator 중 하나
  * @param {function} opts.onMessage - 수신 메시지 콜백 (선택)
  * @param {Object} opts.tags        - k6 metric tags (선택)
  */
@@ -29,16 +75,61 @@ export function connectAndChat(opts) {
     duration = 60,
     sendInterval = 200,
     messageText = 'k6 load test message',
+    clientMessageIdPrefix = '',
+    drainDurationMs = Number(__ENV.K6_WS_DRAIN_MS || String(Math.max(2000, sendInterval * 2))),
+    clientMode = __ENV.K6_WS_CLIENT_MODE || 'validator',
     onMessage,
     tags = {},
   } = opts;
 
   const url = `${WS_BASE_URL}/ws/chat?roomId=${roomId}&token=${token}`;
   const connectStart = Date.now();
-  const metricTags = tags || {};
+  const resolvedClientMode = resolveClientMode(clientMode);
+  const metricTags = { ...(tags || {}), clientMode: resolvedClientMode };
+  const shouldSend = Number(sendInterval) > 0;
+  const shouldParseBroadcast = resolvedClientMode === 'observer' || resolvedClientMode === 'validator';
+  const shouldRecordVisible = resolvedClientMode === 'observer' || resolvedClientMode === 'validator';
+  const shouldRunDetailCallback = resolvedClientMode === 'validator';
 
   // 전송 메시지의 clientMessageId → 전송 시각 맵 (라운드트립 측정용)
   const pendingMessages = {};
+  const counters = {
+    framesReceived: 0,
+    messagesReceived: 0,
+    acksReceived: 0,
+    sent: 0,
+    incompleteFrames: 0,
+    omittedMessages: 0,
+  };
+  let receivedSinceLastFreshnessSample = 0;
+  let sendingEnabled = true;
+
+  function flushCounters() {
+    if (counters.framesReceived > 0) {
+      wsFramesReceived.add(counters.framesReceived, metricTags);
+      counters.framesReceived = 0;
+    }
+    if (counters.messagesReceived > 0) {
+      wsMsgReceived.add(counters.messagesReceived, metricTags);
+      counters.messagesReceived = 0;
+    }
+    if (counters.acksReceived > 0) {
+      wsAcksReceived.add(counters.acksReceived, metricTags);
+      counters.acksReceived = 0;
+    }
+    if (counters.sent > 0) {
+      wsMsgSent.add(counters.sent, metricTags);
+      counters.sent = 0;
+    }
+    if (counters.incompleteFrames > 0) {
+      wsRealtimeIncompleteFrames.add(counters.incompleteFrames, metricTags);
+      counters.incompleteFrames = 0;
+    }
+    if (counters.omittedMessages > 0) {
+      wsRealtimeOmittedMessages.add(counters.omittedMessages, metricTags);
+      counters.omittedMessages = 0;
+    }
+  }
 
   const res = ws.connect(url, {}, function (socket) {
     const connectEnd = Date.now();
@@ -46,13 +137,18 @@ export function connectAndChat(opts) {
     wsConnectSuccess.add(true, metricTags);
     wsConnectFailure.add(false, metricTags);
 
-    // 메시지 수신 핸들러
     socket.on('message', function (data) {
-      wsFramesReceived.add(1, metricTags);
+      const handlerStart = Date.now();
+      counters.framesReceived += 1;
       try {
-        const msg = JSON.parse(data);
+        if (!shouldParseBroadcast && !String(data).includes('"type":"chat.ack"')) {
+          recordBatchEnvelopeFromText(data, counters, metricTags, false);
+          return;
+        }
+
+        const msg = parseJsonWithMetric(data, metricTags);
         if (msg && msg.type === 'chat.ack') {
-          wsAcksReceived.add(1, metricTags);
+          counters.acksReceived += 1;
           if (msg.clientMessageId && pendingMessages[msg.clientMessageId]) {
             const ackRtt = Date.now() - pendingMessages[msg.clientMessageId];
             chatAckRoundtrip.add(ackRtt, metricTags);
@@ -65,18 +161,28 @@ export function connectAndChat(opts) {
         }
 
         if (msg && msg.type === 'chat.batch' && msg.realtimeComplete === false) {
-          wsRealtimeIncompleteFrames.add(1, metricTags);
-          wsRealtimeOmittedMessages.add(Number(msg.omittedCount || 0), metricTags);
+          counters.incompleteFrames += 1;
+          counters.omittedMessages += Number(msg.omittedCount || 0);
         }
 
         const messages = msg && msg.type === 'chat.batch' && Array.isArray(msg.messages)
           ? msg.messages
           : [msg];
+        if (msg && msg.type === 'chat.batch') {
+          wsBatchMessagesPerFrame.add(messages.length, metricTags);
+        }
 
         for (const logicalMsg of messages) {
-          wsMsgReceived.add(1, metricTags);
-          if (logicalMsg.createdAt) {
-            wsVisibleFreshness.add(Date.now() - Number(logicalMsg.createdAt), metricTags);
+          counters.messagesReceived += 1;
+          if (shouldRecordVisible && logicalMsg.createdAt) {
+            receivedSinceLastFreshnessSample += 1;
+            if (receivedSinceLastFreshnessSample >= VISIBLE_FRESHNESS_SAMPLE_EVERY) {
+              receivedSinceLastFreshnessSample = 0;
+              wsVisibleFreshness.add(Date.now() - Number(logicalMsg.createdAt), metricTags);
+              if (resolvedClientMode === 'observer') {
+                wsObserverVisibleSamples.add(1, metricTags);
+              }
+            }
           }
 
           // 에코된 자기 메시지의 라운드트립 측정
@@ -86,12 +192,14 @@ export function connectAndChat(opts) {
             delete pendingMessages[logicalMsg.clientMessageId];
           }
 
-          if (onMessage) {
+          if (shouldRunDetailCallback && onMessage) {
             onMessage(logicalMsg);
           }
         }
       } catch (e) {
         // non-JSON 메시지 무시
+      } finally {
+        wsMessageHandlerDuration.add(Date.now() - handlerStart, metricTags);
       }
     });
 
@@ -103,22 +211,45 @@ export function connectAndChat(opts) {
     });
 
     // 주기적 메시지 전송
-    socket.setInterval(function () {
-      const clientMessageId = makeUUID();
-      const payload = JSON.stringify({
-        content: messageText,
-        clientMessageId: clientMessageId,
-      });
-      pendingMessages[clientMessageId] = Date.now();
-      socket.send(payload);
-      wsMsgSent.add(1, metricTags);
-    }, sendInterval);
+    if (shouldSend) {
+      socket.setInterval(function () {
+        if (!sendingEnabled) {
+          return;
+        }
+        const clientMessageId = clientMessageIdPrefix
+          ? `${clientMessageIdPrefix}-${makeUUID()}`
+          : makeUUID();
+        const payload = JSON.stringify({
+          content: messageText,
+          clientMessageId: clientMessageId,
+          clientSentAt: Date.now(),
+        });
+        pendingMessages[clientMessageId] = Date.now();
+        socket.send(payload);
+        counters.sent += 1;
+      }, sendInterval);
+    }
 
-    // duration 후 연결 종료
+    socket.setInterval(function () {
+      flushCounters();
+    }, COUNTER_FLUSH_INTERVAL_MS);
+
+    socket.on('close', function () {
+      flushCounters();
+    });
+
+    // 전송을 먼저 멈춘 뒤 ack/수신을 짧게 drain해서 종료 경계의 유실성 send를 줄인다.
+    socket.setTimeout(function () {
+      sendingEnabled = false;
+      flushCounters();
+    }, duration * 1000);
+
     socket.setTimeout(function () {
       socket.close();
-    }, duration * 1000);
+    }, duration * 1000 + drainDurationMs);
   });
+
+  flushCounters();
 
   // 연결 실패 시
   const connected = check(res, {
