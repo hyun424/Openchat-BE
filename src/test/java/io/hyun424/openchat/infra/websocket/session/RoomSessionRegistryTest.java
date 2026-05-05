@@ -198,7 +198,7 @@ class RoomSessionRegistryTest {
         registry.remove(1L, session);
 
         verify(monitor).recordJoin(1L, 1);
-        verify(monitor).recordOutboundFanout(1L, 1);
+        verify(monitor).recordOutboundFanout(1L, 1, 1);
         verify(monitor).recordDeliveryLag(1L, message.getCreatedAt());
         verify(monitor).recordLeave(1L, 0);
         registry.shutdownExecutor();

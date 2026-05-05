@@ -252,7 +252,7 @@ public class RoomSessionRegistry {
         if (textMessage == null) {
             return;
         }
-        roomTrafficMonitor.recordOutboundFanout(roomId, sessionSnapshot.size());
+        roomTrafficMonitor.recordOutboundFanout(roomId, sessionSnapshot.size(), sessionSnapshot.size());
         Long createdAt = message.getCreatedAt();
         if (createdAt != null) {
             roomTrafficMonitor.recordDeliveryLag(roomId, createdAt);
@@ -302,7 +302,7 @@ public class RoomSessionRegistry {
         if (textMessage == null) {
             return;
         }
-        roomTrafficMonitor.recordOutboundFanout(roomId, sessionSnapshot.size() * messages.size());
+        roomTrafficMonitor.recordOutboundFanout(roomId, sessionSnapshot.size() * messages.size(), sessionSnapshot.size());
         for (ChatMessageDto message : messages) {
             Long createdAt = message.getCreatedAt();
             if (createdAt != null) {

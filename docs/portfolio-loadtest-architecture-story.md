@@ -18,9 +18,17 @@ role-aware k6 재측정 결과, 1800명 단일방 shared room에서 DB rows와 a
 
 이 변경은 처리량 향상 수치 홍보가 아니라, fan-out 대상 축소와 메시지 복구 안정성을 검증한 작업이다. BE 단위 테스트로 control message가 저장/ack 경로를 타지 않는지, passive 세션이 fan-out에서 제외되는지 확인했고, FE 브라우저 E2E로 hidden 중 메시지가 즉시 표시되지 않고 visible 복귀 후 REST sync로 복구되는 흐름을 확인했다.
 
+이후 1500명 단일방에서 active 30%, passive 70% 조건의 클라우드 부하테스트를 실행했다. 결과는 active/passive assigned `450 / 1050`, sent/ack/DB rows `50,870 / 50,870 / 50,870`, passive unexpected `0`, ack p95 worst `23ms`, visible p95 worst `117.5ms`, 서버 `ws.fanout.passive_omitted` `12,778,286`, `ws.send.failed` `0`이었다. 이 결과는 "더 많은 인원"이 아니라, 같은 방 인원에서 실제로 보고 있는 세션만 full fan-out 대상으로 남기는 구조가 동작한다는 근거로 기록한다.
+
+이제 다음 확장 기준은 단순 방 인원수가 아니라 `room_work = input_msg_tps * active_sessions`로 잡는다. Realtime pod의 기본 단위를 `4 vCPU / 8GB`, pod budget을 `10,000 delivery/s`로 두고, 작은 방은 여러 개를 하나의 room shard에 묶고, 단일 pod budget을 넘는 hot room은 fan-out partition 대상으로 분류한다. v1에서는 라우팅을 바꾸지 않고 room tier와 partition 추천 수만 계측한다.
+
 상세 정리: [k6 측정 신뢰도 개선과 1800명 단일방 재검증](./role-aware-k6-measurement-reliability-20260504.md)
 
 Active Room Fan-out 정리: [Active Room Fan-out v1과 브라우저 E2E 검증](./active-room-fanout-e2e-20260505.md)
+
+Active/Passive 부하테스트 결과: [1500명 Active/Passive Hot Room 측정 결과](../infra/gcp-loadtest/results/2026-05-05-active-passive-hot-room-1500.md)
+
+Room Work Sharding 설계: [4 vCPU 기준 Room Work Sharding 설계](./room-work-sharding-plan-20260505.md)
 
 관련 설계 메모: [Discord MaxJourney 사례에서 OpenChat에 가져갈 아이디어](./discord-maxjourney-openchat-ideas.md)
 

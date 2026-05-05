@@ -309,6 +309,38 @@ BE 단위 테스트로 control message가 DB 저장, ack, publish 경로를 타�
 
 ---
 
+## [EXP-OC-11]
+
+- 프로젝트: OpenChat
+- 유형: pod budget 기준 room work sharding 설계
+- 역할: Realtime pod 기준 수립, room tier 계측, fan-out partition 추천 공식 설계
+- 사용 문항: 시스템 설계 / 성능 개선 / 확장성 / 직무역량
+- 키워드: `[WebSocket, fan-out, sharding, room work, pod budget, K8s]`
+
+### 상황
+
+OpenChat은 1500명 all-active hot room과 1500명 active/passive hot room을 측정하면서, 단순히 "몇 명까지 된다"보다 "어떤 리소스 단위에서 어떤 fan-out work를 처리하는가"가 더 중요해졌다. 특히 K8s로 전환한다면 pod 하나의 리소스 budget을 기준으로 작은 방과 hot room을 다르게 다뤄야 한다.
+
+### 문제
+
+방 인원수만으로 shard 기준을 잡으면 실제 부하를 잘못 볼 수 있다. 같은 1500명 방이어도 모두 active이면 full delivery work가 매우 크고, active/passive가 적용되면 실제 full fan-out 대상은 줄어든다. 따라서 스케일 아웃 기준은 전체 인원수가 아니라 `input_msg_tps * active_sessions`로 봐야 한다.
+
+### 행동
+
+Realtime pod의 기본 단위를 `4 vCPU / 8GB`로 두고, pod work budget을 `10,000 delivery/s`로 정의했다. `room_work = input_msg_tps * active_sessions`를 기준으로 `SMALL / MEDIUM / LARGE / HOT / CRITICAL` tier를 나누고, `ceil(room_work / pod_budget)`과 `ceil(active_sessions / max_sessions_per_partition)` 중 큰 값으로 partition 추천 수를 계산하도록 설계했다. v1에서는 실제 라우팅을 바꾸지 않고 room tier와 partition recommendation metric만 추가했다.
+
+### 결과
+
+1500명 all-active는 `약 2,250,000 delivery/s`, 1500명 active/passive는 `약 189,000 delivery/s`로 재해석했다. active/passive로 full fan-out work가 줄었지만, 둘 다 `4 vCPU / 8GB` pod 하나의 처리 단위는 아니므로 hot room fan-out partition 대상이라는 결론을 얻었다. 이로써 이후 K8s 전환이나 room shard 설계를 단순 증설이 아니라 pod budget 기준으로 설명할 수 있게 됐다.
+
+### 배운 점
+
+확장성은 서버 수를 늘리는 이야기만으로 부족하다. 작은 방은 하나의 shard에 효율적으로 묶고, hot room은 단일 pod budget을 넘는 순간 fan-out partition으로 나누는 기준이 필요하다. 특히 실시간 채팅에서는 입력 TPS, active sessions, delivery work를 분리해서 봐야 리소스 사용량과 확장 전략을 설득력 있게 설명할 수 있다는 점을 배웠다.
+
+상세 문서: [4 vCPU 기준 Room Work Sharding 설계](./room-work-sharding-plan-20260505.md)
+
+---
+
 ## 활용 가이드
 
 ### 자소서에서 강하게 쓰기 좋은 경험
@@ -317,6 +349,7 @@ BE 단위 테스트로 control message가 DB 저장, ack, publish 경로를 타�
 2. `EXP-OC-02` Durability-first 메시지 유실 방지
 3. `EXP-OC-09` 부하 생성기 병목 분리와 측정 신뢰도 개선
 4. `EXP-OC-10` Active Room Fan-out과 브라우저 E2E 검증
+5. `EXP-OC-11` pod budget 기준 room work sharding 설계
 
 ### 면접에서 기술적으로 풀기 좋은 경험
 
@@ -324,6 +357,7 @@ BE 단위 테스트로 control message가 DB 저장, ack, publish 경로를 타�
 2. `EXP-OC-04` 중복 메시지 방지와 idempotency
 3. `EXP-OC-07` 부하 테스트 기반 병목 분석과 성능 개선
 4. `EXP-OC-10` Active Room Fan-out과 브라우저 E2E 검증
+5. `EXP-OC-11` pod budget 기준 room work sharding 설계
 
 ### 협업/서비스 이해 관점으로 풀기 좋은 경험
 

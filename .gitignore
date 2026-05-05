@@ -4,6 +4,7 @@ docs/*
 !docs/portfolio-loadtest-architecture-story.md
 !docs/discord-maxjourney-openchat-ideas.md
 !docs/active-room-fanout-e2e-20260505.md
+!docs/room-work-sharding-plan-20260505.md
 !docs/OPENCHAT-EXPERIENCE-BANK.md
 !docs/hot-room-loadtest-summary-for-portfolio.md
 data/
