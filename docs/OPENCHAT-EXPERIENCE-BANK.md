@@ -277,6 +277,38 @@ k6 WebSocket 클라이언트를 `sender / observer / validator` 역할로 분리
 
 ---
 
+## [EXP-OC-10]
+
+- 프로젝트: OpenChat
+- 유형: Active Room Fan-out과 브라우저 E2E 검증
+- 역할: WebSocket 수신 상태 프로토콜 설계, 서버 fan-out 대상 축소, FE E2E 자동화
+- 사용 문항: 문제해결 / 성능 개선 / 서비스 안정성 / 직무역량
+- 키워드: `[WebSocket, fan-out, active/passive, E2E, messages/after]`
+
+### 상황
+
+OpenChat은 hot-room에서 한 명이 보낸 메시지를 같은 방의 모든 WebSocket 세션에 fan-out한다. 1500명 단일방이 안정적으로 동작하더라도, 모든 사용자가 실제로 같은 화면을 보고 있는 것은 아니다. 백그라운드 탭, 다른 화면, 잠시 이탈한 사용자의 세션까지 full payload를 계속 보내면 서버를 늘리기 전에 줄일 수 있는 delivery work가 남는다.
+
+### 문제
+
+서버는 사용자가 실제로 채팅방을 보고 있는지 직접 알 수 없다. 단순히 WebSocket이 연결되어 있다는 이유만으로 모든 세션에 full message를 보내면, active 사용자와 passive 사용자를 구분하지 못한다. 반대로 passive 세션을 전송 대상에서 제외하면, 사용자가 다시 돌아왔을 때 누락 메시지를 안전하게 복구해야 한다.
+
+### 행동
+
+WebSocket control message로 `room.active`, `room.active.heartbeat`, `room.passive`를 추가했다. Web 클라이언트는 현재 route, `document.visibilityState`, WebSocket 연결 상태를 기준으로 active 여부를 선언하고, 서버는 active TTL을 둬 passive 이벤트 누락에도 안전하게 동작하도록 했다. 서버 fan-out은 active 세션에만 full payload를 보내고, visible 복귀 시 FE가 `/messages/after`로 누락 메시지를 복구하도록 했다.
+
+### 결과
+
+BE 단위 테스트로 control message가 DB 저장, ack, publish 경로를 타지 않는지 확인했고, passive 또는 TTL 만료 세션이 full fan-out 대상에서 제외되는지 검증했다. FE 브라우저 E2E에서는 hidden 중 다른 세션이 보낸 메시지가 즉시 표시되지 않고, visible 복귀 후 `/messages/after` sync로 복구되는 흐름을 확인했다. 이 결과는 단순 성능 수치가 아니라, fan-out 대상 축소와 메시지 복구 안정성을 검증한 근거로 남겼다.
+
+### 배운 점
+
+실시간 채팅의 확장성은 서버를 더 띄우는 것만으로 설명하기 어렵다. 사용자가 실제로 보고 있지 않은 세션에 full payload를 계속 보내는 구조라면, 먼저 delivery work 자체를 줄일 수 있는지 봐야 한다. 또한 최적화는 사용자 경험을 깨뜨리면 안 되므로, passive 전환과 visible 복구를 브라우저 E2E로 확인하는 과정이 중요하다는 점을 배웠다.
+
+상세 문서: [Active Room Fan-out v1과 브라우저 E2E 검증](./active-room-fanout-e2e-20260505.md)
+
+---
+
 ## 활용 가이드
 
 ### 자소서에서 강하게 쓰기 좋은 경험
@@ -284,12 +316,14 @@ k6 WebSocket 클라이언트를 `sender / observer / validator` 역할로 분리
 1. `EXP-OC-01` 분산 실시간 채팅 아키텍처 설계
 2. `EXP-OC-02` Durability-first 메시지 유실 방지
 3. `EXP-OC-09` 부하 생성기 병목 분리와 측정 신뢰도 개선
+4. `EXP-OC-10` Active Room Fan-out과 브라우저 E2E 검증
 
 ### 면접에서 기술적으로 풀기 좋은 경험
 
 1. `EXP-OC-03` Redis + Kafka 이중 전송 구조
 2. `EXP-OC-04` 중복 메시지 방지와 idempotency
 3. `EXP-OC-07` 부하 테스트 기반 병목 분석과 성능 개선
+4. `EXP-OC-10` Active Room Fan-out과 브라우저 E2E 검증
 
 ### 협업/서비스 이해 관점으로 풀기 좋은 경험
 
