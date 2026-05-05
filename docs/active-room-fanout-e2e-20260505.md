@@ -68,7 +68,7 @@ GET /api/rooms/{roomId}/messages/after?cursor={lastSeenSequence}
 
 ## 검증
 
-새 클라우드 부하테스트는 돌리지 않았다. 이번 단계의 목적은 수치 홍보가 아니라 active/passive fan-out v1의 동작 안정성 확인이기 때문이다.
+초기 구현 단계에서는 새 클라우드 부하테스트를 돌리지 않고 BE 단위 테스트와 FE 브라우저 E2E로 동작 안정성을 먼저 확인했다. 이후 1500명 단일방 active/passive hot-room 시나리오를 추가로 실행해, 실제 부하에서도 fan-out 대상 축소가 서버 metric과 k6 결과에 반영되는지 확인했다.
 
 BE 단위 테스트에서는 다음을 확인했다.
 
@@ -98,19 +98,40 @@ FE 브라우저 E2E에서는 사용자 관점의 흐름을 확인했다.
 | BE 구현 | PR `#5 perf: add active room fanout controls`, commit `49a495c` |
 | BE 설계 메모 | commit `61004c3` |
 | FE E2E | FE commit `83ef519 test: add chat e2e coverage` |
+| 1500명 active/passive 부하테스트 | `infra/gcp-loadtest/results/2026-05-05-active-passive-hot-room-1500.md` |
 | BE 검증 | `./gradlew test` |
 | FE 검증 | `npm run e2e:local`, `npm run build`, `npm run lint`, `tsc --noEmit` |
+
+## 1500명 Active/Passive 부하테스트
+
+1500명 단일방에서 active 30%, passive 70% 조건으로 `20260505-211649-hr1500ap-main` run을 실행했다. 구성은 API `e2-standard-4 x1`, Realtime `e2-standard-8 x4`, k6 `e2-standard-8 x2`였고 monitoring VM은 띄우지 않았다.
+
+핵심 결과는 다음과 같다.
+
+- active/passive assigned: `450 / 1050`
+- sent / ack / DB rows: `50,870 / 50,870 / 50,870`
+- passive unexpected messages: `0`
+- ack p95 worst: `23ms`
+- visible freshness p95 worst: `117.5ms`
+- 서버 `ws_session_max`: active `450`, passive `1050`
+- 서버 `ws.fanout.passive_omitted`: `12,778,286`
+- 서버 `ws.send.failed`: `0`
+- 서버 `ws.broadcast.lane_done.since_created` p95 worst: `158.9ms`
+
+이 결과는 passive 세션이 full payload를 받지 않고, active 사용자의 체감 지연과 DB 정합성이 유지됐다는 근거다.
+
+다만 `logical delivery per DB row` 전체 평균은 steady-state active 수와 1:1로 해석하지 않는다. 이번 시나리오는 120초 ramp 중에도 각 VU가 바로 채팅을 시작하므로, 전체 평균에는 아직 모든 active 세션이 연결되지 않은 구간이 섞인다. steady-state delivery TPS를 정확히 말하려면 ramp 이후 hold 구간을 분리하거나 monitoring on으로 해당 구간만 잘라서 봐야 한다.
 
 ## 포트폴리오용 정리
 
 서버를 더 늘리기 전에, 사용자가 실제로 보고 있지 않은 세션으로 나가는 full fan-out을 줄이는 구조를 먼저 적용했다.
 
-성능 개선 수치가 아니라, fan-out 대상 축소와 메시지 복구 안정성을 브라우저 E2E로 검증했다.
+성능 개선 수치가 아니라, fan-out 대상 축소와 메시지 복구 안정성을 브라우저 E2E와 1500명 active/passive 부하테스트로 검증했다.
 
 이 작업은 "한 방 최대 인원"보다 "같은 리소스에서 불필요한 delivery work를 줄이고, 사용자가 다시 돌아왔을 때 메시지를 잃지 않는가"에 초점을 둔 개선이다.
 
 ## 남은 과제
 
 - passive 세션용 unread count 또는 summary event는 v2에서 별도로 설계한다.
-- active/passive 비율이 섞인 실제 사용자형 부하테스트는 이후에 별도 시나리오로 측정한다.
+- steady-state delivery TPS가 필요하면 ramp 이후 hold 구간을 분리한 시나리오로 다시 측정한다.
 - 여러 hot-room과 작은 방이 동시에 존재할 때 room 단위 fan-out ownership 또는 shard 구조와 함께 검토한다.
