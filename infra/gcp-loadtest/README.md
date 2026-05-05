@@ -183,6 +183,17 @@ terraform apply \
 
 이 실행은 전체 1800명을 유지하면서 `k6_worker_count=2`, worker당 900 VU로 나눠 같은 방에 접속한다. 결과는 worker별 summary와 함께 coordinator가 수집한 `k6/<profile>/shared/*-db-message-count.json`으로 전체 DB row count를 확인한다.
 
+1500명 active/passive hot-room run:
+
+```bash
+terraform apply \
+  -var="project_id=<gcp-project-id>" \
+  -var="run_id=$(date +%Y%m%d-%H%M%S)-hr1500ap" \
+  -var-file="profiles/hot-room-1500-active-passive.tfvars.example"
+```
+
+이 실행은 전체 1500명이 같은 방에 접속하지만, 기본값 기준 약 450명만 `room.active`를 선언하고 약 1050명은 `room.passive`를 선언한다. 판정은 k6 `ws_presence_assigned_total`, `ws_passive_unexpected_messages_total`과 서버 `ws_session_max`, `ws_fanout_max`, `openchat_pipeline_events_total{event="ws.fanout.passive_omitted"}`를 함께 본다.
+
 ### 실측 TPS 확인
 
 1000명 hot-room 재측정에서는 “100만 TPS”처럼 뭉뚱그려 표현하지 않고 아래 값을 분리해서 확인한다.
@@ -216,8 +227,12 @@ gs://<bucket>/runs/<run_id>/
     worker-3/
       500vu-summary.json
   metrics/
+    lb-health-before.json
+    lb-prometheus-before.txt
     lb-health-after.json
     lb-prometheus-after.txt
+    app-1-health-before.json
+    app-1-prometheus-before.txt
     app-1-health-after.json
     app-1-prometheus-after.txt
   logs/

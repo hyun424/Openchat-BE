@@ -2,6 +2,10 @@ HELP.md
 docs/*
 !docs/role-aware-k6-measurement-reliability-20260504.md
 !docs/portfolio-loadtest-architecture-story.md
+!docs/discord-maxjourney-openchat-ideas.md
+!docs/active-room-fanout-e2e-20260505.md
+!docs/room-work-sharding-plan-20260505.md
+!docs/room-shard-ownership-v2-20260506.md
 !docs/OPENCHAT-EXPERIENCE-BANK.md
 !docs/hot-room-loadtest-summary-for-portfolio.md
 data/

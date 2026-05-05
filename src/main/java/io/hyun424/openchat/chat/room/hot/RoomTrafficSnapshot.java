@@ -8,6 +8,11 @@ public record RoomTrafficSnapshot(
         long outboundFanoutPerSecond,
         long deliveryLagP95Millis,
         long laneQueueWaitP95Millis,
-        RoomHotState state
+        RoomHotState state,
+        int activeSessions,
+        long roomWorkPerSecond,
+        RoomScaleTier scaleTier,
+        int recommendedPartitions,
+        int effectivePartitions
 ) {
 }

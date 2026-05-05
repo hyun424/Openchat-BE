@@ -24,6 +24,7 @@ class ChatWebSocketMessageParser {
 
     ChatWebSocketMessage parse(TextMessage textMessage) throws IOException {
         JsonNode node = objectMapper.readTree(textMessage.getPayload());
+        String type = node.has("type") ? node.get("type").asText() : ChatWebSocketMessage.TYPE_CHAT_MESSAGE;
         String content = node.has("content") ? node.get("content").asText() : null;
         String clientMessageId = node.has("clientMessageId")
                 ? node.get("clientMessageId").asText()
@@ -31,7 +32,13 @@ class ChatWebSocketMessageParser {
         Long clientSentAt = node.has("clientSentAt") && node.get("clientSentAt").canConvertToLong()
                 ? node.get("clientSentAt").asLong()
                 : null;
-        return new ChatWebSocketMessage(sanitize(content), clientMessageId, clientSentAt);
+        Long roomId = node.has("roomId") && node.get("roomId").canConvertToLong()
+                ? node.get("roomId").asLong()
+                : null;
+        Long lastSeenSequence = node.has("lastSeenSequence") && node.get("lastSeenSequence").canConvertToLong()
+                ? node.get("lastSeenSequence").asLong()
+                : null;
+        return new ChatWebSocketMessage(type, sanitize(content), clientMessageId, clientSentAt, roomId, lastSeenSequence);
     }
 
     private String sanitize(String content) {

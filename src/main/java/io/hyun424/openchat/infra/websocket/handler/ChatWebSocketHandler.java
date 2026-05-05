@@ -128,6 +128,19 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
             }
             chatPipelineMetrics.recordStage("ws.inbound.session_check", sessionCheckStartNanos);
 
+            long parseStartNanos = System.nanoTime();
+            ChatWebSocketMessage message = messageParser.parse(textMessage);
+            chatPipelineMetrics.recordStage("ws.inbound.parse", parseStartNanos);
+            if (message.isRoomControlMessage()) {
+                handleRoomControlMessage(session, message, roomId, senderId);
+                return;
+            }
+            if (!message.isChatMessage()) {
+                log.warn("[WS_CONTROL_UNKNOWN] roomId={} senderId={} type={}", roomId, senderId, message.type());
+                chatPipelineMetrics.incrementCounter("ws.control.unknown");
+                return;
+            }
+
             long rateLimitStartNanos = System.nanoTime();
             if (!validateRateLimit(session, senderId, roomId)) {
                 chatPipelineMetrics.recordStage("ws.inbound.rate_limit", rateLimitStartNanos);
@@ -135,9 +148,6 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
             }
             chatPipelineMetrics.recordStage("ws.inbound.rate_limit", rateLimitStartNanos);
 
-            long parseStartNanos = System.nanoTime();
-            ChatWebSocketMessage message = messageParser.parse(textMessage);
-            chatPipelineMetrics.recordStage("ws.inbound.parse", parseStartNanos);
             chatPipelineMetrics.recordSinceEpochMillis("ws.inbound.received.since_client_sent", message.clientSentAt());
             if (!validateContent(session, message, roomId, senderId)) {
                 return;
@@ -170,6 +180,31 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         } finally {
             chatPipelineMetrics.recordStage("ws.inbound.total", totalStartNanos);
         }
+    }
+
+    private void handleRoomControlMessage(WebSocketSession session,
+                                          ChatWebSocketMessage message,
+                                          Long connectionRoomId,
+                                          String senderId) {
+        if (message.roomId() != null && !message.roomId().equals(connectionRoomId)) {
+            log.warn("[WS_CONTROL_ROOM_MISMATCH] sessionId={} senderId={} connectionRoomId={} payloadRoomId={} type={}",
+                    session.getId(), senderId, connectionRoomId, message.roomId(), message.type());
+            chatPipelineMetrics.incrementCounter("ws.control.room_mismatch");
+            return;
+        }
+
+        if (message.marksActive()) {
+            roomSessionRegistry.markActive(connectionRoomId, session.getId(), message.lastSeenSequence());
+            if (ChatWebSocketMessage.TYPE_ROOM_ACTIVE_HEARTBEAT.equals(message.type())) {
+                chatPipelineMetrics.incrementCounter("ws.control.room_active_heartbeat");
+            } else {
+                chatPipelineMetrics.incrementCounter("ws.control.room_active");
+            }
+            return;
+        }
+
+        roomSessionRegistry.markPassive(connectionRoomId, session.getId(), message.lastSeenSequence());
+        chatPipelineMetrics.incrementCounter("ws.control.room_passive");
     }
 
     private void sendAck(WebSocketSession session, ChatMessageDto savedMessage, Long clientSentAt) {

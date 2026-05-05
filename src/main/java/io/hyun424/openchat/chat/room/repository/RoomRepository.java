@@ -30,6 +30,14 @@ public interface RoomRepository extends JpaRepository<Room, Long> {
      */
     List<Room> findTop5ByOrderByCreatedAtDesc();
 
+    @Query("SELECT COALESCE(r.shardId, 0) FROM Room r WHERE r.id = :roomId")
+    java.util.Optional<Integer> findShardIdById(@Param("roomId") Long roomId);
+
+    @Query("SELECT COUNT(r) FROM Room r " +
+           "WHERE r.status = :status AND COALESCE(r.shardId, 0) = :shardId")
+    long countActiveRoomsByResolvedShardId(@Param("status") RoomStatus status,
+                                           @Param("shardId") int shardId);
+
     /**
      * My Chats: rooms user has joined (active membership), sorted by recent activity
      * - Only ACTIVE rooms

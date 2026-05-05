@@ -129,7 +129,7 @@ DB rows는 `2462`였고 worker 합산 ack도 `2462`로 일치했다.
 
 ## 해석
 
-이번 결과는 서버 성능이 갑자기 좋아졌다는 뜻이 아니다. 측정 방식을 바꿔 k6 full-parse 관측 비용을 줄였고, 그 상태에서 서버 pipeline과 사용자 체감 지연을 다시 분리해 본 것이다.
+이번 결과는 서버 처리 능력이 갑자기 달라졌다는 뜻이 아니다. 측정 방식을 바꿔 k6 full-parse 관측 비용을 줄였고, 그 상태에서 서버 pipeline과 사용자 체감 지연을 다시 분리해 본 것이다.
 
 핵심 해석은 다음과 같다.
 
@@ -140,6 +140,22 @@ DB rows는 `2462`였고 worker 합산 ack도 `2462`로 일치했다.
 - 다만 role-aware 실행은 observer와 validator가 기본적으로 메시지를 보내지 않으므로, 이전 "전원 1초 1메시지" 실행과 입력 TPS를 1:1 비교하면 안 된다.
 
 따라서 결론은 "성능 개선"이 아니라 "측정 신뢰도 개선"이다.
+
+## 남은 send 실패 신호 분리
+
+role-aware 재측정에서도 `ws.send.failed=27`이 남았다. 전체 delivery 대비 매우 작은 수치이고 서버 `lane_done`과 `send.duration`은 낮았지만, 이 값을 단순 종료 경계로 가정하고 넘어가면 운영 관점의 설명력이 부족하다.
+
+그래서 후속 코드 작업에서 `ws.send.failed`를 reason별로 분리했다.
+
+- `closed_before_send`: 전송 전에 이미 닫힌 세션
+- `closed_during_send`: 전송 도중 닫힌 세션
+- `send_time_limit`: WebSocket send time limit 초과
+- `buffer_limit`: WebSocket buffer limit 초과
+- `io_exception`: 네트워크/소켓 IO 예외
+- `illegal_state`: 잘못된 세션 상태
+- `unknown_exception`: 미분류 예외
+
+이 작업의 목적은 성능 튜닝이 아니라 운영/측정 신뢰도 보강이다. 좋은 수치가 나왔더라도 남은 실패 신호를 무시하지 않고, 정상적인 연결 종료 경계와 실제 backpressure/전송 실패 신호를 구분할 수 있게 만드는 것이다.
 
 ## 포트폴리오용 결론
 
@@ -163,6 +179,7 @@ DB rows는 `2462`였고 worker 합산 ack도 `2462`로 일치했다.
 - k6와 Terraform 기반 GCP 부하테스트 환경에서 1800명 단일 WebSocket hot-room 시나리오를 검증하고, 입력 TPS, DB TPS, logical delivery TPS, physical frame TPS, visible freshness를 분리 측정했다.
 - 부하테스트 결과 악화 시 서버 튜닝으로 바로 넘어가지 않고, k6 부하 생성기와 관측 경로가 결과를 오염시키는 문제를 발견해 sender/observer/validator 역할 분리 방식으로 측정 신뢰도를 개선했다.
 - role-aware k6 재측정에서 DB rows와 ack count `201,538`건 일치, observer visible p95 `173~191ms`, server `lane_done` p95 `142.5ms`를 확인해 서버 fan-out/send 병목 여부를 근거 기반으로 판정했다.
+- 이후 남은 `ws.send.failed` 신호를 reason별로 분리해, 종료 경계와 실제 WebSocket backpressure/전송 실패를 구분할 수 있도록 운영 관측성을 보강했다.
 
 ## 면접 답변 초안
 

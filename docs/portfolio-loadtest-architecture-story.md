@@ -10,9 +10,27 @@
 
 초기에는 로컬과 GCP에서 200~500명 구간부터 결과가 흔들렸지만, 이후 GCP 부하테스트 환경을 분리하고 서버 metric, DB row count, k6 summary를 함께 수집하면서 해석이 바뀌었다. 특히 1800명 단일방 테스트에서는 서버 WebSocket fan-out/send 병목과 k6 관측 병목이 섞일 수 있음을 확인했고, k6 클라이언트를 `sender / observer / validator`로 나눠 재측정했다.
 
-role-aware k6 재측정 결과, 1800명 단일방 shared room에서 DB rows와 ack count가 `201,538`건으로 일치했고, observer visible p95는 worker별 `191ms / 173ms`, 서버 `ws.broadcast.lane_done` p95는 worst node `142.5ms`, `ws.send.duration` p95는 `0.180ms`였다. 이 결과는 서버 성능이 갑자기 좋아졌다는 뜻이 아니라, 기존 full-parse k6 관측 방식이 결과를 오염시킬 수 있음을 분리해낸 것이다.
+role-aware k6 재측정 결과, 1800명 단일방 shared room에서 DB rows와 ack count가 `201,538`건으로 일치했고, observer visible p95는 worker별 `191ms / 173ms`, 서버 `ws.broadcast.lane_done` p95는 worst node `142.5ms`, `ws.send.duration` p95는 `0.180ms`였다. 이 결과는 서버 처리 능력이 갑자기 달라졌다는 뜻이 아니라, 기존 full-parse k6 관측 방식이 결과를 오염시킬 수 있음을 분리해낸 것이다.
+
+이후에는 남은 `ws.send.failed` 신호도 그냥 무시하지 않고, `closed_before_send`, `closed_during_send`, `send_time_limit`, `buffer_limit`, `io_exception`, `illegal_state`처럼 저카디널리티 reason으로 나눠 기록하도록 보강했다. 이로써 다음 부하테스트에서는 실패 총량뿐 아니라 정상적인 종료 경계인지 실제 WebSocket backpressure/전송 실패인지까지 설명할 수 있다.
+
+그 다음 단계로는 Discord MaxJourney 사례에서 얻은 "필요 없는 fan-out 제거" 관점을 OpenChat에 적용했다. 사용자가 실제로 보고 있는 채팅방 세션만 full WebSocket payload를 받도록 `room.active`, `room.active.heartbeat`, `room.passive` control message를 추가했고, passive 세션은 full fan-out 대상에서 제외했다. 사용자가 다시 visible 상태로 돌아오면 `/messages/after`로 누락 메시지를 복구한다.
+
+이 변경은 처리량 향상 수치 홍보가 아니라, fan-out 대상 축소와 메시지 복구 안정성을 검증한 작업이다. BE 단위 테스트로 control message가 저장/ack 경로를 타지 않는지, passive 세션이 fan-out에서 제외되는지 확인했고, FE 브라우저 E2E로 hidden 중 메시지가 즉시 표시되지 않고 visible 복귀 후 REST sync로 복구되는 흐름을 확인했다.
+
+이후 1500명 단일방에서 active 30%, passive 70% 조건의 클라우드 부하테스트를 실행했다. 결과는 active/passive assigned `450 / 1050`, sent/ack/DB rows `50,870 / 50,870 / 50,870`, passive unexpected `0`, ack p95 worst `23ms`, visible p95 worst `117.5ms`, 서버 `ws.fanout.passive_omitted` `12,778,286`, `ws.send.failed` `0`이었다. 이 결과는 "더 많은 인원"이 아니라, 같은 방 인원에서 실제로 보고 있는 세션만 full fan-out 대상으로 남기는 구조가 동작한다는 근거로 기록한다.
+
+이제 다음 확장 기준은 단순 방 인원수가 아니라 `room_work = input_msg_tps * active_sessions`로 잡는다. Realtime pod의 기본 단위를 `4 vCPU / 8GB`, pod budget을 `10,000 delivery/s`로 두고, 작은 방은 여러 개를 하나의 room shard에 묶고, 단일 pod budget을 넘는 hot room은 fan-out partition 대상으로 분류한다. v1에서는 라우팅을 바꾸지 않고 room tier와 partition 추천 수만 계측한다.
 
 상세 정리: [k6 측정 신뢰도 개선과 1800명 단일방 재검증](./role-aware-k6-measurement-reliability-20260504.md)
+
+Active Room Fan-out 정리: [Active Room Fan-out v1과 브라우저 E2E 검증](./active-room-fanout-e2e-20260505.md)
+
+Active/Passive 부하테스트 결과: [1500명 Active/Passive Hot Room 측정 결과](../infra/gcp-loadtest/results/2026-05-05-active-passive-hot-room-1500.md)
+
+Room Work Sharding 설계: [4 vCPU 기준 Room Work Sharding 설계](./room-work-sharding-plan-20260505.md)
+
+관련 설계 메모: [Discord MaxJourney 사례에서 OpenChat에 가져갈 아이디어](./discord-maxjourney-openchat-ideas.md)
 
 ## 문제 상황
 
