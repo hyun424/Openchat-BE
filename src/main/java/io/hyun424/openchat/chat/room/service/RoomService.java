@@ -11,6 +11,7 @@ import io.hyun424.openchat.chat.room.lifecycle.RoomLifecyclePublisher;
 import io.hyun424.openchat.global.exception.ApiException;
 import io.hyun424.openchat.global.exception.ErrorCode;
 import io.hyun424.openchat.chat.room.repository.RoomRepository;
+import io.hyun424.openchat.chat.room.shard.RoomShardAssignmentService;
 import io.hyun424.openchat.infra.websocket.session.RoomSessionRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -33,11 +34,14 @@ public class RoomService {
     private final RoomSessionRegistry roomSessionRegistry;
     private final RoomLifecyclePublisher roomLifecyclePublisher;
     private final ChatPipelineMetrics chatPipelineMetrics;
+    private final RoomShardAssignmentService roomShardAssignmentService;
 
     public Room createRoom(String userId, RoomCreateRequest request) {
+        int shardId = roomShardAssignmentService.assignShardForNewRoom();
         Room.RoomBuilder builder = Room.builder()
                 .name(request.getName())
                 .ownerId(userId)
+                .shardId(shardId)
                 .maxMembers(request.getMaxMembers())
                 .requiresApproval(request.getRequiresApproval() != null ? request.getRequiresApproval() : false)
                 .description(request.getDescription())

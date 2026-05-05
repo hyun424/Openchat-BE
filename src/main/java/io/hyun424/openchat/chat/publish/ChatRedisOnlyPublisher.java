@@ -3,6 +3,8 @@ package io.hyun424.openchat.chat.publish;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
 import io.hyun424.openchat.chat.metrics.ChatPipelineMetrics;
+import io.hyun424.openchat.chat.room.shard.ChatRedisChannelResolver;
+import io.hyun424.openchat.chat.room.shard.RoomShardMetrics;
 import io.hyun424.openchat.infra.redis.health.RedisHealthState;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -25,6 +27,8 @@ public class ChatRedisOnlyPublisher implements ChatMessagePublisher {
     private final ObjectMapper objectMapper;
     private final RedisHealthState redisHealthState;
     private final ChatPipelineMetrics chatPipelineMetrics;
+    private final ChatRedisChannelResolver channelResolver;
+    private final RoomShardMetrics roomShardMetrics;
 
     @Value("${app.instance-id:local}")
     private String instanceId;
@@ -33,12 +37,16 @@ public class ChatRedisOnlyPublisher implements ChatMessagePublisher {
             StringRedisTemplate redisTemplate,
             ObjectMapper objectMapper,
             RedisHealthState redisHealthState,
-            ChatPipelineMetrics chatPipelineMetrics
+            ChatPipelineMetrics chatPipelineMetrics,
+            ChatRedisChannelResolver channelResolver,
+            RoomShardMetrics roomShardMetrics
     ) {
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper;
         this.redisHealthState = redisHealthState;
         this.chatPipelineMetrics = chatPipelineMetrics;
+        this.channelResolver = channelResolver;
+        this.roomShardMetrics = roomShardMetrics;
         log.info("ChatRedisOnlyPublisher initialized (Redis only, no Kafka)");
     }
 
@@ -51,13 +59,15 @@ public class ChatRedisOnlyPublisher implements ChatMessagePublisher {
             throw new ChatPublishException("Redis is down");
         }
 
-        String channel = "chat:room:" + message.getRoomId();
+        ChatRedisChannelResolver.ResolvedChannel resolvedChannel = channelResolver.publishChannel(message);
+        String channel = resolvedChannel.channel();
         try {
             long serializeStartNanos = System.nanoTime();
             String payload = objectMapper.writeValueAsString(message);
             chatPipelineMetrics.recordStage("publish.redis.serialize", serializeStartNanos);
             long publishStartNanos = System.nanoTime();
             redisTemplate.convertAndSend(channel, payload);
+            roomShardMetrics.recordPublish(resolvedChannel.mode());
             chatPipelineMetrics.recordStage("publish.redis.convert_and_send", publishStartNanos);
             chatPipelineMetrics.recordSinceCreated("publish.redis.after_send.since_created", message);
             log.debug("[REDIS PUB][{}] channel={} roomId={} messageId={}",

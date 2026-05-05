@@ -230,6 +230,14 @@ public class RoomSessionRegistry {
         return getSessions(roomId).size();
     }
 
+    public int totalBroadcastQueueDepth() {
+        int total = 0;
+        for (ThreadPoolExecutor executor : broadcastLaneExecutors) {
+            total += executor.getQueue().size();
+        }
+        return total;
+    }
+
     /**
      * 방에 연결된 세션으로 메시지를 병렬 전송한다.
      * 전송 중 Set을 직접 수정하면 살아있는 세션을 건너뛸 수 있으므로, 죽은 세션은 전송이 끝난 뒤 정리한다.

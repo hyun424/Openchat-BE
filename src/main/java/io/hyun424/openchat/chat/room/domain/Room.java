@@ -13,7 +13,8 @@ import java.time.LocalTime;
 @Table(
         name = "room",
         indexes = {
-                @Index(name = "idx_room_status_created", columnList = "status, created_at")
+                @Index(name = "idx_room_status_created", columnList = "status, created_at"),
+                @Index(name = "idx_room_status_shard", columnList = "status, shard_id")
         }
 )
 @Getter
@@ -42,6 +43,9 @@ public class Room {
 
     @Column(name = "last_message_sender", length = 100)
     private String lastMessageSender;
+
+    @Column(name = "shard_id")
+    private Integer shardId;
 
     @Column(name = "max_members")
     private Integer maxMembers;  // null = 무제한
