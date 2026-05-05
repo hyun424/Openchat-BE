@@ -137,6 +137,72 @@ class ChatWebSocketHandlerTest {
     }
 
     @Test
+    @DisplayName("명시적 chat.message type도 기존 채팅 저장 경로를 탄다")
+    void handleMessage_explicitChatType_callsIngest() throws Exception {
+        TextMessage msg = new TextMessage(
+                "{\"type\":\"chat.message\",\"content\":\"Hello World\",\"clientMessageId\":\"c1\"}");
+
+        handler.handleTextMessage(session, msg);
+
+        verify(chatIngestService).ingest(eq(1L), eq("user1"), eq("TestUser"), anyString(), eq("c1"));
+    }
+
+    @Test
+    @DisplayName("기존 프론트의 text type도 채팅 저장 경로를 탄다")
+    void handleMessage_legacyTextType_callsIngest() throws Exception {
+        TextMessage msg = new TextMessage(
+                "{\"type\":\"text\",\"content\":\"Hello World\",\"clientMessageId\":\"c1\"}");
+
+        handler.handleTextMessage(session, msg);
+
+        verify(chatIngestService).ingest(eq(1L), eq("user1"), eq("TestUser"), anyString(), eq("c1"));
+    }
+
+    @Test
+    @DisplayName("room.passive control message는 저장하지 않고 세션 상태만 passive로 바꾼다")
+    void handleMessage_roomPassive_marksSessionPassiveOnly() {
+        TextMessage msg = new TextMessage(
+                "{\"type\":\"room.passive\",\"roomId\":1,\"lastSeenSequence\":123}");
+
+        handler.handleTextMessage(session, msg);
+
+        verify(roomSessionRegistry).markPassive(1L, "session-1", 123L);
+        verify(chatPipelineMetrics).incrementCounter("ws.control.room_passive");
+        verify(rateLimiter, never()).tryAcquire(anyString(), anyInt(), anyInt());
+        verify(chatIngestService, never()).ingest(any(), any(), any(), any(), any());
+        verify(roomSessionRegistry, never()).sendControlToSession(any(), any(), eq("ack"));
+        verify(postCommitLivePublishService, never()).publishAsync(any(), any());
+    }
+
+    @Test
+    @DisplayName("room.active.heartbeat control message는 active TTL을 연장한다")
+    void handleMessage_roomActiveHeartbeat_marksSessionActiveOnly() {
+        TextMessage msg = new TextMessage(
+                "{\"type\":\"room.active.heartbeat\",\"roomId\":1,\"lastSeenSequence\":124}");
+
+        handler.handleTextMessage(session, msg);
+
+        verify(roomSessionRegistry).markActive(1L, "session-1", 124L);
+        verify(chatPipelineMetrics).incrementCounter("ws.control.room_active_heartbeat");
+        verify(rateLimiter, never()).tryAcquire(anyString(), anyInt(), anyInt());
+        verify(chatIngestService, never()).ingest(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("control roomId가 연결 roomId와 다르면 상태를 바꾸지 않는다")
+    void handleMessage_roomControlMismatch_ignored() {
+        TextMessage msg = new TextMessage(
+                "{\"type\":\"room.active\",\"roomId\":2,\"lastSeenSequence\":125}");
+
+        handler.handleTextMessage(session, msg);
+
+        verify(roomSessionRegistry, never()).markActive(any(), any(), any());
+        verify(roomSessionRegistry, never()).markPassive(any(), any(), any());
+        verify(chatPipelineMetrics).incrementCounter("ws.control.room_mismatch");
+        verify(chatIngestService, never()).ingest(any(), any(), any(), any(), any());
+    }
+
+    @Test
     @DisplayName("정상 메시지 저장 후 sender 세션에 chat.ack 제어 메시지를 보낸다")
     void handleMessage_normal_sendsAckToSenderSession() throws Exception {
         TextMessage msg = new TextMessage("{\"content\":\"Hello World\",\"clientMessageId\":\"c1\"}");

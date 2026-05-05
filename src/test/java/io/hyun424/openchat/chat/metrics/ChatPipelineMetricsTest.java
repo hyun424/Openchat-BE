@@ -30,13 +30,16 @@ class ChatPipelineMetricsTest {
         ChatPipelineMetrics metrics = new ChatPipelineMetrics(registry);
 
         metrics.recordWebSocketSendAttempt(2);
-        metrics.recordWebSocketSendFailure(2, "closed", System.nanoTime());
+        metrics.recordWebSocketSendFailure(2, "closed_before_send", System.nanoTime());
 
         assertCounter(registry, "ws.send.attempted", 2);
         assertCounter(registry, "ws.send.frame.attempted", 1);
         assertCounter(registry, "ws.send.failed", 2);
         assertCounter(registry, "ws.send.frame.failed", 1);
-        assertCounter(registry, "ws.send.fail.closed", 1);
+        assertCounter(registry, "ws.send.fail.closed_before_send", 1);
+
+        metrics.recordWebSocketSendFailure(1, "io_exception", System.nanoTime());
+        assertCounter(registry, "ws.send.fail.io_exception", 1);
 
         metrics.shutdown();
     }
