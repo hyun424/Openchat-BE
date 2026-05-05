@@ -39,10 +39,13 @@ public class RoomSessionRegistry {
     private final ThreadPoolExecutor[] broadcastLaneExecutors;
     private final int broadcastLaneCount;
     private final int broadcastShutdownTimeoutMillis;
+    private final long activeTtlMillis;
 
     private final ConcurrentMap<Long, Set<WebSocketSession>> roomSessions =
             new ConcurrentHashMap<>();
     private final ConcurrentMap<String, WebSocketSession> sessionsById =
+            new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, RoomSessionState> sessionStatesById =
             new ConcurrentHashMap<>();
 
     private final AtomicBoolean acceptingConnections = new AtomicBoolean(true);
@@ -52,12 +55,14 @@ public class RoomSessionRegistry {
     private static final int DEFAULT_BROADCAST_LANES = 16;
     private static final int DEFAULT_BROADCAST_QUEUE_CAPACITY_PER_LANE = 4096;
     private static final int DEFAULT_BROADCAST_SHUTDOWN_TIMEOUT_MS = 5000;
+    private static final long DEFAULT_ACTIVE_TTL_MILLIS = 60_000L;
 
     public RoomSessionRegistry(ObjectMapper objectMapper) {
         this(objectMapper, new RoomTrafficMonitor(), ChatPipelineMetrics.noop(),
                 DEFAULT_BROADCAST_LANES,
                 DEFAULT_BROADCAST_QUEUE_CAPACITY_PER_LANE,
-                DEFAULT_BROADCAST_SHUTDOWN_TIMEOUT_MS);
+                DEFAULT_BROADCAST_SHUTDOWN_TIMEOUT_MS,
+                DEFAULT_ACTIVE_TTL_MILLIS);
     }
 
     public RoomSessionRegistry(ObjectMapper objectMapper,
@@ -66,7 +71,8 @@ public class RoomSessionRegistry {
         this(objectMapper, new RoomTrafficMonitor(), ChatPipelineMetrics.noop(),
                 configuredLaneCount,
                 queueCapacity,
-                DEFAULT_BROADCAST_SHUTDOWN_TIMEOUT_MS);
+                DEFAULT_BROADCAST_SHUTDOWN_TIMEOUT_MS,
+                DEFAULT_ACTIVE_TTL_MILLIS);
     }
 
     public RoomSessionRegistry(ObjectMapper objectMapper,
@@ -76,7 +82,8 @@ public class RoomSessionRegistry {
         this(objectMapper, roomTrafficMonitor, ChatPipelineMetrics.noop(),
                 configuredLaneCount,
                 queueCapacity,
-                DEFAULT_BROADCAST_SHUTDOWN_TIMEOUT_MS);
+                DEFAULT_BROADCAST_SHUTDOWN_TIMEOUT_MS,
+                DEFAULT_ACTIVE_TTL_MILLIS);
     }
 
     @Autowired
@@ -86,11 +93,28 @@ public class RoomSessionRegistry {
                                @Value("${app.websocket.broadcast.lanes:0}") int configuredLaneCount,
                                @Value("${app.websocket.broadcast.pool-size:0}") int legacyPoolSize,
                                @Value("${app.websocket.broadcast.queue-capacity-per-lane:${app.websocket.broadcast.queue-capacity:4096}}") int queueCapacityPerLane,
-                               @Value("${app.websocket.broadcast.shutdown-timeout-ms:5000}") int shutdownTimeoutMillis) {
+                               @Value("${app.websocket.broadcast.shutdown-timeout-ms:5000}") int shutdownTimeoutMillis,
+                               @Value("${app.websocket.active-ttl-ms:60000}") long activeTtlMillis) {
         this(objectMapper, roomTrafficMonitor, chatPipelineMetrics,
                 configuredLaneCount > 0 ? configuredLaneCount : legacyPoolSize,
                 queueCapacityPerLane,
-                shutdownTimeoutMillis);
+                shutdownTimeoutMillis,
+                activeTtlMillis);
+    }
+
+    public RoomSessionRegistry(ObjectMapper objectMapper,
+                               RoomTrafficMonitor roomTrafficMonitor,
+                               ChatPipelineMetrics chatPipelineMetrics,
+                               int configuredLaneCount,
+                               int legacyPoolSize,
+                               int queueCapacityPerLane,
+                               int shutdownTimeoutMillis) {
+        this(objectMapper, roomTrafficMonitor, chatPipelineMetrics,
+                configuredLaneCount,
+                legacyPoolSize,
+                queueCapacityPerLane,
+                shutdownTimeoutMillis,
+                DEFAULT_ACTIVE_TTL_MILLIS);
     }
 
     private RoomSessionRegistry(ObjectMapper objectMapper,
@@ -98,12 +122,14 @@ public class RoomSessionRegistry {
                                 ChatPipelineMetrics chatPipelineMetrics,
                                 int configuredLaneCount,
                                 int queueCapacityPerLane,
-                                int shutdownTimeoutMillis) {
+                                int shutdownTimeoutMillis,
+                                long activeTtlMillis) {
         this.objectMapper = objectMapper;
         this.roomTrafficMonitor = roomTrafficMonitor;
         this.chatPipelineMetrics = chatPipelineMetrics;
         this.broadcastLaneCount = resolveBroadcastLaneCount(configuredLaneCount);
         this.broadcastShutdownTimeoutMillis = Math.max(1, shutdownTimeoutMillis);
+        this.activeTtlMillis = Math.max(1, activeTtlMillis);
         int boundedQueueCapacity = Math.max(1, queueCapacityPerLane);
         AtomicInteger threadCounter = new AtomicInteger(0);
         this.broadcastLaneExecutors = new ThreadPoolExecutor[broadcastLaneCount];
@@ -151,6 +177,7 @@ public class RoomSessionRegistry {
          * 객체 동일성 대신 session id로 찾아 제거해야 닫힌 세션이 registry에 남지 않는다.
          */
         sessionsById.put(session.getId(), decorated);
+        sessionStatesById.put(session.getId(), RoomSessionState.active(roomId, nowMillis()));
         roomSessions
                 .computeIfAbsent(roomId, k -> ConcurrentHashMap.newKeySet())
                 .add(decorated);
@@ -161,12 +188,38 @@ public class RoomSessionRegistry {
         Set<WebSocketSession> set = roomSessions.get(roomId);
         if (set != null) {
             WebSocketSession storedSession = sessionsById.remove(session.getId());
+            sessionStatesById.remove(session.getId());
             set.remove(storedSession != null ? storedSession : session);
             if (set.isEmpty()) {
                 roomSessions.remove(roomId);
             }
             roomTrafficMonitor.recordLeave(roomId, count(roomId));
         }
+    }
+
+    public void markActive(Long roomId, String sessionId, Long lastSeenSequence) {
+        updateSessionState(roomId, sessionId, lastSeenSequence, true);
+    }
+
+    public void markPassive(Long roomId, String sessionId, Long lastSeenSequence) {
+        updateSessionState(roomId, sessionId, lastSeenSequence, false);
+    }
+
+    private void updateSessionState(Long roomId, String sessionId, Long lastSeenSequence, boolean active) {
+        if (sessionId == null) {
+            return;
+        }
+        long now = nowMillis();
+        sessionStatesById.compute(sessionId, (ignored, existing) -> {
+            RoomSessionState state = existing == null ? RoomSessionState.active(roomId, now) : existing;
+            if (!state.roomId().equals(roomId)) {
+                log.warn("[WS SESSION STATE ROOM MISMATCH] sessionId={} stateRoomId={} requestedRoomId={}",
+                        sessionId, state.roomId(), roomId);
+                return state;
+            }
+            state.mark(active, lastSeenSequence, now);
+            return state;
+        });
     }
 
     public Set<WebSocketSession> getSessions(Long roomId) {
@@ -190,13 +243,13 @@ public class RoomSessionRegistry {
             return;
         }
 
-        TextMessage textMessage = serializeMessage(roomId, message);
-        if (textMessage == null) {
+        List<WebSocketSession> sessionSnapshot = activeSessionSnapshot(roomId, sessions, 1);
+        if (sessionSnapshot.isEmpty()) {
             return;
         }
 
-        List<WebSocketSession> sessionSnapshot = new ArrayList<>(sessions);
-        if (sessionSnapshot.isEmpty()) {
+        TextMessage textMessage = serializeMessage(roomId, message);
+        if (textMessage == null) {
             return;
         }
         roomTrafficMonitor.recordOutboundFanout(roomId, sessionSnapshot.size());
@@ -240,13 +293,13 @@ public class RoomSessionRegistry {
             return;
         }
 
-        TextMessage textMessage = serializeBatchMessage(roomId, messages, realtimeComplete, omittedCount, lastSequence);
-        if (textMessage == null) {
+        List<WebSocketSession> sessionSnapshot = activeSessionSnapshot(roomId, sessions, messages.size());
+        if (sessionSnapshot.isEmpty()) {
             return;
         }
 
-        List<WebSocketSession> sessionSnapshot = new ArrayList<>(sessions);
-        if (sessionSnapshot.isEmpty()) {
+        TextMessage textMessage = serializeBatchMessage(roomId, messages, realtimeComplete, omittedCount, lastSequence);
+        if (textMessage == null) {
             return;
         }
         roomTrafficMonitor.recordOutboundFanout(roomId, sessionSnapshot.size() * messages.size());
@@ -265,6 +318,40 @@ public class RoomSessionRegistry {
 
         log.debug("[WS BATCH BROADCAST] roomId={} count={} sessions={} laneTasks={}",
                 roomId, messages.size(), sessionSnapshot.size(), taskCount);
+    }
+
+    private List<WebSocketSession> activeSessionSnapshot(Long roomId,
+                                                         Set<WebSocketSession> sessions,
+                                                         int logicalMessagesPerSession) {
+        List<WebSocketSession> activeSessions = new ArrayList<>(sessions.size());
+        int passiveSessions = 0;
+        long now = nowMillis();
+        for (WebSocketSession session : sessions) {
+            if (isActiveSession(session, now)) {
+                activeSessions.add(session);
+            } else {
+                passiveSessions++;
+            }
+        }
+
+        chatPipelineMetrics.recordDistribution("ws.session", "active", activeSessions.size());
+        chatPipelineMetrics.recordDistribution("ws.session", "passive", passiveSessions);
+        chatPipelineMetrics.recordDistribution("ws.fanout", "active_sessions", activeSessions.size());
+        if (passiveSessions > 0) {
+            int omitted = passiveSessions * Math.max(1, logicalMessagesPerSession);
+            chatPipelineMetrics.incrementCounter("ws.fanout.passive_omitted", omitted);
+            log.debug("[WS FANOUT PASSIVE OMITTED] roomId={} activeSessions={} passiveSessions={} logicalMessages={}",
+                    roomId, activeSessions.size(), passiveSessions, logicalMessagesPerSession);
+        }
+        return activeSessions;
+    }
+
+    private boolean isActiveSession(WebSocketSession session, long now) {
+        RoomSessionState state = sessionStatesById.get(session.getId());
+        if (state == null) {
+            return true;
+        }
+        return state.isActive(now, activeTtlMillis);
     }
 
     private TextMessage serializeMessage(Long roomId, ChatMessageDto message) {
@@ -509,6 +596,7 @@ public class RoomSessionRegistry {
         int closedCount = 0;
         for (WebSocketSession session : sessions) {
             sessionsById.remove(session.getId());
+            sessionStatesById.remove(session.getId());
             if (closeSession(session, new CloseStatus(4001, "Room has been ended"), "[WS CLOSE FAIL]")) {
                 closedCount++;
             }
@@ -535,6 +623,7 @@ public class RoomSessionRegistry {
         }
         roomSessions.clear();
         sessionsById.clear();
+        sessionStatesById.clear();
         log.info("[WS SHUTDOWN] Closed {} sessions across all rooms", totalClosed);
     }
 
@@ -557,6 +646,10 @@ public class RoomSessionRegistry {
 
     public int getRoomCount() {
         return roomSessions.size();
+    }
+
+    private long nowMillis() {
+        return System.currentTimeMillis();
     }
 
     @PreDestroy
@@ -586,5 +679,41 @@ public class RoomSessionRegistry {
                                  List<ChatMessageDto> messages,
                                  List<WebSocketSession> sessions,
                                  long enqueuedNanos) {
+    }
+
+    private static final class RoomSessionState {
+        private final Long roomId;
+        private volatile boolean activeDeclared;
+        private volatile Long lastSeenSequence;
+        private volatile long lastActiveSignalAt;
+        private volatile long lastControlAt;
+
+        private RoomSessionState(Long roomId, boolean activeDeclared, long now) {
+            this.roomId = roomId;
+            this.activeDeclared = activeDeclared;
+            this.lastActiveSignalAt = now;
+            this.lastControlAt = now;
+        }
+
+        static RoomSessionState active(Long roomId, long now) {
+            return new RoomSessionState(roomId, true, now);
+        }
+
+        Long roomId() {
+            return roomId;
+        }
+
+        void mark(boolean active, Long lastSeenSequence, long now) {
+            this.activeDeclared = active;
+            this.lastSeenSequence = lastSeenSequence;
+            this.lastControlAt = now;
+            if (active) {
+                this.lastActiveSignalAt = now;
+            }
+        }
+
+        boolean isActive(long now, long activeTtlMillis) {
+            return activeDeclared && now - lastActiveSignalAt <= activeTtlMillis;
+        }
     }
 }

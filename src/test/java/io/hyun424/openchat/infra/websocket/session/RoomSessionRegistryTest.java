@@ -205,6 +205,76 @@ class RoomSessionRegistryTest {
     }
 
     @Test
+    @DisplayName("passive 세션은 full fan-out 대상에서 제외한다")
+    void sendToRoom_passiveSession_omitsFullPayload() throws Exception {
+        SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+        ChatPipelineMetrics metrics = new ChatPipelineMetrics(meterRegistry);
+        RoomSessionRegistry registry = registryWithMetrics(metrics);
+        WebSocketSession activeSession = mockOpenSession("active-session");
+        WebSocketSession passiveSession = mockOpenSession("passive-session");
+        registry.add(1L, activeSession);
+        registry.add(1L, passiveSession);
+        registry.markPassive(1L, "passive-session", 10L);
+
+        registry.sendToRoom(1L, message());
+
+        verify(activeSession, timeout(500)).sendMessage(any(TextMessage.class));
+        verify(passiveSession, never()).sendMessage(any(TextMessage.class));
+        assertCounter(meterRegistry, "ws.fanout.passive_omitted", 1);
+        registry.shutdownExecutor();
+        metrics.shutdown();
+    }
+
+    @Test
+    @DisplayName("passive 세션이 active로 복귀하면 다시 full fan-out 대상이 된다")
+    void sendToRoom_activeAgain_sendsFullPayload() throws Exception {
+        RoomSessionRegistry registry = registryWithMetrics(ChatPipelineMetrics.noop());
+        WebSocketSession session = mockOpenSession("session-1");
+        registry.add(1L, session);
+        registry.markPassive(1L, "session-1", 10L);
+        registry.markActive(1L, "session-1", 11L);
+
+        registry.sendToRoom(1L, message());
+
+        verify(session, timeout(500)).sendMessage(any(TextMessage.class));
+        registry.shutdownExecutor();
+    }
+
+    @Test
+    @DisplayName("active heartbeat가 TTL 안에 없으면 passive로 간주해 fan-out에서 제외한다")
+    void sendToRoom_activeTtlExpired_omitsFullPayload() throws Exception {
+        SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+        ChatPipelineMetrics metrics = new ChatPipelineMetrics(meterRegistry);
+        RoomSessionRegistry registry = registryWithActiveTtl(metrics, 20);
+        WebSocketSession session = mockOpenSession("session-1");
+        registry.add(1L, session);
+        Thread.sleep(30);
+
+        registry.sendToRoom(1L, message());
+
+        verify(session, never()).sendMessage(any(TextMessage.class));
+        assertCounter(meterRegistry, "ws.fanout.passive_omitted", 1);
+        registry.shutdownExecutor();
+        metrics.shutdown();
+    }
+
+    @Test
+    @DisplayName("active heartbeat가 들어오면 TTL이 연장된다")
+    void sendToRoom_activeHeartbeatExtendsTtl_sendsFullPayload() throws Exception {
+        RoomSessionRegistry registry = registryWithActiveTtl(ChatPipelineMetrics.noop(), 100);
+        WebSocketSession session = mockOpenSession("session-1");
+        registry.add(1L, session);
+        Thread.sleep(30);
+        registry.markActive(1L, "session-1", 10L);
+        Thread.sleep(30);
+
+        registry.sendToRoom(1L, message());
+
+        verify(session, timeout(500)).sendMessage(any(TextMessage.class));
+        registry.shutdownExecutor();
+    }
+
+    @Test
     @DisplayName("batch envelope을 한 번 직렬화해 모든 열린 세션에 전송한다")
     void sendBatchToRoom_multipleMessages_sendsBatchEnvelopeToEveryOpenSession() throws Exception {
         RoomSessionRegistry registry = new RoomSessionRegistry(new ObjectMapper(), 2, 16);
@@ -311,6 +381,11 @@ class RoomSessionRegistryTest {
     private RoomSessionRegistry registryWithMetrics(ChatPipelineMetrics metrics) {
         return new RoomSessionRegistry(new ObjectMapper(), new RoomTrafficMonitor(), metrics,
                 1, 0, 16, 5000);
+    }
+
+    private RoomSessionRegistry registryWithActiveTtl(ChatPipelineMetrics metrics, long activeTtlMillis) {
+        return new RoomSessionRegistry(new ObjectMapper(), new RoomTrafficMonitor(), metrics,
+                1, 0, 16, 5000, activeTtlMillis);
     }
 
     private WebSocketSession mockSession(String sessionId) {
