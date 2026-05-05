@@ -16,6 +16,8 @@ role-aware k6 재측정 결과, 1800명 단일방 shared room에서 DB rows와 a
 
 상세 정리: [k6 측정 신뢰도 개선과 1800명 단일방 재검증](./role-aware-k6-measurement-reliability-20260504.md)
 
+관련 설계 메모: [Discord MaxJourney 사례에서 OpenChat에 가져갈 아이디어](./discord-maxjourney-openchat-ideas.md)
+
 ## 문제 상황
 
 포트폴리오용 실시간 채팅 서비스에서 한 방에 수백 명 이상이 동시에 접속하고, 모든 사용자가 1초마다 메시지를 보내는 핫룸 상황을 목표로 잡았다. 초기에는 로컬과 GCP에서 부하테스트 결과가 크게 달랐고, 특히 GCP 환경에서는 300명 이상부터 RTT와 delivery ratio가 급격히 나빠졌다.
