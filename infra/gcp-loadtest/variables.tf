@@ -211,6 +211,39 @@ variable "observer_send_interval_ms" {
   default     = 0
 }
 
+variable "active_user_ratio" {
+  description = "Fraction of k6 VUs that declare room.active in active/passive hot-room scenarios."
+  type        = number
+  default     = 0.3
+
+  validation {
+    condition     = var.active_user_ratio >= 0 && var.active_user_ratio <= 1
+    error_message = "active_user_ratio must be between 0 and 1."
+  }
+}
+
+variable "active_heartbeat_interval_ms" {
+  description = "Interval for k6 room.active.heartbeat control messages."
+  type        = number
+  default     = 20000
+
+  validation {
+    condition     = var.active_heartbeat_interval_ms > 0
+    error_message = "active_heartbeat_interval_ms must be positive."
+  }
+}
+
+variable "passive_settle_ms" {
+  description = "Grace period after room.passive before k6 counts received full payloads as unexpected."
+  type        = number
+  default     = 2000
+
+  validation {
+    condition     = var.passive_settle_ms >= 0
+    error_message = "passive_settle_ms must be zero or greater."
+  }
+}
+
 variable "enable_monitoring" {
   description = "Whether to create a monitoring VM that runs Prometheus, Grafana, InfluxDB, and exporters."
   type        = bool

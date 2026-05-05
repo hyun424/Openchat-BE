@@ -18,6 +18,10 @@ export const wsMessageHandlerDuration = new Trend('ws_message_handler_duration_m
 export const wsJsonParseDuration = new Trend('ws_json_parse_duration_ms', true);
 export const wsBatchMessagesPerFrame = new Trend('ws_batch_messages_per_frame', false);
 export const wsObserverVisibleSamples = new Counter('ws_observer_visible_samples_total');
+export const wsPresenceAssigned = new Counter('ws_presence_assigned_total');
+export const wsControlMessagesSent = new Counter('ws_control_messages_sent_total');
+export const wsActiveHeartbeatSent = new Counter('ws_active_heartbeat_sent_total');
+export const wsPassiveUnexpectedMessages = new Counter('ws_passive_unexpected_messages_total');
 
 // ── REST API Metrics (per endpoint) ──
 export const restLogin = new Trend('rest_login_duration_ms', true);

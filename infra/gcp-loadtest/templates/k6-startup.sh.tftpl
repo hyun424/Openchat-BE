@@ -34,6 +34,9 @@ K6_SENDER_RATIO="${k6_sender_ratio}"
 K6_OBSERVER_RATIO="${k6_observer_ratio}"
 K6_VALIDATOR_RATIO="${k6_validator_ratio}"
 OBSERVER_SEND_INTERVAL_MS="${observer_send_interval_ms}"
+ACTIVE_USER_RATIO="${active_user_ratio}"
+ACTIVE_HEARTBEAT_INTERVAL_MS="${active_heartbeat_interval_ms}"
+PASSIVE_SETTLE_MS="${passive_settle_ms}"
 SHARED_ROOM_ID=""
 SHARED_TEST_LABEL=""
 
@@ -109,6 +112,19 @@ collect_db_message_count() {
   "dbMessageRows": $db_count
 }
 EOF
+}
+
+collect_app_snapshots() {
+  local suffix="$1"
+  curl --max-time 10 -sf "$BASE_URL/actuator/health" > "$RESULT_ROOT/metrics/lb-health-$suffix.json" || true
+  curl --max-time 10 -sf "$BASE_URL/actuator/prometheus" > "$RESULT_ROOT/metrics/lb-prometheus-$suffix.txt" || true
+
+  app_index=1
+  for app_ip in $APP_INTERNAL_IPS; do
+    curl --max-time 10 -sf "http://$app_ip:8080/actuator/health" > "$RESULT_ROOT/metrics/app-$${app_index}-health-$suffix.json" || true
+    curl --max-time 10 -sf "http://$app_ip:8080/actuator/prometheus" > "$RESULT_ROOT/metrics/app-$${app_index}-prometheus-$suffix.txt" || true
+    app_index=$((app_index + 1))
+  done
 }
 
 create_shared_room() {
@@ -267,6 +283,10 @@ collect_prometheus_tps_summary() {
     write_prometheus_field "ws_frame_increase_window" "sum(increase(openchat_pipeline_events_total{event=\"ws.send.frame.succeeded\"}[$${window_seconds}s]))" false
     write_prometheus_field "ws_send_bytes_increase_window" "sum(increase(openchat_pipeline_events_total{event=\"ws.send.bytes\"}[$${window_seconds}s]))" false
     write_prometheus_field "ws_send_failed_increase_window" "sum(increase(openchat_pipeline_events_total{event=\"ws.send.failed\"}[$${window_seconds}s]))" false
+    write_prometheus_field "ws_fanout_active_sessions_max" 'max(ws_fanout_max{type="active_sessions"})' false
+    write_prometheus_field "ws_session_active_max" 'max(ws_session_max{type="active"})' false
+    write_prometheus_field "ws_session_passive_max" 'max(ws_session_max{type="passive"})' false
+    write_prometheus_field "ws_fanout_passive_omitted_increase_window" "sum(increase(openchat_pipeline_events_total{event=\"ws.fanout.passive_omitted\"}[$${window_seconds}s]))" false
     write_prometheus_field "ws_send_fail_closed_before_send_increase_window" "sum(increase(openchat_pipeline_events_total{event=\"ws.send.fail.closed_before_send\"}[$${window_seconds}s]))" false
     write_prometheus_field "ws_send_fail_closed_during_send_increase_window" "sum(increase(openchat_pipeline_events_total{event=\"ws.send.fail.closed_during_send\"}[$${window_seconds}s]))" false
     write_prometheus_field "ws_send_fail_send_time_limit_increase_window" "sum(increase(openchat_pipeline_events_total{event=\"ws.send.fail.send_time_limit\"}[$${window_seconds}s]))" false
@@ -344,15 +364,7 @@ cleanup() {
     sync_results
   fi
 
-  curl --max-time 10 -sf "$BASE_URL/actuator/health" > "$RESULT_ROOT/metrics/lb-health-after.json" || true
-  curl --max-time 10 -sf "$BASE_URL/actuator/prometheus" > "$RESULT_ROOT/metrics/lb-prometheus-after.txt" || true
-
-  app_index=1
-  for app_ip in $APP_INTERNAL_IPS; do
-    curl --max-time 10 -sf "http://$app_ip:8080/actuator/health" > "$RESULT_ROOT/metrics/app-$${app_index}-health-after.json" || true
-    curl --max-time 10 -sf "http://$app_ip:8080/actuator/prometheus" > "$RESULT_ROOT/metrics/app-$${app_index}-prometheus-after.txt" || true
-    app_index=$((app_index + 1))
-  done
+  collect_app_snapshots "after"
 
   sync_results
 
@@ -425,6 +437,8 @@ for attempt in $(seq 1 240); do
   fi
   sleep 2
 done
+
+collect_app_snapshots "before"
 
 if [ "$ENABLE_MONITORING" = "true" ] && [ -n "$MONITORING_INTERNAL_IP" ]; then
   echo "[k6] waiting for influxdb at $MONITORING_INTERNAL_IP"
@@ -542,6 +556,9 @@ for vus in $VUS_LIST; do
     -e K6_OBSERVER_RATIO="$K6_OBSERVER_RATIO" \
     -e K6_VALIDATOR_RATIO="$K6_VALIDATOR_RATIO" \
     -e OBSERVER_SEND_INTERVAL_MS="$OBSERVER_SEND_INTERVAL_MS" \
+    -e ACTIVE_USER_RATIO="$ACTIVE_USER_RATIO" \
+    -e ACTIVE_HEARTBEAT_INTERVAL_MS="$ACTIVE_HEARTBEAT_INTERVAL_MS" \
+    -e PASSIVE_SETTLE_MS="$PASSIVE_SETTLE_MS" \
     -e K6_COUNTER_FLUSH_INTERVAL_MS="5000" \
     -e K6_VISIBLE_FRESHNESS_SAMPLE_EVERY="100" \
     "$SCENARIO" 2>&1 | tee "$output_dir/$${worker_vus}vu.log"
@@ -585,6 +602,9 @@ cat > "$RESULT_ROOT/run-metadata-$WORKER_LABEL.json" <<EOF
   "k6ObserverRatio": "$K6_OBSERVER_RATIO",
   "k6ValidatorRatio": "$K6_VALIDATOR_RATIO",
   "observerSendIntervalMs": "$OBSERVER_SEND_INTERVAL_MS",
+  "activeUserRatio": "$ACTIVE_USER_RATIO",
+  "activeHeartbeatIntervalMs": "$ACTIVE_HEARTBEAT_INTERVAL_MS",
+  "passiveSettleMs": "$PASSIVE_SETTLE_MS",
   "baseUrl": "$BASE_URL",
   "wsBaseUrl": "$WS_BASE_URL",
   "lbVmName": "$LB_VM_NAME",
