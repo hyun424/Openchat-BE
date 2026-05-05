@@ -6,6 +6,7 @@ docs/*
 !docs/active-room-fanout-e2e-20260505.md
 !docs/room-work-sharding-plan-20260505.md
 !docs/room-shard-ownership-v2-20260506.md
+!docs/hot-room-fanout-partition-v3-20260506.md
 !docs/OPENCHAT-EXPERIENCE-BANK.md
 !docs/hot-room-loadtest-summary-for-portfolio.md
 data/

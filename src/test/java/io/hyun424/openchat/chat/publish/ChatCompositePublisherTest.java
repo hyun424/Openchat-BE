@@ -3,6 +3,7 @@ package io.hyun424.openchat.chat.publish;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
 import io.hyun424.openchat.chat.metrics.ChatPipelineMetrics;
+import io.hyun424.openchat.chat.room.partition.RoomPartitionMetrics;
 import io.hyun424.openchat.chat.room.shard.ChatRedisChannelResolver;
 import io.hyun424.openchat.chat.room.shard.RoomShardMetrics;
 import io.hyun424.openchat.infra.redis.health.RedisHealthState;
@@ -15,9 +16,11 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.kafka.core.KafkaTemplate;
 
 import java.util.concurrent.CompletableFuture;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -31,6 +34,7 @@ class ChatCompositePublisherTest {
     @Mock private ChatPipelineMetrics chatPipelineMetrics;
     @Mock private ChatRedisChannelResolver channelResolver;
     @Mock private RoomShardMetrics roomShardMetrics;
+    @Mock private RoomPartitionMetrics roomPartitionMetrics;
 
     @Test
     @DisplayName("수정 전 장애 재현: Kafka send 실패가 발생해도 publish()는 예외를 던지지 않는다")
@@ -43,7 +47,8 @@ class ChatCompositePublisherTest {
                 redisHealthState,
                 chatPipelineMetrics,
                 channelResolver,
-                roomShardMetrics
+                roomShardMetrics,
+                roomPartitionMetrics
         );
         ChatMessageDto message = ChatMessageDto.builder()
                 .roomId(1L)
@@ -73,7 +78,8 @@ class ChatCompositePublisherTest {
                 redisHealthState,
                 chatPipelineMetrics,
                 channelResolver,
-                roomShardMetrics
+                roomShardMetrics,
+                roomPartitionMetrics
         );
         ChatMessageDto message = ChatMessageDto.builder()
                 .roomId(7L)
@@ -85,8 +91,8 @@ class ChatCompositePublisherTest {
                 .build();
 
         when(redisHealthState.isUp()).thenReturn(true);
-        when(channelResolver.publishChannel(message))
-                .thenReturn(new ChatRedisChannelResolver.ResolvedChannel("chat:room-shard:1", "shard"));
+        when(channelResolver.publishChannels(message))
+                .thenReturn(List.of(new ChatRedisChannelResolver.ResolvedChannel("chat:room-shard:1", "shard")));
         when(objectMapper.writeValueAsString(message)).thenReturn("{}");
         when(kafkaTemplate.send(eq("chat-message"), eq("7"), eq(message)))
                 .thenReturn(CompletableFuture.failedFuture(new RuntimeException("Kafka broker down")));
@@ -95,5 +101,45 @@ class ChatCompositePublisherTest {
 
         verify(redisTemplate).convertAndSend(eq("chat:room-shard:1"), eq("{}"));
         verify(roomShardMetrics).recordPublish("shard");
+        verify(roomPartitionMetrics).recordPublish("shard");
+    }
+
+    @Test
+    @DisplayName("partition channel이 여러 개면 Redis publish를 partition 수만큼 수행한다")
+    void publish_partitionMode_publishesToEveryPartitionChannel() throws Exception {
+        ChatCompositePublisher publisher = new ChatCompositePublisher(
+                redisTemplate,
+                objectMapper,
+                kafkaTemplate,
+                redisHealthState,
+                chatPipelineMetrics,
+                channelResolver,
+                roomShardMetrics,
+                roomPartitionMetrics
+        );
+        ChatMessageDto message = ChatMessageDto.builder()
+                .roomId(7L)
+                .messageId("message-7")
+                .senderId("user-1")
+                .senderName("tester")
+                .message("hello")
+                .createdAt(System.currentTimeMillis())
+                .build();
+
+        when(redisHealthState.isUp()).thenReturn(true);
+        when(channelResolver.publishChannels(message))
+                .thenReturn(List.of(
+                        new ChatRedisChannelResolver.ResolvedChannel("chat:room-partition:7:0", "partition"),
+                        new ChatRedisChannelResolver.ResolvedChannel("chat:room-partition:7:1", "partition")
+                ));
+        when(objectMapper.writeValueAsString(message)).thenReturn("{}");
+        when(kafkaTemplate.send(eq("chat-message"), eq("7"), eq(message)))
+                .thenReturn(CompletableFuture.failedFuture(new RuntimeException("Kafka broker down")));
+
+        assertDoesNotThrow(() -> publisher.publish(message));
+
+        verify(redisTemplate).convertAndSend(eq("chat:room-partition:7:0"), eq("{}"));
+        verify(redisTemplate).convertAndSend(eq("chat:room-partition:7:1"), eq("{}"));
+        verify(roomPartitionMetrics, times(2)).recordPublish("partition");
     }
 }

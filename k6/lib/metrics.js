@@ -33,6 +33,7 @@ export const restJoinRoom = new Trend('rest_join_room_duration_ms', true);
 export const restGetMessages = new Trend('rest_get_messages_duration_ms', true);
 export const restGetHotChat = new Trend('rest_get_hotchat_duration_ms', true);
 export const restGetMyRooms = new Trend('rest_get_my_rooms_duration_ms', true);
+export const restWsRoute = new Trend('rest_ws_route_duration_ms', true);
 
 // ── Error Metrics ──
 export const httpErrorRate = new Rate('http_error_rate');

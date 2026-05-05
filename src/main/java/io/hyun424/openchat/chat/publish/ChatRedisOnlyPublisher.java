@@ -3,6 +3,7 @@ package io.hyun424.openchat.chat.publish;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
 import io.hyun424.openchat.chat.metrics.ChatPipelineMetrics;
+import io.hyun424.openchat.chat.room.partition.RoomPartitionMetrics;
 import io.hyun424.openchat.chat.room.shard.ChatRedisChannelResolver;
 import io.hyun424.openchat.chat.room.shard.RoomShardMetrics;
 import io.hyun424.openchat.infra.redis.health.RedisHealthState;
@@ -29,6 +30,7 @@ public class ChatRedisOnlyPublisher implements ChatMessagePublisher {
     private final ChatPipelineMetrics chatPipelineMetrics;
     private final ChatRedisChannelResolver channelResolver;
     private final RoomShardMetrics roomShardMetrics;
+    private final RoomPartitionMetrics roomPartitionMetrics;
 
     @Value("${app.instance-id:local}")
     private String instanceId;
@@ -39,7 +41,8 @@ public class ChatRedisOnlyPublisher implements ChatMessagePublisher {
             RedisHealthState redisHealthState,
             ChatPipelineMetrics chatPipelineMetrics,
             ChatRedisChannelResolver channelResolver,
-            RoomShardMetrics roomShardMetrics
+            RoomShardMetrics roomShardMetrics,
+            RoomPartitionMetrics roomPartitionMetrics
     ) {
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper;
@@ -47,6 +50,7 @@ public class ChatRedisOnlyPublisher implements ChatMessagePublisher {
         this.chatPipelineMetrics = chatPipelineMetrics;
         this.channelResolver = channelResolver;
         this.roomShardMetrics = roomShardMetrics;
+        this.roomPartitionMetrics = roomPartitionMetrics;
         log.info("ChatRedisOnlyPublisher initialized (Redis only, no Kafka)");
     }
 
@@ -59,19 +63,20 @@ public class ChatRedisOnlyPublisher implements ChatMessagePublisher {
             throw new ChatPublishException("Redis is down");
         }
 
-        ChatRedisChannelResolver.ResolvedChannel resolvedChannel = channelResolver.publishChannel(message);
-        String channel = resolvedChannel.channel();
         try {
             long serializeStartNanos = System.nanoTime();
             String payload = objectMapper.writeValueAsString(message);
             chatPipelineMetrics.recordStage("publish.redis.serialize", serializeStartNanos);
-            long publishStartNanos = System.nanoTime();
-            redisTemplate.convertAndSend(channel, payload);
-            roomShardMetrics.recordPublish(resolvedChannel.mode());
-            chatPipelineMetrics.recordStage("publish.redis.convert_and_send", publishStartNanos);
-            chatPipelineMetrics.recordSinceCreated("publish.redis.after_send.since_created", message);
-            log.debug("[REDIS PUB][{}] channel={} roomId={} messageId={}",
-                    instanceId, channel, message.getRoomId(), message.getMessageId());
+            for (ChatRedisChannelResolver.ResolvedChannel resolvedChannel : channelResolver.publishChannels(message)) {
+                long publishStartNanos = System.nanoTime();
+                redisTemplate.convertAndSend(resolvedChannel.channel(), payload);
+                roomShardMetrics.recordPublish(resolvedChannel.mode());
+                roomPartitionMetrics.recordPublish(resolvedChannel.mode());
+                chatPipelineMetrics.recordStage("publish.redis.convert_and_send", publishStartNanos);
+                chatPipelineMetrics.recordSinceCreated("publish.redis.after_send.since_created", message);
+                log.debug("[REDIS PUB][{}] channel={} roomId={} messageId={}",
+                        instanceId, resolvedChannel.channel(), message.getRoomId(), message.getMessageId());
+            }
         } catch (Exception e) {
             chatPipelineMetrics.incrementCounter("publish.redis.fail");
             // Mark Redis as down for future requests

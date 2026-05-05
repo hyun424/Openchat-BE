@@ -28,7 +28,7 @@ public class ChatFanoutService {
     private final ChatOutboundSender outboundSender;
     private final ScheduledExecutorService cleanerExecutor;
     private final ScheduledExecutorService batchExecutor;
-    private final ConcurrentHashMap<Long, RoomFanoutBuffer> roomBuffers = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<FanoutBufferKey, RoomFanoutBuffer> roomBuffers = new ConcurrentHashMap<>();
     private final boolean batchEnabled;
     private final long batchWindowMillis;
     private final long warmBatchWindowMillis;
@@ -122,10 +122,14 @@ public class ChatFanoutService {
      * Redis Pub/Sub은 모든 앱 인스턴스가 같은 메시지를 받아야 하므로 dedupe는 인스턴스 로컬 범위로만 수행한다.
      */
     public void fanout(ChatMessageDto message) {
+        fanout(message, null);
+    }
+
+    public void fanout(ChatMessageDto message, Integer partitionId) {
         long startNanos = System.nanoTime();
         String messageId = message.getMessageId();
 
-        if (hasProcessedLocally(messageId)) {
+        if (hasProcessedLocally(messageId, partitionId)) {
             chatPipelineMetrics.incrementCounter("fanout.dedupe_skip");
             log.debug("[DEDUPE][{}] messageId={} - already processed", instanceId, messageId);
             return;
@@ -133,10 +137,14 @@ public class ChatFanoutService {
         chatPipelineMetrics.recordSinceCreated("fanout.enter.since_created", message);
 
         if (batchEnabled) {
-            enqueueForRoomBatch(message);
+            enqueueForRoomBatch(message, partitionId);
         } else {
             long sendStartNanos = System.nanoTime();
-            outboundSender.send(message);
+            if (partitionId == null) {
+                outboundSender.send(message);
+            } else {
+                outboundSender.send(message, partitionId);
+            }
             chatPipelineMetrics.recordStage("fanout.outbound_single", sendStartNanos);
         }
         chatPipelineMetrics.recordStage("fanout.total", startNanos);
@@ -145,31 +153,31 @@ public class ChatFanoutService {
                 instanceId, message.getRoomId(), message.getMessageId());
     }
 
-    private void enqueueForRoomBatch(ChatMessageDto message) {
-        Long roomId = message.getRoomId();
-        RoomFanoutBuffer buffer = roomBuffers.computeIfAbsent(roomId, ignored -> new RoomFanoutBuffer());
+    private void enqueueForRoomBatch(ChatMessageDto message, Integer partitionId) {
+        FanoutBufferKey key = new FanoutBufferKey(message.getRoomId(), partitionId);
+        RoomFanoutBuffer buffer = roomBuffers.computeIfAbsent(key, ignored -> new RoomFanoutBuffer());
         buffer.add(message);
         chatPipelineMetrics.recordDistribution("openchat_pipeline_batch_pending", "fanout.room", buffer.size());
         chatPipelineMetrics.recordSinceCreated("fanout.batch.enqueued.since_created", message);
 
         if (buffer.markScheduled()) {
-            scheduleFlush(roomId, resolveBatchWindowMillis(roomId));
+            scheduleFlush(key, resolveBatchWindowMillis(key.roomId()));
         }
 
         if (buffer.size() >= maxBatchSize) {
-            scheduleFlush(roomId, 0);
+            scheduleFlush(key, 0);
         }
     }
 
-    private void scheduleFlush(Long roomId, long delayMillis) {
+    private void scheduleFlush(FanoutBufferKey key, long delayMillis) {
         if (batchExecutor.isShutdown()) {
-            flushRoomBatch(roomId);
+            flushRoomBatch(key);
             return;
         }
         try {
-            batchExecutor.schedule(() -> flushRoomBatch(roomId), delayMillis, TimeUnit.MILLISECONDS);
+            batchExecutor.schedule(() -> flushRoomBatch(key), delayMillis, TimeUnit.MILLISECONDS);
         } catch (RejectedExecutionException e) {
-            flushRoomBatch(roomId);
+            flushRoomBatch(key);
         }
     }
 
@@ -183,9 +191,9 @@ public class ChatFanoutService {
         };
     }
 
-    private void flushRoomBatch(Long roomId) {
+    private void flushRoomBatch(FanoutBufferKey key) {
         long flushStartNanos = System.nanoTime();
-        RoomFanoutBuffer buffer = roomBuffers.get(roomId);
+        RoomFanoutBuffer buffer = roomBuffers.get(key);
         if (buffer == null) {
             return;
         }
@@ -203,7 +211,7 @@ public class ChatFanoutService {
                     chatPipelineMetrics.recordSinceCreated("fanout.batch.flush_start.since_created", message);
                 }
                 chatPipelineMetrics.recordDistribution("openchat_pipeline_batch_size", "fanout.flush", messages.size());
-                sendFlushedMessages(roomId, messages);
+                sendFlushedMessages(key, messages);
                 flushedBatchCount++;
                 flushedMessageCount += messages.size();
             }
@@ -218,12 +226,13 @@ public class ChatFanoutService {
         }
 
         if (buffer.size() > 0 && buffer.markScheduled()) {
-            scheduleFlush(roomId, 0);
+            scheduleFlush(key, 0);
         }
     }
 
-    private void sendFlushedMessages(Long roomId, List<ChatMessageDto> messages) {
+    private void sendFlushedMessages(FanoutBufferKey key, List<ChatMessageDto> messages) {
         long sendStartNanos = System.nanoTime();
+        Long roomId = key.roomId();
         RoomHotState state = roomTrafficMonitor.state(roomId);
         LiveBatch liveBatch = applyControlledRealtimePolicy(roomId, messages, state);
         if (liveBatch.messages().isEmpty()) {
@@ -232,17 +241,32 @@ public class ChatFanoutService {
         }
 
         if (liveBatch.messages().size() == 1 && liveBatch.realtimeComplete()) {
-            outboundSender.send(liveBatch.messages().get(0));
+            if (key.partitionId() == null) {
+                outboundSender.send(liveBatch.messages().get(0));
+            } else {
+                outboundSender.send(liveBatch.messages().get(0), key.partitionId());
+            }
             chatPipelineMetrics.recordStage("fanout.batch.outbound_single", sendStartNanos);
             return;
         }
-        outboundSender.sendBatch(
-                roomId,
-                liveBatch.messages(),
-                liveBatch.realtimeComplete(),
-                liveBatch.omittedCount(),
-                liveBatch.lastSequence()
-        );
+        if (key.partitionId() == null) {
+            outboundSender.sendBatch(
+                    roomId,
+                    liveBatch.messages(),
+                    liveBatch.realtimeComplete(),
+                    liveBatch.omittedCount(),
+                    liveBatch.lastSequence()
+            );
+        } else {
+            outboundSender.sendBatch(
+                    roomId,
+                    key.partitionId(),
+                    liveBatch.messages(),
+                    liveBatch.realtimeComplete(),
+                    liveBatch.omittedCount(),
+                    liveBatch.lastSequence()
+            );
+        }
         chatPipelineMetrics.recordStage("fanout.batch.outbound_batch", sendStartNanos);
     }
 
@@ -279,9 +303,13 @@ public class ChatFanoutService {
         return message.getSequence() != null ? message.getSequence() : message.getId();
     }
 
-    private boolean hasProcessedLocally(String messageId) {
-        Long previous = dedupeCache.putIfAbsent(messageId, System.currentTimeMillis());
+    private boolean hasProcessedLocally(String messageId, Integer partitionId) {
+        Long previous = dedupeCache.putIfAbsent(dedupeKey(messageId, partitionId), System.currentTimeMillis());
         return previous != null;
+    }
+
+    private String dedupeKey(String messageId, Integer partitionId) {
+        return (partitionId == null ? "legacy" : "partition-" + partitionId) + ":" + messageId;
     }
 
     private void startCacheCleaner() {
@@ -313,8 +341,8 @@ public class ChatFanoutService {
     }
 
     private void flushAllRoomBatches() {
-        for (Long roomId : roomBuffers.keySet()) {
-            flushRoomBatch(roomId);
+        for (FanoutBufferKey key : roomBuffers.keySet()) {
+            flushRoomBatch(key);
         }
     }
 
@@ -381,6 +409,9 @@ public class ChatFanoutService {
             }
             return drained;
         }
+    }
+
+    private record FanoutBufferKey(Long roomId, Integer partitionId) {
     }
 
     private record LiveBatch(List<ChatMessageDto> messages,

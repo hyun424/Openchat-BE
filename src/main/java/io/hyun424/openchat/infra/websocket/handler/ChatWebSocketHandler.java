@@ -11,6 +11,8 @@ import io.hyun424.openchat.chat.metrics.ChatPipelineMetrics;
 import io.hyun424.openchat.chat.outbox.PostCommitLivePublishService;
 import io.hyun424.openchat.chat.room.metadata.RoomMetadataUpdateBuffer;
 import io.hyun424.openchat.chat.room.domain.Room;
+import io.hyun424.openchat.chat.room.partition.RoomPartitionMetrics;
+import io.hyun424.openchat.chat.room.partition.RoomPartitionRoutingService;
 import io.hyun424.openchat.chat.room.service.RoomService;
 import io.hyun424.openchat.global.ratelimit.RateLimiter;
 import io.hyun424.openchat.infra.websocket.session.RoomSessionRegistry;
@@ -44,6 +46,8 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
     private final ChatPipelineMetrics chatPipelineMetrics;
     private final PostCommitLivePublishService postCommitLivePublishService;
     private final RoomMetadataUpdateBuffer roomMetadataUpdateBuffer;
+    private final RoomPartitionRoutingService roomPartitionRoutingService;
+    private final RoomPartitionMetrics roomPartitionMetrics;
 
     @Value("${ratelimit.ws.message-limit:10}")
     private int wsMessageLimit;
@@ -63,7 +67,9 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
                                 JwtProvider jwtProvider,
                                 ChatPipelineMetrics chatPipelineMetrics,
                                 PostCommitLivePublishService postCommitLivePublishService,
-                                RoomMetadataUpdateBuffer roomMetadataUpdateBuffer) {
+                                RoomMetadataUpdateBuffer roomMetadataUpdateBuffer,
+                                RoomPartitionRoutingService roomPartitionRoutingService,
+                                RoomPartitionMetrics roomPartitionMetrics) {
         this.roomMemberService = roomMemberService;
         this.roomSessionRegistry = roomSessionRegistry;
         this.chatIngestService = chatIngestService;
@@ -75,12 +81,15 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         this.chatPipelineMetrics = chatPipelineMetrics;
         this.postCommitLivePublishService = postCommitLivePublishService;
         this.roomMetadataUpdateBuffer = roomMetadataUpdateBuffer;
+        this.roomPartitionRoutingService = roomPartitionRoutingService;
+        this.roomPartitionMetrics = roomPartitionMetrics;
     }
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
         long totalStartNanos = System.nanoTime();
         Long roomId = extractRoomId(session);
+        Integer partitionId = extractPartitionId(session);
         String userId = (String) session.getAttributes().get("userId");
         String nickname = (String) session.getAttributes().get("nickname");
 
@@ -98,7 +107,12 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         chatPipelineMetrics.recordStage("ws.connect.member_lookup", memberLookupStartNanos);
         sessionGuard.markConnected(session);
         long registryStartNanos = System.nanoTime();
-        roomSessionRegistry.add(roomId, session);
+        if (partitionId == null && roomPartitionRoutingService.shouldPartition(roomId)) {
+            roomPartitionMetrics.recordLegacyWebSocket();
+            log.warn("[WS PARTITION LEGACY CONNECT] roomId={} userId={} session={}",
+                    roomId, userId, session.getId());
+        }
+        roomSessionRegistry.add(roomId, partitionId, session);
         chatPipelineMetrics.recordStage("ws.connect.registry_add", registryStartNanos);
         chatPipelineMetrics.recordStage("ws.connect.total", totalStartNanos);
 
@@ -311,5 +325,23 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
             }
         }
         throw new IllegalStateException("Missing roomId");
+    }
+
+    private Integer extractPartitionId(WebSocketSession session) {
+        String query = session.getUri() != null ? session.getUri().getQuery() : null;
+        if (query == null) {
+            return null;
+        }
+        for (String kv : query.split("&")) {
+            String[] parts = kv.split("=");
+            if (parts.length == 2 && parts[0].equals("partitionId")) {
+                try {
+                    return Integer.parseInt(parts[1]);
+                } catch (NumberFormatException e) {
+                    return 0;
+                }
+            }
+        }
+        return null;
     }
 }

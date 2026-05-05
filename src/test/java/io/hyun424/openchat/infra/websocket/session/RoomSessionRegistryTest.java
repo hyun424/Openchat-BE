@@ -241,6 +241,39 @@ class RoomSessionRegistryTest {
     }
 
     @Test
+    @DisplayName("partition fan-out은 같은 partition 세션에만 전송한다")
+    void sendToRoom_partition_sendsOnlyMatchingPartition() throws Exception {
+        RoomSessionRegistry registry = new RoomSessionRegistry(new ObjectMapper(), 2, 16);
+        WebSocketSession partition0 = mockOpenSession("partition-0");
+        WebSocketSession partition1 = mockOpenSession("partition-1");
+        registry.add(1L, 0, partition0);
+        registry.add(1L, 1, partition1);
+
+        registry.sendToRoom(1L, 1, message());
+
+        verify(partition0, never()).sendMessage(any(TextMessage.class));
+        verify(partition1, timeout(500)).sendMessage(any(TextMessage.class));
+        registry.shutdownExecutor();
+    }
+
+    @Test
+    @DisplayName("partition 내부에서도 passive 세션은 full fan-out 대상에서 제외한다")
+    void sendToRoom_partitionPassive_omitsFullPayload() throws Exception {
+        RoomSessionRegistry registry = new RoomSessionRegistry(new ObjectMapper(), 2, 16);
+        WebSocketSession active = mockOpenSession("active-partition");
+        WebSocketSession passive = mockOpenSession("passive-partition");
+        registry.add(1L, 1, active);
+        registry.add(1L, 1, passive);
+        registry.markPassive(1L, "passive-partition", 10L);
+
+        registry.sendToRoom(1L, 1, message());
+
+        verify(active, timeout(500)).sendMessage(any(TextMessage.class));
+        verify(passive, never()).sendMessage(any(TextMessage.class));
+        registry.shutdownExecutor();
+    }
+
+    @Test
     @DisplayName("active heartbeat가 TTL 안에 없으면 passive로 간주해 fan-out에서 제외한다")
     void sendToRoom_activeTtlExpired_omitsFullPayload() throws Exception {
         SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();

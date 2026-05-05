@@ -5,6 +5,8 @@ import io.hyun424.openchat.chat.member.entity.MemberStatus;
 import io.hyun424.openchat.chat.member.service.RoomMemberService;
 import io.hyun424.openchat.chat.room.domain.Room;
 import io.hyun424.openchat.chat.room.dto.RoomListResponse;
+import io.hyun424.openchat.chat.room.partition.RoomPartitionRoute;
+import io.hyun424.openchat.chat.room.partition.RoomPartitionRoutingService;
 import io.hyun424.openchat.chat.room.service.RoomService;
 import io.hyun424.openchat.global.exception.ApiException;
 import io.hyun424.openchat.global.exception.ErrorCode;
@@ -40,6 +42,7 @@ class RoomControllerTest {
 
     @Mock private RoomService roomService;
     @Mock private RoomMemberService roomMemberService;
+    @Mock private RoomPartitionRoutingService roomPartitionRoutingService;
     @InjectMocks private RoomController roomController;
 
     @BeforeEach
@@ -106,6 +109,25 @@ class RoomControllerTest {
 
         mockMvc.perform(get("/api/rooms").param("page", "0").param("size", "100"))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("GET /api/rooms/{roomId}/ws-route - WebSocket partition route 조회")
+    void getWebSocketRoute_success() throws Exception {
+        Room room = Room.builder()
+                .id(1L).name("Test Room").ownerId("user1")
+                .maxMembers(10).requiresApproval(false).build();
+        when(roomService.getActiveRoomOrThrow(1L)).thenReturn(room);
+        when(roomPartitionRoutingService.route(1L, "user1"))
+                .thenReturn(new RoomPartitionRoute(1L, true, 1, 2, "/ws/chat?roomId=1&partitionId=1"));
+
+        mockMvc.perform(get("/api/rooms/1/ws-route")
+                        .principal(authUser("user1")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.roomId").value(1))
+                .andExpect(jsonPath("$.partitioned").value(true))
+                .andExpect(jsonPath("$.partitionId").value(1))
+                .andExpect(jsonPath("$.partitionCount").value(2));
     }
 
     @Test
