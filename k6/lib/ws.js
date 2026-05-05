@@ -7,7 +7,8 @@ import {
   wsFramesReceived, chatAckRoundtrip, wsVisibleFreshness, wsAcksReceived,
   wsRealtimeIncompleteFrames, wsRealtimeOmittedMessages,
   wsMessageHandlerDuration, wsJsonParseDuration, wsBatchMessagesPerFrame,
-  wsObserverVisibleSamples,
+  wsObserverVisibleSamples, wsControlMessagesSent, wsActiveHeartbeatSent,
+  wsPassiveUnexpectedMessages,
 } from './metrics.js';
 
 const WS_BASE_URL = __ENV.WS_BASE_URL || 'ws://localhost:8080';
@@ -17,11 +18,21 @@ const VALID_CLIENT_MODES = {
   sender: true,
   observer: true,
   validator: true,
+  passive: true,
+};
+const VALID_PRESENCE_MODES = {
+  active: true,
+  passive: true,
 };
 
 function resolveClientMode(mode) {
   const resolved = String(mode || __ENV.K6_WS_CLIENT_MODE || 'validator').toLowerCase();
   return VALID_CLIENT_MODES[resolved] ? resolved : 'validator';
+}
+
+function resolvePresenceMode(mode) {
+  const resolved = String(mode || __ENV.K6_WS_PRESENCE_MODE || 'active').toLowerCase();
+  return VALID_PRESENCE_MODES[resolved] ? resolved : 'active';
 }
 
 function parseJsonWithMetric(data, metricTags) {
@@ -53,6 +64,20 @@ function recordBatchEnvelopeFromText(data, counters, metricTags, recordBatchSize
   }
 }
 
+function countUnexpectedFullPayloadMessages(data) {
+  const text = String(data);
+  if (text.includes('"type":"chat.ack"')) {
+    return 0;
+  }
+  if (text.includes('"type":"chat.batch"')) {
+    return Math.max(1, countBatchMessagesFromText(text));
+  }
+  if (text.includes('"messageId":') || text.includes('"clientMessageId":')) {
+    return 1;
+  }
+  return 0;
+}
+
 /**
  * WebSocket 연결 후 메시지 송수신 수행
  *
@@ -65,6 +90,9 @@ function recordBatchEnvelopeFromText(data, counters, metricTags, recordBatchSize
  * @param {string} opts.clientMessageIdPrefix - DB row count 검증용 clientMessageId prefix (선택)
  * @param {number} opts.drainDurationMs - 전송 종료 후 ack/수신 대기 시간(ms), 기본 max(2000, sendInterval*2)
  * @param {string} opts.clientMode - sender, observer, validator 중 하나
+ * @param {string} opts.presenceMode - active, passive 중 하나
+ * @param {number} opts.activeHeartbeatIntervalMs - active heartbeat 간격(ms), 기본 20000
+ * @param {number} opts.passiveSettleMs - passive 선언 직후 race를 제외할 시간(ms), 기본 2000
  * @param {function} opts.onMessage - 수신 메시지 콜백 (선택)
  * @param {Object} opts.tags        - k6 metric tags (선택)
  */
@@ -78,18 +106,23 @@ export function connectAndChat(opts) {
     clientMessageIdPrefix = '',
     drainDurationMs = Number(__ENV.K6_WS_DRAIN_MS || String(Math.max(2000, sendInterval * 2))),
     clientMode = __ENV.K6_WS_CLIENT_MODE || 'validator',
+    presenceMode = __ENV.K6_WS_PRESENCE_MODE || 'active',
+    activeHeartbeatIntervalMs = Number(__ENV.ACTIVE_HEARTBEAT_INTERVAL_MS || '20000'),
+    passiveSettleMs = Number(__ENV.PASSIVE_SETTLE_MS || '2000'),
     onMessage,
     tags = {},
   } = opts;
 
   const url = `${WS_BASE_URL}/ws/chat?roomId=${roomId}&token=${token}`;
   const connectStart = Date.now();
+  const resolvedPresenceMode = resolvePresenceMode(presenceMode);
   const resolvedClientMode = resolveClientMode(clientMode);
-  const metricTags = { ...(tags || {}), clientMode: resolvedClientMode };
-  const shouldSend = Number(sendInterval) > 0;
-  const shouldParseBroadcast = resolvedClientMode === 'observer' || resolvedClientMode === 'validator';
-  const shouldRecordVisible = resolvedClientMode === 'observer' || resolvedClientMode === 'validator';
-  const shouldRunDetailCallback = resolvedClientMode === 'validator';
+  const metricTags = { ...(tags || {}), presenceMode: resolvedPresenceMode, clientMode: resolvedClientMode };
+  const shouldSend = resolvedPresenceMode === 'active' && Number(sendInterval) > 0;
+  const shouldParseBroadcast = resolvedPresenceMode === 'active'
+    && (resolvedClientMode === 'observer' || resolvedClientMode === 'validator');
+  const shouldRecordVisible = shouldParseBroadcast;
+  const shouldRunDetailCallback = resolvedPresenceMode === 'active' && resolvedClientMode === 'validator';
 
   // 전송 메시지의 clientMessageId → 전송 시각 맵 (라운드트립 측정용)
   const pendingMessages = {};
@@ -103,6 +136,7 @@ export function connectAndChat(opts) {
   };
   let receivedSinceLastFreshnessSample = 0;
   let sendingEnabled = true;
+  let passiveUnexpectedAfter = 0;
 
   function flushCounters() {
     if (counters.framesReceived > 0) {
@@ -137,10 +171,40 @@ export function connectAndChat(opts) {
     wsConnectSuccess.add(true, metricTags);
     wsConnectFailure.add(false, metricTags);
 
+    function sendControl(type) {
+      const payload = JSON.stringify({
+        type,
+        roomId,
+        lastSeenSequence: 0,
+      });
+      socket.send(payload);
+      wsControlMessagesSent.add(1, metricTags);
+      if (type === 'room.active.heartbeat') {
+        wsActiveHeartbeatSent.add(1, metricTags);
+      }
+    }
+
+    if (resolvedPresenceMode === 'passive') {
+      sendControl('room.passive');
+      passiveUnexpectedAfter = Date.now() + passiveSettleMs;
+    } else {
+      sendControl('room.active');
+      socket.setInterval(function () {
+        sendControl('room.active.heartbeat');
+      }, activeHeartbeatIntervalMs);
+    }
+
     socket.on('message', function (data) {
       const handlerStart = Date.now();
       counters.framesReceived += 1;
       try {
+        if (resolvedPresenceMode === 'passive' && Date.now() >= passiveUnexpectedAfter) {
+          const unexpectedMessages = countUnexpectedFullPayloadMessages(data);
+          if (unexpectedMessages > 0) {
+            wsPassiveUnexpectedMessages.add(unexpectedMessages, metricTags);
+          }
+        }
+
         if (!shouldParseBroadcast && !String(data).includes('"type":"chat.ack"')) {
           recordBatchEnvelopeFromText(data, counters, metricTags, false);
           return;

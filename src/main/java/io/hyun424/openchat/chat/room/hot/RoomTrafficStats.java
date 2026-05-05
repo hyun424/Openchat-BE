@@ -12,12 +12,17 @@ final class RoomTrafficStats {
     private final LatencySampleWindow deliveryLag;
     private final LatencySampleWindow laneQueueWait;
     private final AtomicInteger connectedSessions = new AtomicInteger(0);
+    private final AtomicInteger activeSessions = new AtomicInteger(0);
     private final AtomicLong lastActivityMillis = new AtomicLong(0);
     private volatile boolean mainExposed;
     private volatile RoomHotState state = RoomHotState.NORMAL;
+    private volatile RoomScaleTier scaleTier = RoomScaleTier.SMALL;
     private volatile long lastStateChangedMillis;
     private volatile long lastCandidateChangedMillis;
     private volatile RoomHotState lastCandidateState = RoomHotState.NORMAL;
+    private volatile long lastScaleTierChangedMillis;
+    private volatile long lastScaleCandidateChangedMillis;
+    private volatile RoomScaleTier lastScaleCandidateTier = RoomScaleTier.SMALL;
 
     RoomTrafficStats(Long roomId, int windowSeconds, int maxLatencySamples, long nowMillis) {
         this.roomId = roomId;
@@ -29,6 +34,8 @@ final class RoomTrafficStats {
         this.lastActivityMillis.set(nowMillis);
         this.lastStateChangedMillis = nowMillis;
         this.lastCandidateChangedMillis = nowMillis;
+        this.lastScaleTierChangedMillis = nowMillis;
+        this.lastScaleCandidateChangedMillis = nowMillis;
     }
 
     void recordJoin(long nowMillis, int sessionCount) {
@@ -47,7 +54,8 @@ final class RoomTrafficStats {
         markActive(nowMillis);
     }
 
-    void recordOutboundFanout(long nowMillis, int recipientCount) {
+    void recordOutboundFanout(long nowMillis, int recipientCount, int activeSessionCount) {
+        activeSessions.set(Math.max(0, activeSessionCount));
         if (recipientCount > 0) {
             outboundFanout.add(nowMillis, recipientCount);
         }
@@ -69,16 +77,23 @@ final class RoomTrafficStats {
         markActive(nowMillis);
     }
 
-    RoomTrafficSnapshot snapshot(long nowMillis) {
+    RoomTrafficSnapshot snapshot(long nowMillis, RoomPartitionAdvisor partitionAdvisor) {
+        long roomWorkPerSecond = outboundFanout.ratePerSecond(nowMillis);
+        int activeSessionCount = activeSessions.get();
         return new RoomTrafficSnapshot(
                 roomId,
                 connectedSessions.get(),
                 joins.ratePerSecond(nowMillis),
                 inboundMessages.ratePerSecond(nowMillis),
-                outboundFanout.ratePerSecond(nowMillis),
+                roomWorkPerSecond,
                 deliveryLag.p95(nowMillis),
                 laneQueueWait.p95(nowMillis),
-                state
+                state,
+                activeSessionCount,
+                roomWorkPerSecond,
+                scaleTier,
+                partitionAdvisor.recommendedPartitionCount(roomWorkPerSecond, activeSessionCount),
+                partitionAdvisor.effectivePartitionCount(roomWorkPerSecond, activeSessionCount)
         );
     }
 
@@ -92,6 +107,10 @@ final class RoomTrafficStats {
 
     RoomHotState state() {
         return state;
+    }
+
+    RoomScaleTier scaleTier() {
+        return scaleTier;
     }
 
     void transitionTo(RoomHotState nextState, long nowMillis) {
@@ -115,6 +134,29 @@ final class RoomTrafficStats {
             return requiredMillis <= 0;
         }
         return nowMillis - lastCandidateChangedMillis >= requiredMillis;
+    }
+
+    void transitionScaleTierTo(RoomScaleTier nextTier, long nowMillis) {
+        if (scaleTier == nextTier) {
+            return;
+        }
+        scaleTier = nextTier;
+        lastScaleTierChangedMillis = nowMillis;
+        lastScaleCandidateTier = nextTier;
+        lastScaleCandidateChangedMillis = nowMillis;
+    }
+
+    long millisSinceScaleTierChange(long nowMillis) {
+        return nowMillis - lastScaleTierChangedMillis;
+    }
+
+    boolean scaleCandidateStable(RoomScaleTier candidate, long nowMillis, long requiredMillis) {
+        if (lastScaleCandidateTier != candidate) {
+            lastScaleCandidateTier = candidate;
+            lastScaleCandidateChangedMillis = nowMillis;
+            return requiredMillis <= 0;
+        }
+        return nowMillis - lastScaleCandidateChangedMillis >= requiredMillis;
     }
 
     private void markActive(long nowMillis) {
