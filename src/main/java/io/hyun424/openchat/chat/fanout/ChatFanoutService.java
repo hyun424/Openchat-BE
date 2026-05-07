@@ -10,44 +10,27 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.Executors;
-import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 
 @Slf4j
 @Service
 public class ChatFanoutService {
 
     private final ChatOutboundSender outboundSender;
-    private final ScheduledExecutorService cleanerExecutor;
-    private final ScheduledExecutorService batchExecutor;
-    private final ConcurrentHashMap<FanoutBufferKey, RoomFanoutBuffer> roomBuffers = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<FanoutBufferKey, FanoutBatchBuffer> roomBuffers = new ConcurrentHashMap<>();
     private final boolean batchEnabled;
-    private final long batchWindowMillis;
-    private final long warmBatchWindowMillis;
-    private final long hotBatchWindowMillis;
-    private final long superHotBatchWindowMillis;
     private final int maxBatchSize;
     private final int maxFlushBatchesPerRun;
-    private final boolean controlledRealtimeEnabled;
-    private final int hotLiveMaxMessagesPerSecond;
-    private final int superHotLiveMaxMessagesPerSecond;
     private final ChatPipelineMetrics chatPipelineMetrics;
     private final RoomTrafficMonitor roomTrafficMonitor;
-    private final ConcurrentHashMap<Long, RoomLiveCapState> liveCapStates = new ConcurrentHashMap<>();
+    private final FanoutDedupeCache dedupeCache;
+    private final FanoutBatchScheduler batchScheduler;
+    private final FanoutBatchWindowPolicy batchWindowPolicy;
+    private final LiveFanoutPolicy liveFanoutPolicy;
 
     @Value("${app.instance-id:local}")
     private String instanceId;
-
-    private final ConcurrentHashMap<String, Long> dedupeCache = new ConcurrentHashMap<>();
-    private static final long DEDUPE_TTL_MS = 60_000;
 
     public ChatFanoutService(ChatOutboundSender outboundSender) {
         this(outboundSender, true, 20, 30, 100, 250, 64, 16,
@@ -93,28 +76,23 @@ public class ChatFanoutService {
                              RoomTrafficMonitor roomTrafficMonitor) {
         this.outboundSender = outboundSender;
         this.batchEnabled = batchEnabled;
-        this.batchWindowMillis = Math.max(1, batchWindowMillis);
-        this.warmBatchWindowMillis = Math.max(this.batchWindowMillis, warmBatchWindowMillis);
-        this.hotBatchWindowMillis = Math.max(this.warmBatchWindowMillis, hotBatchWindowMillis);
-        this.superHotBatchWindowMillis = Math.max(this.hotBatchWindowMillis, superHotBatchWindowMillis);
         this.maxBatchSize = Math.max(1, maxBatchSize);
         this.maxFlushBatchesPerRun = Math.max(1, maxFlushBatchesPerRun);
-        this.controlledRealtimeEnabled = controlledRealtimeEnabled;
-        this.hotLiveMaxMessagesPerSecond = Math.max(1, hotLiveMaxMessagesPerSecond);
-        this.superHotLiveMaxMessagesPerSecond = Math.max(1, superHotLiveMaxMessagesPerSecond);
         this.chatPipelineMetrics = chatPipelineMetrics;
         this.roomTrafficMonitor = roomTrafficMonitor;
-        this.cleanerExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "dedupe-cleaner");
-            t.setDaemon(true);
-            return t;
-        });
-        this.batchExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "fanout-batch-flusher");
-            t.setDaemon(true);
-            return t;
-        });
-        startCacheCleaner();
+        this.dedupeCache = new FanoutDedupeCache();
+        this.batchScheduler = new FanoutBatchScheduler();
+        this.batchWindowPolicy = new FanoutBatchWindowPolicy(
+                batchWindowMillis,
+                warmBatchWindowMillis,
+                hotBatchWindowMillis,
+                superHotBatchWindowMillis
+        );
+        this.liveFanoutPolicy = new LiveFanoutPolicy(
+                controlledRealtimeEnabled,
+                hotLiveMaxMessagesPerSecond,
+                superHotLiveMaxMessagesPerSecond
+        );
     }
 
     /**
@@ -129,7 +107,7 @@ public class ChatFanoutService {
         long startNanos = System.nanoTime();
         String messageId = message.getMessageId();
 
-        if (hasProcessedLocally(messageId, partitionId)) {
+        if (dedupeCache.hasProcessedLocally(messageId, partitionId)) {
             chatPipelineMetrics.incrementCounter("fanout.dedupe_skip");
             log.debug("[DEDUPE][{}] messageId={} - already processed", instanceId, messageId);
             return;
@@ -139,13 +117,7 @@ public class ChatFanoutService {
         if (batchEnabled) {
             enqueueForRoomBatch(message, partitionId);
         } else {
-            long sendStartNanos = System.nanoTime();
-            if (partitionId == null) {
-                outboundSender.send(message);
-            } else {
-                outboundSender.send(message, partitionId);
-            }
-            chatPipelineMetrics.recordStage("fanout.outbound_single", sendStartNanos);
+            sendSingle(message, partitionId);
         }
         chatPipelineMetrics.recordStage("fanout.total", startNanos);
 
@@ -153,9 +125,19 @@ public class ChatFanoutService {
                 instanceId, message.getRoomId(), message.getMessageId());
     }
 
+    private void sendSingle(ChatMessageDto message, Integer partitionId) {
+        long sendStartNanos = System.nanoTime();
+        if (partitionId == null) {
+            outboundSender.send(message);
+        } else {
+            outboundSender.send(message, partitionId);
+        }
+        chatPipelineMetrics.recordStage("fanout.outbound_single", sendStartNanos);
+    }
+
     private void enqueueForRoomBatch(ChatMessageDto message, Integer partitionId) {
         FanoutBufferKey key = new FanoutBufferKey(message.getRoomId(), partitionId);
-        RoomFanoutBuffer buffer = roomBuffers.computeIfAbsent(key, ignored -> new RoomFanoutBuffer());
+        FanoutBatchBuffer buffer = roomBuffers.computeIfAbsent(key, ignored -> new FanoutBatchBuffer());
         buffer.add(message);
         chatPipelineMetrics.recordDistribution("openchat_pipeline_batch_pending", "fanout.room", buffer.size());
         chatPipelineMetrics.recordSinceCreated("fanout.batch.enqueued.since_created", message);
@@ -170,30 +152,16 @@ public class ChatFanoutService {
     }
 
     private void scheduleFlush(FanoutBufferKey key, long delayMillis) {
-        if (batchExecutor.isShutdown()) {
-            flushRoomBatch(key);
-            return;
-        }
-        try {
-            batchExecutor.schedule(() -> flushRoomBatch(key), delayMillis, TimeUnit.MILLISECONDS);
-        } catch (RejectedExecutionException e) {
-            flushRoomBatch(key);
-        }
+        batchScheduler.schedule(key, delayMillis, this::flushRoomBatch);
     }
 
     private long resolveBatchWindowMillis(Long roomId) {
-        RoomHotState state = roomTrafficMonitor.state(roomId);
-        return switch (state) {
-            case WARM -> warmBatchWindowMillis;
-            case HOT -> hotBatchWindowMillis;
-            case SUPER_HOT -> superHotBatchWindowMillis;
-            case NORMAL, WATCHED -> batchWindowMillis;
-        };
+        return batchWindowPolicy.windowFor(roomTrafficMonitor.state(roomId));
     }
 
     private void flushRoomBatch(FanoutBufferKey key) {
         long flushStartNanos = System.nanoTime();
-        RoomFanoutBuffer buffer = roomBuffers.get(key);
+        FanoutBatchBuffer buffer = roomBuffers.get(key);
         if (buffer == null) {
             return;
         }
@@ -234,110 +202,70 @@ public class ChatFanoutService {
         long sendStartNanos = System.nanoTime();
         Long roomId = key.roomId();
         RoomHotState state = roomTrafficMonitor.state(roomId);
-        LiveBatch liveBatch = applyControlledRealtimePolicy(roomId, messages, state);
+        LiveBatch liveBatch = liveFanoutPolicy.apply(roomId, messages, state);
+        recordLiveCapMetrics(roomId, liveBatch);
         if (liveBatch.messages().isEmpty()) {
             chatPipelineMetrics.recordStage("fanout.batch.outbound_omitted", sendStartNanos);
             return;
         }
 
         if (liveBatch.messages().size() == 1 && liveBatch.realtimeComplete()) {
-            if (key.partitionId() == null) {
-                outboundSender.send(liveBatch.messages().get(0));
-            } else {
-                outboundSender.send(liveBatch.messages().get(0), key.partitionId());
-            }
-            chatPipelineMetrics.recordStage("fanout.batch.outbound_single", sendStartNanos);
+            sendBatchSingle(key, liveBatch.messages().get(0), sendStartNanos);
             return;
         }
-        if (key.partitionId() == null) {
-            outboundSender.sendBatch(
-                    roomId,
-                    liveBatch.messages(),
-                    liveBatch.realtimeComplete(),
-                    liveBatch.omittedCount(),
-                    liveBatch.lastSequence()
-            );
-        } else {
-            outboundSender.sendBatch(
-                    roomId,
-                    key.partitionId(),
-                    liveBatch.messages(),
-                    liveBatch.realtimeComplete(),
-                    liveBatch.omittedCount(),
-                    liveBatch.lastSequence()
-            );
-        }
+        sendBatch(key, liveBatch);
         chatPipelineMetrics.recordStage("fanout.batch.outbound_batch", sendStartNanos);
     }
 
-    private LiveBatch applyControlledRealtimePolicy(Long roomId, List<ChatMessageDto> messages, RoomHotState state) {
-        Long lastSequence = sequenceOf(messages.get(messages.size() - 1));
-        if (!controlledRealtimeEnabled || state == RoomHotState.NORMAL || state == RoomHotState.WATCHED || state == RoomHotState.WARM) {
-            return new LiveBatch(messages, true, 0, lastSequence);
+    private void recordLiveCapMetrics(Long roomId, LiveBatch liveBatch) {
+        if (!liveBatch.controlled()) {
+            return;
         }
-
-        int maxMessagesPerSecond = state == RoomHotState.SUPER_HOT
-                ? superHotLiveMaxMessagesPerSecond
-                : hotLiveMaxMessagesPerSecond;
-        RoomLiveCapState capState = liveCapStates.computeIfAbsent(roomId, ignored -> new RoomLiveCapState());
-        LivePermit permit = capState.reserve(maxMessagesPerSecond, messages.size(), System.currentTimeMillis());
-        chatPipelineMetrics.recordDistribution("openchat_pipeline_live_visible_messages", state.name().toLowerCase(), permit.visibleCount());
-        chatPipelineMetrics.recordDistribution("openchat_pipeline_live_omitted_messages", state.name().toLowerCase(), permit.omittedCount());
-
-        if (permit.visibleCount() <= 0) {
+        String stateTag = liveBatch.state().name().toLowerCase();
+        chatPipelineMetrics.recordDistribution("openchat_pipeline_live_visible_messages", stateTag, liveBatch.messages().size());
+        chatPipelineMetrics.recordDistribution("openchat_pipeline_live_omitted_messages", stateTag, liveBatch.omittedCount());
+        if (liveBatch.messages().isEmpty()) {
             log.debug("[FANOUT LIVE OMIT] roomId={} state={} omitted={} lastSequence={}",
-                    roomId, state, permit.omittedCount(), lastSequence);
-            return new LiveBatch(List.of(), false, permit.omittedCount(), lastSequence);
+                    roomId, liveBatch.state(), liveBatch.omittedCount(), liveBatch.lastSequence());
         }
+    }
 
-        List<ChatMessageDto> visibleMessages = messages.subList(0, permit.visibleCount());
-        return new LiveBatch(
-                List.copyOf(visibleMessages),
-                permit.omittedCount() == 0,
-                permit.omittedCount(),
-                lastSequence
+    private void sendBatchSingle(FanoutBufferKey key, ChatMessageDto message, long sendStartNanos) {
+        if (key.partitionId() == null) {
+            outboundSender.send(message);
+        } else {
+            outboundSender.send(message, key.partitionId());
+        }
+        chatPipelineMetrics.recordStage("fanout.batch.outbound_single", sendStartNanos);
+    }
+
+    private void sendBatch(FanoutBufferKey key, LiveBatch liveBatch) {
+        if (key.partitionId() == null) {
+            outboundSender.sendBatch(
+                    key.roomId(),
+                    liveBatch.messages(),
+                    liveBatch.realtimeComplete(),
+                    liveBatch.omittedCount(),
+                    liveBatch.lastSequence()
+            );
+            return;
+        }
+        outboundSender.sendBatch(
+                key.roomId(),
+                key.partitionId(),
+                liveBatch.messages(),
+                liveBatch.realtimeComplete(),
+                liveBatch.omittedCount(),
+                liveBatch.lastSequence()
         );
-    }
-
-    private Long sequenceOf(ChatMessageDto message) {
-        return message.getSequence() != null ? message.getSequence() : message.getId();
-    }
-
-    private boolean hasProcessedLocally(String messageId, Integer partitionId) {
-        Long previous = dedupeCache.putIfAbsent(dedupeKey(messageId, partitionId), System.currentTimeMillis());
-        return previous != null;
-    }
-
-    private String dedupeKey(String messageId, Integer partitionId) {
-        return (partitionId == null ? "legacy" : "partition-" + partitionId) + ":" + messageId;
-    }
-
-    private void startCacheCleaner() {
-        cleanerExecutor.scheduleAtFixedRate(this::evictExpiredDedupeEntries, 1, 1, TimeUnit.MINUTES);
-    }
-
-    private void evictExpiredDedupeEntries() {
-        long now = System.currentTimeMillis();
-        int removed = 0;
-        for (var entry : dedupeCache.entrySet()) {
-            if (now - entry.getValue() > DEDUPE_TTL_MS) {
-                dedupeCache.remove(entry.getKey());
-                removed++;
-            }
-        }
-        if (removed > 0) {
-            log.debug("[DEDUPE CLEANUP][{}] removed {} expired entries", instanceId, removed);
-        }
     }
 
     @PreDestroy
     public void shutdown() {
         log.info("[FANOUT][{}] Shutting down fanout service", instanceId);
         flushAllRoomBatches();
-        batchExecutor.shutdown();
-        cleanerExecutor.shutdown();
-        waitExecutorShutdown(batchExecutor);
-        waitExecutorShutdown(cleanerExecutor);
+        batchScheduler.shutdown();
+        dedupeCache.shutdown();
     }
 
     private void flushAllRoomBatches() {
@@ -347,107 +275,11 @@ public class ChatFanoutService {
     }
 
     boolean awaitBatchIdle(long timeoutMillis) throws InterruptedException {
-        long deadline = System.currentTimeMillis() + timeoutMillis;
-        while (System.currentTimeMillis() < deadline) {
-            boolean idle = roomBuffers.values().stream()
-                    .allMatch(buffer -> buffer.size() == 0 && !buffer.isScheduled());
-            if (idle) {
-                return true;
-            }
-            Thread.sleep(5);
-        }
-        return false;
+        return batchScheduler.awaitIdle(this::allRoomBatchesIdle, timeoutMillis);
     }
 
-    private void waitExecutorShutdown(ScheduledExecutorService executor) {
-        try {
-            if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
-                executor.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            executor.shutdownNow();
-            Thread.currentThread().interrupt();
-        }
-    }
-
-    private static class RoomFanoutBuffer {
-
-        private final ConcurrentLinkedQueue<ChatMessageDto> messages = new ConcurrentLinkedQueue<>();
-        private final AtomicBoolean flushScheduled = new AtomicBoolean(false);
-        private final AtomicInteger size = new AtomicInteger(0);
-
-        void add(ChatMessageDto message) {
-            messages.add(message);
-            size.incrementAndGet();
-        }
-
-        boolean markScheduled() {
-            return flushScheduled.compareAndSet(false, true);
-        }
-
-        void clearScheduled() {
-            flushScheduled.set(false);
-        }
-
-        boolean isScheduled() {
-            return flushScheduled.get();
-        }
-
-        int size() {
-            return size.get();
-        }
-
-        List<ChatMessageDto> drain(int maxMessages) {
-            List<ChatMessageDto> drained = new ArrayList<>(Math.min(maxMessages, size()));
-            for (int i = 0; i < maxMessages; i++) {
-                ChatMessageDto message = messages.poll();
-                if (message == null) {
-                    break;
-                }
-                size.decrementAndGet();
-                drained.add(message);
-            }
-            return drained;
-        }
-    }
-
-    private record FanoutBufferKey(Long roomId, Integer partitionId) {
-    }
-
-    private record LiveBatch(List<ChatMessageDto> messages,
-                             boolean realtimeComplete,
-                             int omittedCount,
-                             Long lastSequence) {
-    }
-
-    private record LivePermit(int visibleCount, int omittedCount) {
-    }
-
-    private static class RoomLiveCapState {
-        private long currentSecond = -1;
-        private int emittedInCurrentSecond = 0;
-        private int omittedSinceLastVisible = 0;
-
-        synchronized LivePermit reserve(int maxMessagesPerSecond, int requestedMessages, long nowMillis) {
-            long second = nowMillis / 1000;
-            if (second != currentSecond) {
-                currentSecond = second;
-                emittedInCurrentSecond = 0;
-            }
-
-            int remaining = Math.max(0, maxMessagesPerSecond - emittedInCurrentSecond);
-            int visible = Math.min(requestedMessages, remaining);
-            emittedInCurrentSecond += visible;
-
-            int omittedNow = requestedMessages - visible;
-            if (visible == 0) {
-                omittedSinceLastVisible += omittedNow;
-                return new LivePermit(0, omittedNow);
-            }
-
-            int omittedForEnvelope = omittedSinceLastVisible + omittedNow;
-            omittedSinceLastVisible = 0;
-            return new LivePermit(visible, omittedForEnvelope);
-        }
+    private boolean allRoomBatchesIdle() {
+        return roomBuffers.values().stream()
+                .allMatch(buffer -> buffer.size() == 0 && !buffer.isScheduled());
     }
 }
