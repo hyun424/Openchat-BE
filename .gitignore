@@ -8,6 +8,8 @@ docs/*
 !docs/room-shard-ownership-v2-20260506.md
 !docs/hot-room-fanout-partition-v3-20260506.md
 !docs/hot-room-partition-autoscaling-v31-20260507.md
+!docs/realtime-chat-scalability-roadmap-20260507.md
+!docs/room-workload-observer-and-rebalance-policy-20260507.md
 !docs/OPENCHAT-EXPERIENCE-BANK.md
 !docs/hot-room-loadtest-summary-for-portfolio.md
 data/
