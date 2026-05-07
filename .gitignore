@@ -11,6 +11,7 @@ docs/*
 !docs/realtime-chat-scalability-roadmap-20260507.md
 !docs/room-workload-observer-and-rebalance-policy-20260507.md
 !docs/realtime-workload-cluster-summary-20260507.md
+!docs/mixed-room-service-workload-20260507.md
 !docs/OPENCHAT-EXPERIENCE-BANK.md
 !docs/hot-room-loadtest-summary-for-portfolio.md
 data/
