@@ -46,7 +46,7 @@ public class RealtimeWorkloadSnapshotRepository {
         try {
             String payload = redisObjectMapper.writeValueAsString(snapshot);
             redisTemplate.opsForSet().add(NODE_SET_KEY, snapshot.nodeId());
-            redisTemplate.opsForValue().set(key(snapshot.nodeId()), payload, Duration.ofMillis(properties.snapshotTtlMillis()));
+            redisTemplate.opsForValue().set(key(snapshot.nodeId()), payload, Duration.ofMillis(properties.snapshotRetentionMillis()));
             metrics.recordSnapshotPublish("success");
             return true;
         } catch (Exception e) {

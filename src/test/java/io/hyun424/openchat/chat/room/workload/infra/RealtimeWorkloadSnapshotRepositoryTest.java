@@ -34,7 +34,7 @@ class RealtimeWorkloadSnapshotRepositoryTest {
     private final RealtimeWorkloadMetrics metrics = new RealtimeWorkloadMetrics(new SimpleMeterRegistry());
 
     @Test
-    void saveStoresSnapshotWithTtlAndRegistersNodeId() {
+    void saveStoresSnapshotWithRetentionTtlAndRegistersNodeId() {
         StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
         SetOperations<String, String> setOps = mock(SetOperations.class);
         ValueOperations<String, String> valueOps = mock(ValueOperations.class);
@@ -46,7 +46,7 @@ class RealtimeWorkloadSnapshotRepositoryTest {
         assertTrue(repository.save(snapshot("node-1", 1_000, 31_000)));
 
         verify(setOps).add(RealtimeWorkloadSnapshotRepository.NODE_SET_KEY, "node-1");
-        verify(valueOps).set(eq("openchat:realtime:workload:nodes:node-1"), anyString(), eq(Duration.ofMillis(30_000)));
+        verify(valueOps).set(eq("openchat:realtime:workload:nodes:node-1"), anyString(), eq(Duration.ofMillis(60_000)));
     }
 
     @Test

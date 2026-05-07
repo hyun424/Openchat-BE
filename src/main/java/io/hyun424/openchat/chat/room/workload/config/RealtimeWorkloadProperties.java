@@ -10,6 +10,7 @@ public class RealtimeWorkloadProperties {
     private final boolean summaryEnabled;
     private final long publishIntervalMillis;
     private final long snapshotTtlMillis;
+    private final long snapshotRetentionMillis;
     private final int topRoomLimit;
     private final double watchRatio;
     private final long podWorkBudgetDeliveryPerSecond;
@@ -27,6 +28,7 @@ public class RealtimeWorkloadProperties {
         this.summaryEnabled = summaryEnabled;
         this.publishIntervalMillis = Math.max(1_000L, publishIntervalMillis);
         this.snapshotTtlMillis = Math.max(this.publishIntervalMillis * 2, snapshotTtlMillis);
+        this.snapshotRetentionMillis = Math.max(this.snapshotTtlMillis * 2, this.publishIntervalMillis * 3);
         this.topRoomLimit = Math.max(1, topRoomLimit);
         this.watchRatio = Math.max(0.01, Math.min(1.0, watchRatio));
         this.podWorkBudgetDeliveryPerSecond = Math.max(1, podWorkBudgetDeliveryPerSecond);
@@ -46,6 +48,10 @@ public class RealtimeWorkloadProperties {
 
     public long snapshotTtlMillis() {
         return snapshotTtlMillis;
+    }
+
+    public long snapshotRetentionMillis() {
+        return snapshotRetentionMillis;
     }
 
     public int topRoomLimit() {

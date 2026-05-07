@@ -29,7 +29,7 @@ openchat:realtime:workload:nodes
 openchat:realtime:workload:nodes:{nodeId}
 ```
 
-Realtime/combined node는 기본 `5s`마다 snapshot을 저장하고, snapshot TTL은 기본 `30s`다. TTL이 지난 snapshot은 stale로 보고 aggregate에서 제외한다.
+Realtime/combined node는 기본 `5s`마다 snapshot을 저장하고, snapshot TTL은 기본 `30s`다. TTL이 지난 snapshot은 stale로 보고 aggregate에서 제외한다. Redis payload는 stale 판단 창을 남기기 위해 기본 `60s` 동안 보존한다.
 
 Snapshot에는 다음 값을 담는다.
 
