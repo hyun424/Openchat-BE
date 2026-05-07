@@ -11,6 +11,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.HashSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
@@ -66,6 +67,10 @@ public class RoomSessionStore {
 
     public WebSocketSession sessionById(String sessionId) {
         return sessionsById.get(sessionId);
+    }
+
+    public Set<WebSocketSession> allSessions() {
+        return new HashSet<>(sessionsById.values());
     }
 
     public int count(Long roomId) {

@@ -115,10 +115,35 @@ collect_db_message_count() {
 EOF
 }
 
+get_workload_summary_token() {
+  if [ -n "$${WORKLOAD_SUMMARY_TOKEN:-}" ]; then
+    printf '%s' "$WORKLOAD_SUMMARY_TOKEN"
+    return 0
+  fi
+  local login_body
+  local login_response
+  login_body=$(jq -nc \
+    --arg userId "workload-summary-$RUN_ID" \
+    --arg nickname "WorkloadSummary" \
+    '{userId: $userId, nickname: $nickname}')
+  login_response=$(curl --max-time 10 -sf \
+    -H "Content-Type: application/json" \
+    -d "$login_body" \
+    "$BASE_URL/api/auth/login" || true)
+  WORKLOAD_SUMMARY_TOKEN=$(printf '%s' "$login_response" | jq -r '.token // empty')
+  printf '%s' "$WORKLOAD_SUMMARY_TOKEN"
+}
+
 collect_app_snapshots() {
   local suffix="$1"
   curl --max-time 10 -sf "$BASE_URL/actuator/health" > "$RESULT_ROOT/metrics/lb-health-$suffix.json" || true
   curl --max-time 10 -sf "$BASE_URL/actuator/prometheus" > "$RESULT_ROOT/metrics/lb-prometheus-$suffix.txt" || true
+  local workload_token
+  workload_token=$(get_workload_summary_token || true)
+  if [ -n "$workload_token" ]; then
+    curl --max-time 10 -sf -H "Authorization: Bearer $workload_token" "$BASE_URL/api/internal/realtime/workload/summary" > "$RESULT_ROOT/metrics/realtime-workload-summary-$suffix.json" || true
+    curl --max-time 10 -sf -H "Authorization: Bearer $workload_token" "$BASE_URL/api/internal/realtime/workload/recommendations" > "$RESULT_ROOT/metrics/realtime-workload-recommendations-$suffix.json" || true
+  fi
 
   app_index=1
   for app_ip in $APP_INTERNAL_IPS; do

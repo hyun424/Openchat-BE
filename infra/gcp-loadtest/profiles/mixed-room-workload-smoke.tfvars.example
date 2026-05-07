@@ -50,3 +50,10 @@ monitoring_disk_size_gb = 15
 enable_monitoring       = false
 monitoring_machine_type = "e2-standard-2"
 grafana_source_ranges   = []
+
+# Cluster workload summary smoke
+realtime_workload_publish_enabled     = true
+realtime_workload_summary_enabled     = true
+realtime_workload_publish_interval_ms = 5000
+realtime_workload_snapshot_ttl_ms     = 30000
+realtime_workload_top_room_limit      = 10

@@ -390,3 +390,48 @@ variable "ttl_hours" {
   type        = number
   default     = 2
 }
+
+variable "realtime_workload_publish_enabled" {
+  description = "Whether Realtime nodes publish workload snapshots to Redis."
+  type        = bool
+  default     = false
+}
+
+variable "realtime_workload_summary_enabled" {
+  description = "Whether API nodes expose read-only realtime workload summary endpoints."
+  type        = bool
+  default     = false
+}
+
+variable "realtime_workload_publish_interval_ms" {
+  description = "Realtime workload snapshot publish interval in milliseconds."
+  type        = number
+  default     = 5000
+
+  validation {
+    condition     = var.realtime_workload_publish_interval_ms >= 1000
+    error_message = "realtime_workload_publish_interval_ms must be at least 1000."
+  }
+}
+
+variable "realtime_workload_snapshot_ttl_ms" {
+  description = "Realtime workload snapshot TTL in milliseconds."
+  type        = number
+  default     = 30000
+
+  validation {
+    condition     = var.realtime_workload_snapshot_ttl_ms >= 2000
+    error_message = "realtime_workload_snapshot_ttl_ms must be at least 2000."
+  }
+}
+
+variable "realtime_workload_top_room_limit" {
+  description = "Maximum number of top room workload candidates included in each snapshot and summary."
+  type        = number
+  default     = 10
+
+  validation {
+    condition     = var.realtime_workload_top_room_limit >= 1
+    error_message = "realtime_workload_top_room_limit must be at least 1."
+  }
+}

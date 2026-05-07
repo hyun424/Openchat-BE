@@ -420,6 +420,11 @@ resource "google_compute_instance" "api" {
       room_partition_hot_tier_threshold      = var.room_partition_hot_tier_threshold
       room_partition_max_partitions_per_room = var.room_partition_max_partitions_per_room
       room_partition_admin_api_enabled       = var.room_partition_admin_api_enabled ? "true" : "false"
+      realtime_workload_publish_enabled      = "false"
+      realtime_workload_summary_enabled      = var.realtime_workload_summary_enabled ? "true" : "false"
+      realtime_workload_publish_interval_ms  = var.realtime_workload_publish_interval_ms
+      realtime_workload_snapshot_ttl_ms      = var.realtime_workload_snapshot_ttl_ms
+      realtime_workload_top_room_limit       = var.realtime_workload_top_room_limit
     })
     shutdown-script = templatefile("${path.module}/templates/vm-shutdown.sh.tftpl", {
       run_id      = var.run_id
@@ -484,6 +489,11 @@ resource "google_compute_instance" "realtime" {
       room_partition_hot_tier_threshold      = var.room_partition_hot_tier_threshold
       room_partition_max_partitions_per_room = var.room_partition_max_partitions_per_room
       room_partition_admin_api_enabled       = var.room_partition_admin_api_enabled ? "true" : "false"
+      realtime_workload_publish_enabled      = var.realtime_workload_publish_enabled ? "true" : "false"
+      realtime_workload_summary_enabled      = "false"
+      realtime_workload_publish_interval_ms  = var.realtime_workload_publish_interval_ms
+      realtime_workload_snapshot_ttl_ms      = var.realtime_workload_snapshot_ttl_ms
+      realtime_workload_top_room_limit       = var.realtime_workload_top_room_limit
     })
     shutdown-script = templatefile("${path.module}/templates/vm-shutdown.sh.tftpl", {
       run_id      = var.run_id
