@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.LongAdder;
 
 @Component
 public class RoomPartitionMetrics {
@@ -26,6 +27,7 @@ public class RoomPartitionMetrics {
     private final ConcurrentHashMap<String, Counter> reconnectRequestedCounters = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Counter> reconnectTargetedCounters = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Counter> reconnectControlSentCounters = new ConcurrentHashMap<>();
+    private final LongAdder reconnectControlSentSuccessCount = new LongAdder();
     private final Counter routeDrainingAvoidedCounter;
     private final DistributionSummary drainingCountSummary;
     private final DistributionSummary activeSessionSummary;
@@ -186,6 +188,13 @@ public class RoomPartitionMetrics {
                         .tag("result", safeResult)
                         .register(meterRegistry))
                 .increment();
+        if ("success".equals(safeResult)) {
+            reconnectControlSentSuccessCount.increment();
+        }
+    }
+
+    public long reconnectControlSentSuccessCount() {
+        return reconnectControlSentSuccessCount.sum();
     }
 
     private String safeTag(String value) {

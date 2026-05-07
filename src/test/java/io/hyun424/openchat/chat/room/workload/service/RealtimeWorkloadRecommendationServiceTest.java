@@ -58,6 +58,13 @@ class RealtimeWorkloadRecommendationServiceTest {
     }
 
     @Test
+    void reconnectDeltaAloneDoesNotCreateRecommendation() {
+        var recommendations = service.recommend(List.of(snapshotWithReconnectOnly()), List.of(), List.of(), 0);
+
+        assertEquals(RealtimeWorkloadRecommendationType.NO_ACTION, recommendations.get(0).type());
+    }
+
+    @Test
     void belowThresholdCreatesNoAction() {
         var recommendations = service.recommend(List.of(), List.of(), List.of(candidate(100)), 0);
 
@@ -70,7 +77,15 @@ class RealtimeWorkloadRecommendationServiceTest {
     }
 
     private RealtimeNodeWorkloadSnapshot snapshotWithSendFailure() {
+        return snapshotWithSignals(3, 0);
+    }
+
+    private RealtimeNodeWorkloadSnapshot snapshotWithReconnectOnly() {
+        return snapshotWithSignals(0, 5);
+    }
+
+    private RealtimeNodeWorkloadSnapshot snapshotWithSignals(long sendFailedDelta, long reconnectSentDelta) {
         return new RealtimeNodeWorkloadSnapshot("node-1", "realtime", 1, 30_000, Set.of(0), Set.of(0),
-                0, 0, 0, 0, 0, 0, 0, 0, 3, 0, List.of());
+                0, 0, 0, 0, 0, 0, 0, 0, sendFailedDelta, reconnectSentDelta, List.of());
     }
 }

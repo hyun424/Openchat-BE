@@ -2,7 +2,9 @@ package io.hyun424.openchat.chat.room.workload.service;
 
 import io.hyun424.openchat.chat.room.hot.RoomTrafficMonitor;
 import io.hyun424.openchat.chat.room.hot.RoomTrafficWorkloadSummary;
+import io.hyun424.openchat.chat.metrics.ChatPipelineMetrics;
 import io.hyun424.openchat.chat.room.partition.config.RoomPartitionProperties;
+import io.hyun424.openchat.chat.room.partition.metrics.RoomPartitionMetrics;
 import io.hyun424.openchat.chat.room.shard.RoomShardProperties;
 import io.hyun424.openchat.chat.room.workload.config.RealtimeWorkloadProperties;
 import io.hyun424.openchat.chat.room.workload.dto.RealtimeNodeWorkloadSnapshot;
@@ -20,6 +22,9 @@ public class LocalRealtimeWorkloadSnapshotFactory {
     private final RoomShardProperties roomShardProperties;
     private final RoomPartitionProperties roomPartitionProperties;
     private final RealtimeWorkloadProperties workloadProperties;
+    private final ChatPipelineMetrics chatPipelineMetrics;
+    private final RoomPartitionMetrics roomPartitionMetrics;
+    private final RealtimeWorkloadSignalDeltaTracker signalDeltaTracker;
     private final String nodeId;
     private final String role;
 
@@ -28,6 +33,9 @@ public class LocalRealtimeWorkloadSnapshotFactory {
                                                 RoomShardProperties roomShardProperties,
                                                 RoomPartitionProperties roomPartitionProperties,
                                                 RealtimeWorkloadProperties workloadProperties,
+                                                ChatPipelineMetrics chatPipelineMetrics,
+                                                RoomPartitionMetrics roomPartitionMetrics,
+                                                RealtimeWorkloadSignalDeltaTracker signalDeltaTracker,
                                                 @Value("${app.instance-id:local}") String nodeId,
                                                 @Value("${app.role:combined}") String role) {
         this.roomTrafficMonitor = roomTrafficMonitor;
@@ -35,6 +43,9 @@ public class LocalRealtimeWorkloadSnapshotFactory {
         this.roomShardProperties = roomShardProperties;
         this.roomPartitionProperties = roomPartitionProperties;
         this.workloadProperties = workloadProperties;
+        this.chatPipelineMetrics = chatPipelineMetrics;
+        this.roomPartitionMetrics = roomPartitionMetrics;
+        this.signalDeltaTracker = signalDeltaTracker;
         this.nodeId = nodeId == null || nodeId.isBlank() ? "local" : nodeId;
         this.role = role == null || role.isBlank() ? "combined" : role;
     }
@@ -42,6 +53,10 @@ public class LocalRealtimeWorkloadSnapshotFactory {
     public RealtimeNodeWorkloadSnapshot create(long nowMillis) {
         RoomSessionWorkloadSnapshot sessionSnapshot = roomSessionRegistry.workloadSnapshot();
         RoomTrafficWorkloadSummary trafficSummary = roomTrafficMonitor.workloadSummary();
+        RealtimeWorkloadSignalDelta signalDelta = signalDeltaTracker.delta(
+                chatPipelineMetrics.counterValue("ws.send.failed"),
+                roomPartitionMetrics.reconnectControlSentSuccessCount()
+        );
         return new RealtimeNodeWorkloadSnapshot(
                 nodeId,
                 role,
@@ -57,8 +72,8 @@ public class LocalRealtimeWorkloadSnapshotFactory {
                 trafficSummary.maxConceptualRoomWorkPerSecond(),
                 trafficSummary.maxScaleDecisionWorkPerSecond(),
                 trafficSummary.partitionRecommendationLimitedCount(),
-                0,
-                0,
+                signalDelta.sendFailedDelta(),
+                signalDelta.reconnectSentDelta(),
                 roomTrafficMonitor.topRoomsByScaleDecisionWork(workloadProperties.topRoomLimit()).stream()
                         .map(snapshot -> RoomWorkloadCandidate.from(snapshot, nodeId))
                         .toList()

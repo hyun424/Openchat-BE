@@ -144,6 +144,14 @@ public class ChatPipelineMetrics {
         recordStage("ws.send.duration.fail", startNanos);
     }
 
+    public long counterValue(String event) {
+        if (!enabled || event == null || event.isBlank()) {
+            return 0;
+        }
+        LongAdder counter = counterStats.get(event);
+        return counter == null ? 0 : counter.sum();
+    }
+
     public void recordDistribution(String name, String type, double amount) {
         if (!enabled) {
             return;

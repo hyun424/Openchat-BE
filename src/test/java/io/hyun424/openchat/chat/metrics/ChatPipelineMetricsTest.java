@@ -37,11 +37,20 @@ class ChatPipelineMetricsTest {
         assertCounter(registry, "ws.send.failed", 2);
         assertCounter(registry, "ws.send.frame.failed", 1);
         assertCounter(registry, "ws.send.fail.closed_before_send", 1);
+        assertEquals(2, metrics.counterValue("ws.send.failed"));
 
         metrics.recordWebSocketSendFailure(1, "io_exception", System.nanoTime());
         assertCounter(registry, "ws.send.fail.io_exception", 1);
+        assertEquals(3, metrics.counterValue("ws.send.failed"));
 
         metrics.shutdown();
+    }
+
+    @Test
+    void noopCounterValueReturnsZero() {
+        ChatPipelineMetrics metrics = ChatPipelineMetrics.noop();
+
+        assertEquals(0, metrics.counterValue("ws.send.failed"));
     }
 
     private void assertCounter(SimpleMeterRegistry registry, String event, double expected) {
