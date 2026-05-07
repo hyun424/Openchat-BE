@@ -41,13 +41,12 @@ public interface RoomMemberRepository
      * Per room/user advisory lock for join flow.
      * GET_LOCK returns 1 on success, 0 on timeout, NULL on error.
      */
-    @Query(value = "SELECT GET_LOCK(CONCAT('room_join:', :roomId, ':', :userId), :timeoutSeconds)", nativeQuery = true)
-    Integer acquireJoinLock(@Param("roomId") Long roomId,
-                            @Param("userId") String userId,
+    @Query(value = "SELECT GET_LOCK(:lockName, :timeoutSeconds)", nativeQuery = true)
+    Integer acquireJoinLock(@Param("lockName") String lockName,
                             @Param("timeoutSeconds") int timeoutSeconds);
 
-    @Query(value = "SELECT RELEASE_LOCK(CONCAT('room_join:', :roomId, ':', :userId))", nativeQuery = true)
-    Integer releaseJoinLock(@Param("roomId") Long roomId, @Param("userId") String userId);
+    @Query(value = "SELECT RELEASE_LOCK(:lockName)", nativeQuery = true)
+    Integer releaseJoinLock(@Param("lockName") String lockName);
 
     /**
      * Room-level lock for capacity-changing operations.
