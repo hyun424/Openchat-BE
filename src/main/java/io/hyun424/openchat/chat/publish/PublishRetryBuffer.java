@@ -65,7 +65,7 @@ public class PublishRetryBuffer {
                 if (msg == null) break;
 
                 try {
-                    publisher.publish(msg);
+                    publisher.publish(msg).join();
                     buffer.poll(); // remove only after successful publish
                     retried++;
                 } catch (Exception e) {

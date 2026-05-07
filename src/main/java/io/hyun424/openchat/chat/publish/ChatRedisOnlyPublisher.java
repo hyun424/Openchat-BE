@@ -14,6 +14,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
+import java.util.concurrent.CompletableFuture;
+
 /**
  * Redis-only publisher: Active when Redis is configured but Kafka is not.
  * Gracefully degrades when Redis is unavailable - messages are still saved to DB.
@@ -55,12 +57,12 @@ public class ChatRedisOnlyPublisher implements ChatMessagePublisher {
     }
 
     @Override
-    public void publish(ChatMessageDto message) {
+    public CompletableFuture<Void> publish(ChatMessageDto message) {
         // Skip if Redis is known to be down - message already saved to DB
         if (!redisHealthState.isUp()) {
             log.debug("[REDIS PUB SKIP][{}] Redis is down, roomId={} messageId={}",
                     instanceId, message.getRoomId(), message.getMessageId());
-            throw new ChatPublishException("Redis is down");
+            return CompletableFuture.failedFuture(new ChatPublishException("Redis is down"));
         }
 
         try {
@@ -83,7 +85,8 @@ public class ChatRedisOnlyPublisher implements ChatMessagePublisher {
             redisHealthState.markDown();
             log.error("[REDIS PUB FAIL][{}] roomId={} messageId={} - marking Redis down",
                     instanceId, message.getRoomId(), message.getMessageId(), e);
-            throw new ChatPublishException("Redis publish failed", e);
+            return CompletableFuture.failedFuture(new ChatPublishException("Redis publish failed", e));
         }
+        return CompletableFuture.completedFuture(null);
     }
 }

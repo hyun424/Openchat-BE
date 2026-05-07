@@ -135,11 +135,16 @@ class WebSocketInboundMessageService {
         }
         long startNanos = System.nanoTime();
         chatPipelineMetrics.recordSinceEpochMillis("ws.ack.before_send.since_client_sent", clientSentAt);
-        roomSessionRegistry.sendControlToSession(
+        boolean sent = roomSessionRegistry.sendControlToSession(
                 session.getId(),
                 ChatAckMessageDto.from(savedMessage),
                 "ack"
         );
+        if (!sent) {
+            chatPipelineMetrics.incrementCounter("ws.ack.send.fail");
+            log.warn("[WS ACK SEND FAIL] sessionId={} roomId={} messageId={}",
+                    session.getId(), savedMessage.getRoomId(), savedMessage.getMessageId());
+        }
         chatPipelineMetrics.recordSinceEpochMillis("ws.ack.after_send.since_client_sent", clientSentAt);
         chatPipelineMetrics.recordStage("ack.after_commit", startNanos);
     }

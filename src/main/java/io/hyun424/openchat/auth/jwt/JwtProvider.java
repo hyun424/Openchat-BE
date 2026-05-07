@@ -78,6 +78,14 @@ public class JwtProvider {
     }
 
     /**
+     * 토큰이 정식 access token인지 확인
+     */
+    public boolean isAccessToken(String token) {
+        Claims claims = parseToken(token);
+        return TYPE_ACCESS.equals(claims.get(CLAIM_TYPE, String.class));
+    }
+
+    /**
      * 토큰이 임시 토큰인지 확인
      */
     public boolean isTempToken(String token) {

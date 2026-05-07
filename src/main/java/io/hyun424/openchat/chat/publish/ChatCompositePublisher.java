@@ -14,6 +14,8 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 
+import java.util.concurrent.CompletableFuture;
+
 /**
  * Default publisher: Redis for real-time, Kafka for durability.
  * Active when spring.kafka.bootstrap-servers is configured.
@@ -59,12 +61,12 @@ public class ChatCompositePublisher implements ChatMessagePublisher {
     }
 
     @Override
-    public void publish(ChatMessageDto message) {
+    public CompletableFuture<Void> publish(ChatMessageDto message) {
         // 1. Redis Pub/Sub - real-time delivery (fire-and-forget)
         publishToRedis(message);
 
         // 2. Kafka - durability & ordering guarantee
-        publishToKafka(message);
+        return publishToKafka(message);
     }
 
     private void publishToRedis(ChatMessageDto message) {
@@ -97,23 +99,32 @@ public class ChatCompositePublisher implements ChatMessagePublisher {
         }
     }
 
-    private void publishToKafka(ChatMessageDto message) {
+    private CompletableFuture<Void> publishToKafka(ChatMessageDto message) {
         String key = String.valueOf(message.getRoomId());
         long startNanos = System.nanoTime();
-        kafkaTemplate.send(KAFKA_TOPIC, key, message)
-                .whenComplete((result, ex) -> {
-                    if (ex != null) {
-                        chatPipelineMetrics.recordStage("publish.kafka.fail", startNanos);
-                        log.error("[KAFKA PUB FAIL][{}] roomId={} messageId={}",
-                                instanceId, message.getRoomId(), message.getMessageId(), ex);
-                    } else {
+        try {
+            return kafkaTemplate.send(KAFKA_TOPIC, key, message)
+                    .handle((result, ex) -> {
+                        if (ex != null) {
+                            chatPipelineMetrics.recordStage("publish.kafka.fail", startNanos);
+                            log.error("[KAFKA PUB FAIL][{}] roomId={} messageId={}",
+                                    instanceId, message.getRoomId(), message.getMessageId(), ex);
+                            throw new ChatPublishException("Kafka publish failed", ex);
+                        }
+
                         chatPipelineMetrics.recordStage("publish.kafka.ack", startNanos);
                         log.debug("[KAFKA PUB][{}] partition={} offset={} messageId={}",
                                 instanceId,
                                 result.getRecordMetadata().partition(),
                                 result.getRecordMetadata().offset(),
                                 message.getMessageId());
-                    }
-                });
+                        return null;
+                    });
+        } catch (Exception e) {
+            chatPipelineMetrics.recordStage("publish.kafka.fail", startNanos);
+            log.error("[KAFKA PUB FAIL][{}] roomId={} messageId={}",
+                    instanceId, message.getRoomId(), message.getMessageId(), e);
+            return CompletableFuture.failedFuture(new ChatPublishException("Kafka publish failed", e));
+        }
     }
 }

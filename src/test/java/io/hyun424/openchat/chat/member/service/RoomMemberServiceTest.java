@@ -8,6 +8,7 @@ import io.hyun424.openchat.chat.room.domain.Room;
 import io.hyun424.openchat.chat.room.repository.RoomRepository;
 import io.hyun424.openchat.global.exception.ApiException;
 import io.hyun424.openchat.global.exception.ErrorCode;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -35,6 +36,11 @@ class RoomMemberServiceTest {
     private static final Long ROOM_ID = 1L;
     private static final String USER_ID = "user1";
     private static final String OWNER_ID = "owner1";
+
+    @BeforeEach
+    void setUpLocks() {
+        lenient().when(roomMemberRepository.acquireRoomCapacityLock(eq(ROOM_ID), anyInt())).thenReturn(1);
+    }
 
     private Room activeRoom(boolean requiresApproval, Integer maxMembers) {
         return Room.builder()
@@ -160,6 +166,23 @@ class RoomMemberServiceTest {
         ApiException ex = assertThrows(ApiException.class, () ->
                 roomMemberService.join(ROOM_ID, USER_ID));
         assertEquals(ErrorCode.INVALID_REQUEST, ex.getErrorCode());
+    }
+
+    @Test
+    @DisplayName("room capacity lock 획득 실패 시 먼저 획득한 join lock 해제")
+    void join_capacityLockFailed_releasesJoinLock() {
+        // given
+        when(roomMemberRepository.acquireJoinLock(eq(ROOM_ID), eq(USER_ID), anyInt())).thenReturn(1);
+        when(roomMemberRepository.acquireRoomCapacityLock(eq(ROOM_ID), anyInt())).thenReturn(0);
+
+        // when & then
+        ApiException ex = assertThrows(ApiException.class, () ->
+                roomMemberService.join(ROOM_ID, USER_ID));
+        assertEquals(ErrorCode.INVALID_REQUEST, ex.getErrorCode());
+
+        verify(roomMemberRepository).releaseJoinLock(ROOM_ID, USER_ID);
+        verify(roomMemberRepository, never()).releaseRoomCapacityLock(ROOM_ID);
+        verify(roomRepository, never()).findById(anyLong());
     }
 
     @Test

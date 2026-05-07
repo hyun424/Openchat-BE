@@ -22,12 +22,27 @@ public class RoomSessionStore {
 
     private final ConcurrentMap<Long, Set<WebSocketSession>> roomSessions = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, WebSocketSession> sessionsById = new ConcurrentHashMap<>();
+    private final Set<Long> closingRooms = ConcurrentHashMap.newKeySet();
 
     public WebSocketSession add(Long roomId, WebSocketSession session) {
         WebSocketSession decorated = new ConcurrentWebSocketSessionDecorator(
                 session, SEND_TIME_LIMIT_MS, BUFFER_SIZE_LIMIT);
+        if (closingRooms.contains(roomId)) {
+            closeSession(decorated, new CloseStatus(1001, "Room closing"), "[WS ADD REJECT]");
+            return null;
+        }
         sessionsById.put(session.getId(), decorated);
-        roomSessions.computeIfAbsent(roomId, ignored -> ConcurrentHashMap.newKeySet()).add(decorated);
+        Set<WebSocketSession> set = roomSessions.computeIfAbsent(roomId, ignored -> ConcurrentHashMap.newKeySet());
+        set.add(decorated);
+        if (closingRooms.contains(roomId)) {
+            set.remove(decorated);
+            if (set.isEmpty()) {
+                roomSessions.remove(roomId, set);
+            }
+            sessionsById.remove(session.getId());
+            closeSession(decorated, new CloseStatus(1001, "Room closing"), "[WS ADD REJECT]");
+            return null;
+        }
         return decorated;
     }
 
@@ -40,7 +55,7 @@ public class RoomSessionStore {
         WebSocketSession storedSession = sessionsById.remove(session.getId());
         boolean removed = set.remove(storedSession != null ? storedSession : session);
         if (set.isEmpty()) {
-            roomSessions.remove(roomId);
+            roomSessions.remove(roomId, set);
         }
         return new RemoveResult(session.getId(), removed, count(roomId));
     }
@@ -66,22 +81,27 @@ public class RoomSessionStore {
     }
 
     public CloseAllResult closeAllSessionsInRoom(Long roomId, CloseStatus status) {
-        Set<WebSocketSession> sessions = roomSessions.remove(roomId);
-        if (sessions == null || sessions.isEmpty()) {
-            log.debug("[WS CLOSE ALL] roomId={} - no sessions", roomId);
-            return new CloseAllResult(List.of(), 0, List.of(roomId));
-        }
-
-        List<String> sessionIds = new ArrayList<>(sessions.size());
-        int closedCount = 0;
-        for (WebSocketSession session : sessions) {
-            sessionIds.add(session.getId());
-            sessionsById.remove(session.getId());
-            if (closeSession(session, status, "[WS CLOSE FAIL]")) {
-                closedCount++;
+        closingRooms.add(roomId);
+        try {
+            Set<WebSocketSession> sessions = roomSessions.remove(roomId);
+            if (sessions == null || sessions.isEmpty()) {
+                log.debug("[WS CLOSE ALL] roomId={} - no sessions", roomId);
+                return new CloseAllResult(List.of(), 0, List.of(roomId));
             }
+
+            List<String> sessionIds = new ArrayList<>(sessions.size());
+            int closedCount = 0;
+            for (WebSocketSession session : sessions) {
+                sessionIds.add(session.getId());
+                sessionsById.remove(session.getId());
+                if (closeSession(session, status, "[WS CLOSE FAIL]")) {
+                    closedCount++;
+                }
+            }
+            return new CloseAllResult(sessionIds, closedCount, List.of(roomId));
+        } finally {
+            closingRooms.remove(roomId);
         }
-        return new CloseAllResult(sessionIds, closedCount, List.of(roomId));
     }
 
     public CloseAllResult closeAllSessions(CloseStatus status) {

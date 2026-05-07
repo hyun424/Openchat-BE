@@ -60,7 +60,7 @@ public class BroadcastLaneExecutor {
         return total;
     }
 
-    public void enqueue(BroadcastTask task, Consumer<BroadcastTask> taskRunner) {
+    public boolean enqueue(BroadcastTask task, Consumer<BroadcastTask> taskRunner) {
         ThreadPoolExecutor executor = laneExecutors[task.laneIndex()];
         long enqueueStartNanos = System.nanoTime();
         try {
@@ -68,12 +68,13 @@ public class BroadcastLaneExecutor {
             metrics.recordStage("ws.broadcast.lane.enqueue", enqueueStartNanos);
             metrics.recordDistribution("openchat_pipeline_broadcast_lane_queue_size",
                     "lane-" + task.laneIndex(), executor.getQueue().size());
+            return true;
         } catch (RejectedExecutionException e) {
             metrics.recordStage("ws.broadcast.lane.enqueue.fail", enqueueStartNanos);
             metrics.incrementCounter("ws.broadcast.lane.enqueue.fail");
-            log.warn("[WS BROADCAST LANE FULL] lane={} roomId={} sessions={}",
+            log.warn("[WS BROADCAST LANE FULL] lane={} roomId={} sessions={} - task dropped to preserve lane ordering",
                     task.laneIndex(), task.roomId(), task.sessions().size());
-            taskRunner.accept(task);
+            return false;
         }
     }
 

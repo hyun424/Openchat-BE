@@ -26,6 +26,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentCaptor.forClass;
@@ -183,6 +184,47 @@ class RoomSessionRegistryTest {
         awaitCounter(meterRegistry, "ws.send.fail.buffer_limit", 1);
         assertCounter(meterRegistry, "ws.send.failed", 1);
         awaitRoomCount(registry, 1L, 0);
+        registry.shutdownExecutor();
+        metrics.shutdown();
+    }
+
+    @Test
+    @DisplayName("broadcast lane queue full 시 대상 세션을 닫고 registry에서 제거한다")
+    void sendToRoom_queueFull_closesAffectedSessionsForResync() throws Exception {
+        SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+        ChatPipelineMetrics metrics = new ChatPipelineMetrics(meterRegistry);
+        RoomSessionRegistry registry = new RoomSessionRegistry(new ObjectMapper(), new RoomTrafficMonitor(), metrics,
+                1, 0, 1, 5000);
+        WebSocketSession blocking = mockOpenSession("blocking-session");
+        WebSocketSession queued = mockOpenSession("queued-session");
+        WebSocketSession overloaded = mockOpenSession("overloaded-session");
+        CountDownLatch firstSendStarted = new CountDownLatch(1);
+        CountDownLatch releaseFirstSend = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            firstSendStarted.countDown();
+            releaseFirstSend.await(1, TimeUnit.SECONDS);
+            return null;
+        }).when(blocking).sendMessage(any(TextMessage.class));
+        registry.add(1L, blocking);
+        registry.add(1L, queued);
+        registry.add(1L, overloaded);
+
+        registry.sendToRoom(1L, message(1L, "blocking"));
+        assertTrue(firstSendStarted.await(500, TimeUnit.MILLISECONDS));
+        registry.sendToRoom(1L, message(2L, "queued"));
+        registry.sendToRoom(1L, message(3L, "overloaded"));
+
+        ArgumentCaptor<CloseStatus> closeCaptor = ArgumentCaptor.forClass(CloseStatus.class);
+        verify(blocking, timeout(500)).close(any(CloseStatus.class));
+        verify(queued, timeout(500)).close(any(CloseStatus.class));
+        verify(overloaded, timeout(500)).close(closeCaptor.capture());
+        assertEquals(1013, closeCaptor.getValue().getCode());
+        assertEquals("broadcast_queue_overloaded", closeCaptor.getValue().getReason());
+        awaitCounter(meterRegistry, "ws.broadcast.lane.overload.sessions_closed", 3);
+        awaitCounter(meterRegistry, "ws.broadcast.lane.overload.resync_required", 3);
+        awaitRoomCount(registry, 1L, 0);
+
+        releaseFirstSend.countDown();
         registry.shutdownExecutor();
         metrics.shutdown();
     }

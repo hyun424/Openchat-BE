@@ -6,6 +6,7 @@ import io.hyun424.openchat.chat.room.partition.metrics.RoomPartitionMetrics;
 import io.hyun424.openchat.chat.room.partition.policy.RoomPartitionPolicy;
 import io.hyun424.openchat.chat.room.partition.repository.RoomPartitionStateRepository;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -57,7 +58,31 @@ public class RoomPartitionStateService implements RoomPartitionStateOperations, 
                             SYSTEM_UPDATED_BY
                     );
                     metrics.recordState(initialized.getStatus());
-                    return repository.save(initialized);
+                    try {
+                        return repository.saveAndFlush(initialized);
+                    } catch (DataIntegrityViolationException e) {
+                        return repository.findByIdForUpdate(roomId)
+                                .orElseThrow(() -> e);
+                    }
+                });
+    }
+
+    private RoomPartitionState getOrInitializeForUpdate(Long roomId) {
+        return repository.findByIdForUpdate(roomId)
+                .orElseGet(() -> {
+                    RoomPartitionState initialized = RoomPartitionState.initialize(
+                            roomId,
+                            policy.initialPartitionCount(roomId),
+                            now(),
+                            SYSTEM_UPDATED_BY
+                    );
+                    metrics.recordState(initialized.getStatus());
+                    try {
+                        return repository.saveAndFlush(initialized);
+                    } catch (DataIntegrityViolationException e) {
+                        return repository.findByIdForUpdate(roomId)
+                                .orElseThrow(() -> e);
+                    }
                 });
     }
 
@@ -109,7 +134,7 @@ public class RoomPartitionStateService implements RoomPartitionStateOperations, 
 
     @Override
     public RoomPartitionState scaleUp(Long roomId, int targetPartitionCount, String updatedBy) {
-        RoomPartitionState state = getOrInitialize(roomId);
+        RoomPartitionState state = getOrInitializeForUpdate(roomId);
         int boundedTarget = policy.boundPartitionCount(targetPartitionCount);
         if (boundedTarget <= state.getPartitionCount()) {
             metrics.recordScaleEvent("up", "noop");
@@ -128,7 +153,7 @@ public class RoomPartitionStateService implements RoomPartitionStateOperations, 
     }
 
     public RoomPartitionState startDrain(Long roomId, Set<Integer> partitions, String updatedBy) {
-        RoomPartitionState state = getOrInitialize(roomId);
+        RoomPartitionState state = getOrInitializeForUpdate(roomId);
         String normalized = policy.normalizeDrainingPartitions(partitions, state.getPartitionCount());
         state.startDrain(normalized, now(), updatedBy);
         metrics.recordScaleEvent("down", "draining");
@@ -146,7 +171,7 @@ public class RoomPartitionStateService implements RoomPartitionStateOperations, 
     }
 
     public RoomPartitionState completeDrain(Long roomId, int targetPartitionCount, String updatedBy) {
-        RoomPartitionState state = getOrInitialize(roomId);
+        RoomPartitionState state = getOrInitializeForUpdate(roomId);
         int boundedTarget = Math.max(1, Math.min(state.getPartitionCount(), targetPartitionCount));
         state.completeDrain(boundedTarget, now(), updatedBy);
         metrics.recordScaleEvent("down", "success");
@@ -157,7 +182,7 @@ public class RoomPartitionStateService implements RoomPartitionStateOperations, 
 
     @Override
     public RoomPartitionState completeDrain(Long roomId, String updatedBy) {
-        RoomPartitionState state = getOrInitialize(roomId);
+        RoomPartitionState state = getOrInitializeForUpdate(roomId);
         int target = state.getPartitionCount() - policy.drainingPartitions(state).size();
         return completeDrain(roomId, target, updatedBy);
     }

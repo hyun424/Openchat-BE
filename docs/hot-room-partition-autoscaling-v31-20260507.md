@@ -462,3 +462,34 @@ payload:
 - `openchat_room_reconnect_control_sent_total{reason,result}`
 
 이 변경으로 `room.reconnect` 명령은 chat message fan-out payload와 분리된다. Redis Pub/Sub 특성상 command 유실 가능성은 v3.2에서 허용하고, ack/retry/command log는 다음 단계 보강 대상으로 둔다.
+
+
+## v3.2 Broadcast Lane Backpressure Safety
+
+v3.2 control-plane으로 reconnect/resync 경로가 검증된 뒤, 같은 복구 경로를 broadcast lane overload에도 적용했다. 목적은 성능 수치 개선이 아니라 queue full 상황에서 실시간 메시지가 조용히 drop되는 문제를 제거하는 것이다.
+
+기존에는 broadcast lane queue가 가득 차면 caller thread inline send를 하지 않도록 바꿨지만, enqueue 실패 task는 drop되고 affected session에는 별도 신호가 없었다. 이 상태에서는 해당 lane의 세션들이 실시간 메시지를 놓쳐도 서버와 클라이언트가 복구 필요성을 명확히 알 수 없었다.
+
+새 정책은 다음과 같다.
+
+```text
+broadcast lane enqueue 실패
+  -> caller thread direct send 금지
+  -> affected sessions close(1013, broadcast_queue_overloaded)
+  -> FE unexpected close 감지
+  -> /api/rooms/{roomId}/ws-route 재조회
+  -> WebSocket reconnect
+  -> /messages/after?cursor={lastSeenSequence} 복구
+```
+
+추가 metric은 다음 신호를 남긴다.
+
+- `ws.broadcast.lane.overload.sessions_closed`
+- `ws.broadcast.lane.overload.close_failed`
+- `ws.broadcast.lane.overload.resync_required`
+
+이 변경은 Redis control-plane을 거치지 않는다. queue full을 감지한 Realtime node가 이미 affected session을 알고 있으므로, 해당 node가 직접 close하고 클라이언트가 기존 reconnect/catch-up 경로로 수렴한다.
+
+포트폴리오 관점의 표현은 다음과 같다.
+
+> WebSocket fan-out lane이 과부하로 실시간 순서를 더 보장하기 어려운 상황을 silent drop으로 두지 않고, affected session을 명시적으로 reconnect/resync 경로로 전환했다. 최종 메시지 정합성은 DB와 `/messages/after`가 담당하게 했다.
