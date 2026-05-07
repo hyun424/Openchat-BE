@@ -4,6 +4,7 @@ import io.hyun424.openchat.chat.room.workload.config.RealtimeWorkloadProperties;
 import io.hyun424.openchat.chat.room.workload.dto.RealtimeNodeWorkloadSnapshot;
 import io.hyun424.openchat.chat.room.workload.dto.RealtimeWorkloadClusterSummary;
 import io.hyun424.openchat.chat.room.workload.dto.RealtimeWorkloadRecommendation;
+import io.hyun424.openchat.chat.room.workload.dto.RoomPartitionDrainProgress;
 import io.hyun424.openchat.chat.room.workload.dto.RoomWorkloadCandidate;
 import io.hyun424.openchat.chat.room.workload.infra.RealtimeWorkloadSnapshotRepository;
 import io.hyun424.openchat.chat.room.workload.metrics.RealtimeWorkloadMetrics;
@@ -12,6 +13,8 @@ import org.springframework.stereotype.Service;
 
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 
 @Service
 @ConditionalOnProperty(name = "spring.data.redis.host")
@@ -80,6 +83,7 @@ public class RealtimeWorkloadClusterSummaryService {
                 topRooms,
                 limitedCount
         );
+        List<RoomPartitionDrainProgress> drainProgress = aggregateDrainProgress(activeSnapshots);
 
         metrics.updateClusterSummary(
                 activeSnapshots.size(),
@@ -105,11 +109,42 @@ public class RealtimeWorkloadClusterSummaryService {
                 sendFailedDelta,
                 reconnectSentDelta,
                 topRooms,
-                recommendations
+                recommendations,
+                drainProgress
         );
     }
 
     public List<RealtimeWorkloadRecommendation> recommendations() {
         return summary().recommendations();
+    }
+
+    private List<RoomPartitionDrainProgress> aggregateDrainProgress(List<RealtimeNodeWorkloadSnapshot> activeSnapshots) {
+        Map<DrainKey, Integer> openSessionsByPartition = new TreeMap<>();
+        activeSnapshots.stream()
+                .flatMap(snapshot -> snapshot.drainProgress().stream())
+                .forEach(progress -> openSessionsByPartition.merge(
+                        new DrainKey(progress.roomId(), progress.partitionId()),
+                        progress.openSessions(),
+                        Integer::sum
+                ));
+        return openSessionsByPartition.entrySet().stream()
+                .map(entry -> new RoomPartitionDrainProgress(
+                        entry.getKey().roomId(),
+                        entry.getKey().partitionId(),
+                        entry.getValue(),
+                        "cluster"
+                ))
+                .toList();
+    }
+
+    private record DrainKey(Long roomId, int partitionId) implements Comparable<DrainKey> {
+        @Override
+        public int compareTo(DrainKey other) {
+            int roomCompare = Long.compare(roomId == null ? 0L : roomId, other.roomId == null ? 0L : other.roomId);
+            if (roomCompare != 0) {
+                return roomCompare;
+            }
+            return Integer.compare(partitionId, other.partitionId);
+        }
     }
 }

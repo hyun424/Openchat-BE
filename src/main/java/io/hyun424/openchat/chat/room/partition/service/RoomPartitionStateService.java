@@ -155,6 +155,18 @@ public class RoomPartitionStateService implements RoomPartitionStateOperations, 
         return scaleUp(roomId, target, updatedBy);
     }
 
+    public RoomPartitionState completeScaleUp(Long roomId, String updatedBy) {
+        RoomPartitionState state = getOrInitializeForUpdate(roomId);
+        if (state.getStatus() != RoomPartitionStatus.SCALING_UP) {
+            metrics.recordScaleEvent("up", "noop");
+            return state;
+        }
+        state.completeScaleUp(now(), updatedBy);
+        metrics.recordScaleEvent("up", "active");
+        metrics.recordState(state.getStatus());
+        return repository.save(state);
+    }
+
     public RoomPartitionState startDrain(Long roomId, Set<Integer> partitions, String updatedBy) {
         RoomPartitionState state = getOrInitializeForUpdate(roomId);
         String normalized = policy.normalizeDrainingPartitions(partitions, state.getPartitionCount());

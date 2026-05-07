@@ -90,6 +90,20 @@ class RoomPartitionStateServiceTest {
     }
 
     @Test
+    void completeScaleUp_returnsActiveWithoutVersionIncrement() {
+        TestContext context = context(snapshot(RoomScaleTier.CRITICAL, 2));
+        context.service.getOrInitialize(1L);
+        RoomPartitionState scaled = context.service.scaleUp(1L, 4, "test");
+
+        RoomPartitionState completed = context.service.completeScaleUp(1L, "test");
+
+        assertEquals(4, completed.getPartitionCount());
+        assertEquals(scaled.getVersion(), completed.getVersion());
+        assertEquals(RoomPartitionStatus.ACTIVE, completed.getStatus());
+        assertEquals("", completed.getDrainingPartitions());
+    }
+
+    @Test
     void scaleUp_missingState_initializesBeforeLocking() {
         TestContext context = context(snapshot(RoomScaleTier.CRITICAL, 2));
 

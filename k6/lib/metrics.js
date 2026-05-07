@@ -22,6 +22,9 @@ export const wsPresenceAssigned = new Counter('ws_presence_assigned_total');
 export const wsControlMessagesSent = new Counter('ws_control_messages_sent_total');
 export const wsActiveHeartbeatSent = new Counter('ws_active_heartbeat_sent_total');
 export const wsPassiveUnexpectedMessages = new Counter('ws_passive_unexpected_messages_total');
+export const wsReconnectControlsReceived = new Counter('ws_reconnect_controls_received_total');
+export const wsRoutePartitionCount = new Trend('ws_route_partition_count', false);
+export const wsRoutePartitionId = new Trend('ws_route_partition_id', false);
 
 // ── REST API Metrics (per endpoint) ──
 export const restLogin = new Trend('rest_login_duration_ms', true);

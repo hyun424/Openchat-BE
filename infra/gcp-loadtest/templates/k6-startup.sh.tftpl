@@ -26,6 +26,8 @@ PROFILE="${profile}"
 VUS_LIST="${vus_list}"
 CHAT_DURATION_SECONDS="${chat_duration_seconds}"
 SEND_INTERVAL_MS="${send_interval_ms}"
+K6_WS_SEND_STOP_AFTER_SECONDS="${k6_ws_send_stop_after_seconds}"
+K6_CHAT_ACK_P95_THRESHOLD_MS="${k6_chat_ack_p95_threshold_ms}"
 CONNECT_RAMP_SECONDS="${connect_ramp_seconds}"
 HOT_ROOMS="${hot_rooms}"
 VUS_PER_ROOM="${vus_per_room}"
@@ -131,6 +133,26 @@ collect_db_message_count() {
 EOF
 }
 
+collect_room_partition_state_dump() {
+  local suffix="$1"
+  local output_file="$RESULT_ROOT/metrics/room-partition-state-$suffix.tsv"
+
+  if ! command -v mysql >/dev/null 2>&1; then
+    echo "mysql client not installed" > "$output_file"
+    return 0
+  fi
+
+  mysql \
+    --connect-timeout=5 \
+    -h "$MYSQL_INTERNAL_IP" \
+    -uopenchat \
+    -popenchat \
+    -D openchat \
+    -B \
+    -e "SELECT room_id, partition_count, version, status, draining_partitions, updated_at, updated_by FROM room_partition_state ORDER BY updated_at DESC, room_id;" \
+    > "$output_file" 2>"$RESULT_ROOT/metrics/room-partition-state-$suffix.err" || true
+}
+
 get_workload_summary_token() {
   if [ -n "$${WORKLOAD_SUMMARY_TOKEN:-}" ]; then
     printf '%s' "$WORKLOAD_SUMMARY_TOKEN"
@@ -158,6 +180,7 @@ collect_realtime_workload_snapshot() {
     curl --max-time 10 -sf -H "Authorization: Bearer $workload_token" "$BASE_URL/api/internal/realtime/workload/summary" > "$RESULT_ROOT/metrics/realtime-workload-summary-$suffix.json" || true
     curl --max-time 10 -sf -H "Authorization: Bearer $workload_token" "$BASE_URL/api/internal/realtime/workload/recommendations" > "$RESULT_ROOT/metrics/realtime-workload-recommendations-$suffix.json" || true
   fi
+  collect_room_partition_state_dump "$suffix"
 }
 
 collect_workload_snapshots_during_run() {
@@ -615,6 +638,8 @@ for vus in $VUS_LIST; do
     -e TEST_LABEL="$test_label" \
     -e SEND_INTERVAL_MS="$SEND_INTERVAL_MS" \
     -e CHAT_DURATION_SECONDS="$CHAT_DURATION_SECONDS" \
+    -e K6_WS_SEND_STOP_AFTER_SECONDS="$K6_WS_SEND_STOP_AFTER_SECONDS" \
+    -e K6_CHAT_ACK_P95_THRESHOLD_MS="$K6_CHAT_ACK_P95_THRESHOLD_MS" \
     -e CONNECT_RAMP_SECONDS="$CONNECT_RAMP_SECONDS" \
     -e HOT_ROOMS="$worker_hot_rooms" \
     -e VUS_PER_ROOM="$VUS_PER_ROOM" \

@@ -8,7 +8,8 @@ import {
   wsRealtimeIncompleteFrames, wsRealtimeOmittedMessages,
   wsMessageHandlerDuration, wsJsonParseDuration, wsBatchMessagesPerFrame,
   wsObserverVisibleSamples, wsControlMessagesSent, wsActiveHeartbeatSent,
-  wsPassiveUnexpectedMessages,
+  wsPassiveUnexpectedMessages, wsReconnectControlsReceived, wsRoutePartitionCount,
+  wsRoutePartitionId,
 } from './metrics.js';
 
 const WS_BASE_URL = __ENV.WS_BASE_URL || 'ws://localhost:8080';
@@ -95,6 +96,7 @@ function countUnexpectedFullPayloadMessages(data) {
  * @param {number} opts.activeHeartbeatIntervalMs - active heartbeat 간격(ms), 기본 20000
  * @param {number} opts.passiveSettleMs - passive 선언 직후 race를 제외할 시간(ms), 기본 2000
  * @param {function} opts.onMessage - 수신 메시지 콜백 (선택)
+ * @param {function} opts.routeResolver - reconnect control 수신 후 새 /ws-route를 조회하는 콜백 (선택)
  * @param {Object} opts.tags        - k6 metric tags (선택)
  */
 export function connectAndChat(opts) {
@@ -104,6 +106,7 @@ export function connectAndChat(opts) {
     partitionId = null,
     duration = 60,
     sendInterval = 200,
+    sendStopAfterSeconds = Number(__ENV.K6_WS_SEND_STOP_AFTER_SECONDS || String(duration)),
     messageText = 'k6 load test message',
     clientMessageIdPrefix = '',
     drainDurationMs = Number(__ENV.K6_WS_DRAIN_MS || String(Math.max(2000, sendInterval * 2))),
@@ -112,12 +115,23 @@ export function connectAndChat(opts) {
     activeHeartbeatIntervalMs = Number(__ENV.ACTIVE_HEARTBEAT_INTERVAL_MS || '20000'),
     passiveSettleMs = Number(__ENV.PASSIVE_SETTLE_MS || '2000'),
     onMessage,
+    routeResolver = null,
+    routeVersion = null,
     tags = {},
   } = opts;
 
-  const partitionQuery = partitionId === null || partitionId === undefined || String(partitionId) === ''
+  let currentPartitionId = partitionId;
+  let currentRouteVersion = routeVersion;
+  let remainingDuration = duration;
+  let lastResponse = null;
+  const reconnectDeadline = Date.now() + duration * 1000;
+  const sendStopDeadline = Date.now() + Math.max(0, sendStopAfterSeconds) * 1000;
+
+  while (remainingDuration > 0) {
+  let reconnectControl = null;
+  const partitionQuery = currentPartitionId === null || currentPartitionId === undefined || String(currentPartitionId) === ''
     ? ''
-    : `&partitionId=${partitionId}`;
+    : `&partitionId=${currentPartitionId}`;
   const url = `${WS_BASE_URL}/ws/chat?roomId=${roomId}${partitionQuery}&token=${token}`;
   const connectStart = Date.now();
   const resolvedPresenceMode = resolvePresenceMode(presenceMode);
@@ -210,12 +224,31 @@ export function connectAndChat(opts) {
           }
         }
 
-        if (!shouldParseBroadcast && !String(data).includes('"type":"chat.ack"')) {
+        const text = String(data);
+        if (!shouldParseBroadcast && !text.includes('"type":"chat.ack"') && !text.includes('"type":"room.reconnect"')) {
           recordBatchEnvelopeFromText(data, counters, metricTags, false);
           return;
         }
 
         const msg = parseJsonWithMetric(data, metricTags);
+        if (msg && msg.type === 'room.reconnect') {
+          reconnectControl = msg;
+          sendingEnabled = false;
+          wsReconnectControlsReceived.add(1, {
+            ...metricTags,
+            reason: String(msg.reason || 'unknown'),
+          });
+          if (onMessage) {
+            onMessage(msg);
+          }
+          const reconnectDrainMs = Number(__ENV.K6_WS_RECONNECT_DRAIN_MS || String(Math.max(1000, Number(msg.retryAfterMs || 0))));
+          socket.setTimeout(function () {
+            flushCounters();
+            socket.close();
+          }, reconnectDrainMs);
+          return;
+        }
+
         if (msg && msg.type === 'chat.ack') {
           counters.acksReceived += 1;
           if (msg.clientMessageId && pendingMessages[msg.clientMessageId]) {
@@ -308,17 +341,23 @@ export function connectAndChat(opts) {
     });
 
     // 전송을 먼저 멈춘 뒤 ack/수신을 짧게 drain해서 종료 경계의 유실성 send를 줄인다.
-    socket.setTimeout(function () {
+    const sendStopDelayMillis = Math.max(0, Math.min(remainingDuration * 1000, sendStopDeadline - Date.now()));
+    if (sendStopDelayMillis === 0) {
       sendingEnabled = false;
-      flushCounters();
-    }, duration * 1000);
+    } else {
+      socket.setTimeout(function () {
+        sendingEnabled = false;
+        flushCounters();
+      }, sendStopDelayMillis);
+    }
 
     socket.setTimeout(function () {
       socket.close();
-    }, duration * 1000 + drainDurationMs);
+    }, remainingDuration * 1000 + drainDurationMs);
   });
 
   flushCounters();
+  lastResponse = res;
 
   // 연결 실패 시
   const connected = check(res, {
@@ -333,7 +372,33 @@ export function connectAndChat(opts) {
     console.error(`WS connect failed roomId=${roomId} status=${status} error=${error}`);
   }
 
-  return res;
+  if (!reconnectControl || !routeResolver) {
+    return res;
+  }
+
+  const nextRoute = routeResolver({
+    roomId,
+    reason: reconnectControl.reason,
+    routeVersion: reconnectControl.routeVersion,
+    previousPartitionId: currentPartitionId,
+    previousRouteVersion: currentRouteVersion,
+  });
+  if (!nextRoute) {
+    return res;
+  }
+  currentPartitionId = nextRoute.partitionId;
+  currentRouteVersion = nextRoute.routeVersion;
+  if (nextRoute.partitionCount !== undefined && nextRoute.partitionCount !== null) {
+    wsRoutePartitionCount.add(Number(nextRoute.partitionCount), metricTags);
+  }
+  if (nextRoute.partitionId !== undefined && nextRoute.partitionId !== null) {
+    wsRoutePartitionId.add(Number(nextRoute.partitionId), metricTags);
+  }
+  console.log(`WS reconnect route roomId=${roomId} partitionCount=${nextRoute.partitionCount} partitionId=${nextRoute.partitionId} routeVersion=${nextRoute.routeVersion}`);
+  remainingDuration = Math.floor((reconnectDeadline - Date.now()) / 1000);
+  }
+
+  return lastResponse;
 }
 
 export { WS_BASE_URL };

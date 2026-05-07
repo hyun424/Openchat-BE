@@ -27,6 +27,7 @@ public class RoomPartitionMetrics {
     private final ConcurrentHashMap<String, Counter> reconnectRequestedCounters = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Counter> reconnectTargetedCounters = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Counter> reconnectControlSentCounters = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Counter> lifecycleCounters = new ConcurrentHashMap<>();
     private final LongAdder reconnectControlSentSuccessCount = new LongAdder();
     private final Counter routeDrainingAvoidedCounter;
     private final DistributionSummary drainingCountSummary;
@@ -195,6 +196,18 @@ public class RoomPartitionMetrics {
 
     public long reconnectControlSentSuccessCount() {
         return reconnectControlSentSuccessCount.sum();
+    }
+
+    public void recordLifecycleEvent(String operation, String result) {
+        String safeOperation = safeTag(operation);
+        String safeResult = safeTag(result);
+        String key = safeOperation + ":" + safeResult;
+        lifecycleCounters.computeIfAbsent(key, ignored -> Counter
+                        .builder("openchat_room_partition_lifecycle_event_total")
+                        .tag("operation", safeOperation)
+                        .tag("result", safeResult)
+                        .register(meterRegistry))
+                .increment();
     }
 
     private String safeTag(String value) {

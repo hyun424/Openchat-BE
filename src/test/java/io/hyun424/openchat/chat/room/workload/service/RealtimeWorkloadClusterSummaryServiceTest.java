@@ -4,6 +4,7 @@ import io.hyun424.openchat.chat.room.hot.RoomScaleTier;
 import io.hyun424.openchat.chat.room.workload.config.RealtimeWorkloadProperties;
 import io.hyun424.openchat.chat.room.workload.dto.RealtimeNodeWorkloadSnapshot;
 import io.hyun424.openchat.chat.room.workload.dto.RealtimeWorkloadRecommendationType;
+import io.hyun424.openchat.chat.room.workload.dto.RoomPartitionDrainProgress;
 import io.hyun424.openchat.chat.room.workload.dto.RoomWorkloadCandidate;
 import io.hyun424.openchat.chat.room.workload.infra.RealtimeWorkloadSnapshotRepository;
 import io.hyun424.openchat.chat.room.workload.metrics.RealtimeWorkloadMetrics;
@@ -81,6 +82,35 @@ class RealtimeWorkloadClusterSummaryServiceTest {
         assertEquals("node-2", summary.topRooms().get(0).sourceNodeId());
     }
 
+    @Test
+    void drainProgressIsAggregatedByRoomAndPartition() {
+        RealtimeWorkloadSnapshotRepository repository = mock(RealtimeWorkloadSnapshotRepository.class);
+        long now = System.currentTimeMillis();
+        when(repository.readAll()).thenReturn(List.of(
+                snapshotWithDrain("node-1", now, now + 20_000, List.of(
+                        new RoomPartitionDrainProgress(1L, 2, 3, "node-1"),
+                        new RoomPartitionDrainProgress(1L, 3, 1, "node-1")
+                )),
+                snapshotWithDrain("node-2", now, now + 20_000, List.of(
+                        new RoomPartitionDrainProgress(1L, 2, 5, "node-2")
+                ))
+        ));
+        RealtimeWorkloadClusterSummaryService service = new RealtimeWorkloadClusterSummaryService(
+                repository,
+                new RealtimeWorkloadRecommendationService(properties, metrics),
+                properties,
+                metrics
+        );
+
+        var summary = service.summary();
+
+        assertEquals(2, summary.drainProgress().size());
+        assertEquals(8, summary.drainProgress().get(0).openSessions());
+        assertEquals(2, summary.drainProgress().get(0).partitionId());
+        assertEquals(1, summary.drainProgress().get(1).openSessions());
+        assertEquals("cluster", summary.drainProgress().get(0).sourceNodeId());
+    }
+
     private RealtimeNodeWorkloadSnapshot snapshot(String nodeId,
                                                   long reportedAt,
                                                   long expiresAt,
@@ -119,6 +149,32 @@ class RealtimeWorkloadClusterSummaryServiceTest {
                         false,
                         nodeId
                 ))
+        );
+    }
+
+    private RealtimeNodeWorkloadSnapshot snapshotWithDrain(String nodeId,
+                                                           long reportedAt,
+                                                           long expiresAt,
+                                                           List<RoomPartitionDrainProgress> drainProgress) {
+        return new RealtimeNodeWorkloadSnapshot(
+                nodeId,
+                "realtime",
+                reportedAt,
+                expiresAt,
+                Set.of(0),
+                Set.of(0),
+                1,
+                1,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                List.of(),
+                drainProgress
         );
     }
 }

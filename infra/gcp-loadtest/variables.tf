@@ -50,6 +50,18 @@ variable "send_interval_ms" {
   default     = 1000
 }
 
+variable "k6_ws_send_stop_after_seconds" {
+  description = "Seconds after which WebSocket clients stop sending but keep connections open. Zero uses the full chat duration."
+  type        = number
+  default     = 0
+}
+
+variable "k6_chat_ack_p95_threshold_ms" {
+  description = "k6 chat ack p95 threshold in milliseconds for mixed room workload scenarios."
+  type        = number
+  default     = 300
+}
+
 variable "connect_ramp_seconds" {
   description = "Seconds used by ramped k6 scenarios to spread login, room entry, and WebSocket connection attempts."
   type        = number
@@ -408,6 +420,78 @@ variable "room_partition_admin_api_enabled" {
   description = "Enable internal room partition operation API for smoke/operation tooling."
   type        = bool
   default     = false
+}
+
+variable "room_partition_lifecycle_enabled" {
+  description = "Enable automatic room partition lifecycle scaling."
+  type        = bool
+  default     = false
+}
+
+variable "room_partition_lifecycle_interval_ms" {
+  description = "Automatic room partition lifecycle scheduler interval."
+  type        = number
+  default     = 5000
+}
+
+variable "room_partition_lifecycle_scale_up_stable_window_ms" {
+  description = "Stable hot-room observation window before automatic scale-up."
+  type        = number
+  default     = 30000
+}
+
+variable "room_partition_lifecycle_scale_up_min_observations" {
+  description = "Minimum hot-room observations before automatic scale-up."
+  type        = number
+  default     = 2
+}
+
+variable "room_partition_lifecycle_scale_up_cooldown_ms" {
+  description = "Per-room automatic scale-up cooldown."
+  type        = number
+  default     = 300000
+}
+
+variable "room_partition_lifecycle_scale_down_stable_window_ms" {
+  description = "Stable low-work observation window before automatic scale-down."
+  type        = number
+  default     = 300000
+}
+
+variable "room_partition_lifecycle_scale_down_min_observations" {
+  description = "Minimum low-work observations before automatic scale-down."
+  type        = number
+  default     = 3
+}
+
+variable "room_partition_lifecycle_scale_down_cooldown_ms" {
+  description = "Per-room automatic scale-down cooldown."
+  type        = number
+  default     = 600000
+}
+
+variable "room_partition_lifecycle_scale_down_min_partition_age_ms" {
+  description = "Minimum age since the last partition state update before automatic scale-down."
+  type        = number
+  default     = 600000
+}
+
+variable "room_partition_lifecycle_drain_complete_empty_observations" {
+  description = "Consecutive empty drain observations required before completeDrain."
+  type        = number
+  default     = 2
+}
+
+variable "room_partition_lifecycle_drain_reconnect_retry_after_ms" {
+  description = "Drain reconnect retry-after and throttle interval."
+  type        = number
+  default     = 500
+}
+
+variable "room_scale_pod_work_budget_delivery_per_sec" {
+  description = "Room workload budget used by automatic lifecycle smoke recommendations."
+  type        = number
+  default     = 10000
 }
 
 variable "enable_monitoring" {

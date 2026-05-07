@@ -84,6 +84,16 @@ public class RoomPartitionState {
         touch(now, updatedBy);
     }
 
+    public void completeScaleUp(Instant now, String updatedBy) {
+        if (this.status != RoomPartitionStatus.SCALING_UP) {
+            touch(now, updatedBy);
+            return;
+        }
+        this.status = RoomPartitionStatus.ACTIVE;
+        this.drainingPartitions = "";
+        touch(now, updatedBy);
+    }
+
     public void startDrain(String drainingPartitions, Instant now, String updatedBy) {
         String resolved = drainingPartitions == null ? "" : drainingPartitions;
         if (this.status == RoomPartitionStatus.DRAINING && this.drainingPartitions.equals(resolved)) {
