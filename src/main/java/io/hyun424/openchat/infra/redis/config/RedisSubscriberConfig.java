@@ -1,7 +1,7 @@
 package io.hyun424.openchat.infra.redis.config;
 
-import io.hyun424.openchat.chat.room.partition.RoomPartitionControlChannelResolver;
-import io.hyun424.openchat.chat.room.partition.RoomPartitionControlSubscriber;
+import io.hyun424.openchat.chat.room.partition.infra.RoomPartitionControlChannelResolver;
+import io.hyun424.openchat.chat.room.partition.infra.RoomPartitionControlSubscriber;
 import io.hyun424.openchat.chat.room.shard.ChatRedisChannelResolver;
 import io.hyun424.openchat.chat.subscribe.ChatRedisSubscriber;
 import io.hyun424.openchat.infra.redis.health.RedisHealthState;

@@ -1,4 +1,7 @@
-package io.hyun424.openchat.chat.room.partition;
+package io.hyun424.openchat.chat.room.partition.infra;
+
+import io.hyun424.openchat.chat.room.partition.dto.RoomPartitionControlCommand;
+import io.hyun424.openchat.chat.room.partition.metrics.RoomPartitionMetrics;
 
 public class NoopRoomPartitionControlPublisher implements RoomPartitionControlPublisher {
 

@@ -1,5 +1,10 @@
-package io.hyun424.openchat.chat.room.partition;
+package io.hyun424.openchat.chat.room.partition.service;
 
+import io.hyun424.openchat.chat.room.partition.domain.RoomPartitionState;
+import io.hyun424.openchat.chat.room.partition.dto.RoomPartitionControlCommand;
+import io.hyun424.openchat.chat.room.partition.infra.RoomPartitionControlPublisher;
+import io.hyun424.openchat.chat.room.partition.metrics.RoomPartitionMetrics;
+import io.hyun424.openchat.chat.room.partition.repository.RoomPartitionStateRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 

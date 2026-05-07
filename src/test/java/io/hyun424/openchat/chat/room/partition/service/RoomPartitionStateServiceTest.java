@@ -1,9 +1,15 @@
-package io.hyun424.openchat.chat.room.partition;
+package io.hyun424.openchat.chat.room.partition.service;
 
 import io.hyun424.openchat.chat.room.hot.RoomHotState;
 import io.hyun424.openchat.chat.room.hot.RoomScaleTier;
 import io.hyun424.openchat.chat.room.hot.RoomTrafficMonitor;
 import io.hyun424.openchat.chat.room.hot.RoomTrafficSnapshot;
+import io.hyun424.openchat.chat.room.partition.config.RoomPartitionProperties;
+import io.hyun424.openchat.chat.room.partition.domain.RoomPartitionState;
+import io.hyun424.openchat.chat.room.partition.domain.RoomPartitionStatus;
+import io.hyun424.openchat.chat.room.partition.metrics.RoomPartitionMetrics;
+import io.hyun424.openchat.chat.room.partition.policy.RoomPartitionPolicy;
+import io.hyun424.openchat.chat.room.partition.repository.RoomPartitionStateRepository;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 
@@ -118,7 +124,7 @@ class RoomPartitionStateServiceTest {
         RoomPartitionStateService service = new RoomPartitionStateService(
                 repository,
                 properties,
-                monitor,
+                new RoomPartitionPolicy(properties, monitor),
                 new RoomPartitionMetrics(new SimpleMeterRegistry()),
                 Clock.fixed(Instant.parse("2026-05-07T00:00:00Z"), ZoneOffset.UTC)
         );

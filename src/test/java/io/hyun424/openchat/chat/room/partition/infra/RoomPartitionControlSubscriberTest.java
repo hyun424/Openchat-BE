@@ -1,7 +1,10 @@
-package io.hyun424.openchat.chat.room.partition;
+package io.hyun424.openchat.chat.room.partition.infra;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.hyun424.openchat.chat.room.partition.dto.RoomPartitionControlCommand;
+import io.hyun424.openchat.chat.room.partition.metrics.RoomPartitionMetrics;
+import io.hyun424.openchat.chat.room.partition.service.RoomPartitionControlHandler;
 import io.hyun424.openchat.infra.websocket.session.RoomSessionRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.DisplayName;
@@ -31,7 +34,7 @@ class RoomPartitionControlSubscriberTest {
         RoomSessionRegistry registry = new RoomSessionRegistry(objectMapper, 2, 16);
         RoomPartitionControlSubscriber subscriber = new RoomPartitionControlSubscriber(
                 objectMapper,
-                registry,
+                new RoomPartitionControlHandler(registry, new RoomPartitionMetrics(new SimpleMeterRegistry())),
                 new RoomPartitionMetrics(new SimpleMeterRegistry())
         );
         WebSocketSession partition0 = mockOpenSession("partition-0");
@@ -66,7 +69,7 @@ class RoomPartitionControlSubscriberTest {
         RoomSessionRegistry registry = new RoomSessionRegistry(objectMapper, 2, 16);
         RoomPartitionControlSubscriber subscriber = new RoomPartitionControlSubscriber(
                 objectMapper,
-                registry,
+                new RoomPartitionControlHandler(registry, new RoomPartitionMetrics(new SimpleMeterRegistry())),
                 new RoomPartitionMetrics(new SimpleMeterRegistry())
         );
         WebSocketSession first = mockOpenSession("partition-1-a");
@@ -101,7 +104,7 @@ class RoomPartitionControlSubscriberTest {
         RoomSessionRegistry registry = new RoomSessionRegistry(objectMapper, 2, 16);
         RoomPartitionControlSubscriber subscriber = new RoomPartitionControlSubscriber(
                 objectMapper,
-                registry,
+                new RoomPartitionControlHandler(registry, new RoomPartitionMetrics(new SimpleMeterRegistry())),
                 new RoomPartitionMetrics(new SimpleMeterRegistry())
         );
         WebSocketSession session = mockOpenSession("partition-1");

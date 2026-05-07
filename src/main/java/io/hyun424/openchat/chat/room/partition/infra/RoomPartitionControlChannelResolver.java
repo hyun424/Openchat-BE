@@ -1,4 +1,4 @@
-package io.hyun424.openchat.chat.room.partition;
+package io.hyun424.openchat.chat.room.partition.infra;
 
 import org.springframework.stereotype.Component;
 

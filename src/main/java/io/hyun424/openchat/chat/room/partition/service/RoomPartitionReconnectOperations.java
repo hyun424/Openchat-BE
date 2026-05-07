@@ -1,4 +1,4 @@
-package io.hyun424.openchat.chat.room.partition;
+package io.hyun424.openchat.chat.room.partition.service;
 
 public interface RoomPartitionReconnectOperations {
 

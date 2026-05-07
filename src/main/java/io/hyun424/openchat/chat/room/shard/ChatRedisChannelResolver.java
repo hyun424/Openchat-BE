@@ -1,8 +1,8 @@
 package io.hyun424.openchat.chat.room.shard;
 
 import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
-import io.hyun424.openchat.chat.room.partition.RoomPartitionProperties;
-import io.hyun424.openchat.chat.room.partition.RoomPartitionRoutingService;
+import io.hyun424.openchat.chat.room.partition.config.RoomPartitionProperties;
+import io.hyun424.openchat.chat.room.partition.service.RoomPartitionRoutingService;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;

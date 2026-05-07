@@ -1,4 +1,6 @@
-package io.hyun424.openchat.chat.room.partition;
+package io.hyun424.openchat.chat.room.partition.service;
+
+import io.hyun424.openchat.chat.room.partition.domain.RoomPartitionState;
 
 import java.util.Set;
 

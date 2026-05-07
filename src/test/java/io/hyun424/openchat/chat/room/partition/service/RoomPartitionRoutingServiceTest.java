@@ -1,6 +1,9 @@
-package io.hyun424.openchat.chat.room.partition;
+package io.hyun424.openchat.chat.room.partition.service;
 
 import io.hyun424.openchat.chat.room.hot.RoomScaleTier;
+import io.hyun424.openchat.chat.room.partition.config.RoomPartitionProperties;
+import io.hyun424.openchat.chat.room.partition.dto.RoomPartitionRoute;
+import io.hyun424.openchat.chat.room.partition.metrics.RoomPartitionMetrics;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 

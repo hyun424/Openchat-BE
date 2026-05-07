@@ -1,21 +1,18 @@
-package io.hyun424.openchat.chat.room.partition;
+package io.hyun424.openchat.chat.room.partition.service;
 
-import io.hyun424.openchat.chat.room.hot.RoomScaleTier;
-import io.hyun424.openchat.chat.room.hot.RoomTrafficMonitor;
-import io.hyun424.openchat.chat.room.hot.RoomTrafficSnapshot;
+import io.hyun424.openchat.chat.room.partition.config.RoomPartitionProperties;
+import io.hyun424.openchat.chat.room.partition.domain.RoomPartitionState;
+import io.hyun424.openchat.chat.room.partition.metrics.RoomPartitionMetrics;
+import io.hyun424.openchat.chat.room.partition.policy.RoomPartitionPolicy;
+import io.hyun424.openchat.chat.room.partition.repository.RoomPartitionStateRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
-import java.util.TreeSet;
-import java.util.zip.CRC32;
-import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 @Service
@@ -26,26 +23,26 @@ public class RoomPartitionStateService implements RoomPartitionStateOperations {
 
     private final RoomPartitionStateRepository repository;
     private final RoomPartitionProperties properties;
-    private final RoomTrafficMonitor roomTrafficMonitor;
+    private final RoomPartitionPolicy policy;
     private final RoomPartitionMetrics metrics;
     private final Clock clock;
 
     @Autowired
     public RoomPartitionStateService(RoomPartitionStateRepository repository,
                                      RoomPartitionProperties properties,
-                                     RoomTrafficMonitor roomTrafficMonitor,
+                                     RoomPartitionPolicy policy,
                                      RoomPartitionMetrics metrics) {
-        this(repository, properties, roomTrafficMonitor, metrics, Clock.systemUTC());
+        this(repository, properties, policy, metrics, Clock.systemUTC());
     }
 
-    RoomPartitionStateService(RoomPartitionStateRepository repository,
-                              RoomPartitionProperties properties,
-                              RoomTrafficMonitor roomTrafficMonitor,
-                              RoomPartitionMetrics metrics,
-                              Clock clock) {
+    public RoomPartitionStateService(RoomPartitionStateRepository repository,
+                                     RoomPartitionProperties properties,
+                                     RoomPartitionPolicy policy,
+                                     RoomPartitionMetrics metrics,
+                                     Clock clock) {
         this.repository = repository;
         this.properties = properties;
-        this.roomTrafficMonitor = roomTrafficMonitor;
+        this.policy = policy;
         this.metrics = metrics;
         this.clock = clock;
     }
@@ -55,7 +52,7 @@ public class RoomPartitionStateService implements RoomPartitionStateOperations {
                 .orElseGet(() -> {
                     RoomPartitionState initialized = RoomPartitionState.initialize(
                             roomId,
-                            initialPartitionCount(roomId),
+                            policy.initialPartitionCount(roomId),
                             now(),
                             SYSTEM_UPDATED_BY
                     );
@@ -88,21 +85,15 @@ public class RoomPartitionStateService implements RoomPartitionStateOperations {
             return 0;
         }
 
-        int candidate = stablePartition(userId, partitionCount);
-        Set<Integer> draining = drainingPartitions(state);
-        if (!draining.contains(candidate)) {
-            return candidate;
+        RoomPartitionPolicy.RouteDecision decision = policy.routePartition(
+                userId,
+                partitionCount,
+                policy.drainingPartitions(state)
+        );
+        if (decision.drainingAvoided()) {
+            metrics.recordRouteDrainingAvoided();
         }
-
-        for (int offset = 1; offset < partitionCount; offset++) {
-            int next = Math.floorMod(candidate + offset, partitionCount);
-            if (!draining.contains(next)) {
-                metrics.recordRouteDrainingAvoided();
-                return next;
-            }
-        }
-
-        return candidate;
+        return decision.partitionId();
     }
 
     public int versionForRoom(Long roomId) {
@@ -115,7 +106,7 @@ public class RoomPartitionStateService implements RoomPartitionStateOperations {
     @Override
     public RoomPartitionState scaleUp(Long roomId, int targetPartitionCount, String updatedBy) {
         RoomPartitionState state = getOrInitialize(roomId);
-        int boundedTarget = boundPartitionCount(targetPartitionCount);
+        int boundedTarget = policy.boundPartitionCount(targetPartitionCount);
         if (boundedTarget <= state.getPartitionCount()) {
             metrics.recordScaleEvent("up", "noop");
             return state;
@@ -134,11 +125,11 @@ public class RoomPartitionStateService implements RoomPartitionStateOperations {
 
     public RoomPartitionState startDrain(Long roomId, Set<Integer> partitions, String updatedBy) {
         RoomPartitionState state = getOrInitialize(roomId);
-        String normalized = normalizeDrainingPartitions(partitions, state.getPartitionCount());
+        String normalized = policy.normalizeDrainingPartitions(partitions, state.getPartitionCount());
         state.startDrain(normalized, now(), updatedBy);
         metrics.recordScaleEvent("down", "draining");
         metrics.recordState(state.getStatus());
-        metrics.recordDrainingCount(drainingPartitions(state).size());
+        metrics.recordDrainingCount(policy.drainingPartitions(state).size());
         return repository.save(state);
     }
 
@@ -163,69 +154,8 @@ public class RoomPartitionStateService implements RoomPartitionStateOperations {
     @Override
     public RoomPartitionState completeDrain(Long roomId, String updatedBy) {
         RoomPartitionState state = getOrInitialize(roomId);
-        int target = state.getPartitionCount() - drainingPartitions(state).size();
+        int target = state.getPartitionCount() - policy.drainingPartitions(state).size();
         return completeDrain(roomId, target, updatedBy);
-    }
-
-    private int initialPartitionCount(Long roomId) {
-        if (!properties.enabled()) {
-            return 1;
-        }
-        RoomTrafficSnapshot snapshot = roomTrafficMonitor.snapshot(roomId);
-        if (!isAtOrAboveThreshold(snapshot.scaleTier())) {
-            return 1;
-        }
-        int recommended = Math.max(2, snapshot.effectivePartitions());
-        int configuredLimit = Math.min(properties.partitionCount(), properties.maxPartitionsPerRoom());
-        int bounded = Math.min(recommended, configuredLimit);
-        return Math.max(1, bounded);
-    }
-
-    private int boundPartitionCount(int partitionCount) {
-        int configuredLimit = Math.min(properties.partitionCount(), properties.maxPartitionsPerRoom());
-        return Math.max(1, Math.min(Math.max(1, partitionCount), configuredLimit));
-    }
-
-    private boolean isAtOrAboveThreshold(RoomScaleTier tier) {
-        RoomScaleTier resolved = tier == null ? RoomScaleTier.SMALL : tier;
-        return resolved.ordinal() >= properties.hotTierThreshold().ordinal();
-    }
-
-    private String normalizeDrainingPartitions(Set<Integer> partitions, int partitionCount) {
-        if (partitions == null || partitions.isEmpty()) {
-            return "";
-        }
-        return partitions.stream()
-                .map(partition -> Math.floorMod(partition == null ? 0 : partition, Math.max(1, partitionCount)))
-                .collect(Collectors.toCollection(TreeSet::new))
-                .stream()
-                .map(String::valueOf)
-                .collect(Collectors.joining(","));
-    }
-
-    private Set<Integer> drainingPartitions(RoomPartitionState state) {
-        String raw = state.getDrainingPartitions();
-        if (raw == null || raw.isBlank()) {
-            return Set.of();
-        }
-        return Arrays.stream(raw.split(","))
-                .map(String::trim)
-                .filter(value -> !value.isBlank())
-                .map(value -> {
-                    try {
-                        return Math.floorMod(Integer.parseInt(value), Math.max(1, state.getPartitionCount()));
-                    } catch (NumberFormatException e) {
-                        return 0;
-                    }
-                })
-                .collect(Collectors.toUnmodifiableSet());
-    }
-
-    private int stablePartition(String userId, int partitionCount) {
-        CRC32 crc32 = new CRC32();
-        byte[] bytes = (userId == null ? "" : userId).getBytes(StandardCharsets.UTF_8);
-        crc32.update(bytes, 0, bytes.length);
-        return Math.floorMod((int) crc32.getValue(), Math.max(1, partitionCount));
     }
 
     private Instant now() {

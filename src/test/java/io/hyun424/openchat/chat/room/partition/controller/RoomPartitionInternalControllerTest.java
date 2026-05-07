@@ -1,5 +1,8 @@
-package io.hyun424.openchat.chat.room.partition;
+package io.hyun424.openchat.chat.room.partition.controller;
 
+import io.hyun424.openchat.chat.room.partition.service.RoomPartitionReconnectOperations;
+import io.hyun424.openchat.chat.room.partition.service.RoomPartitionReconnectService;
+import io.hyun424.openchat.chat.room.partition.service.RoomPartitionStateOperations;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

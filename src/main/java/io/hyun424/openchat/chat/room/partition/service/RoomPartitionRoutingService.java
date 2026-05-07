@@ -1,5 +1,8 @@
-package io.hyun424.openchat.chat.room.partition;
+package io.hyun424.openchat.chat.room.partition.service;
 
+import io.hyun424.openchat.chat.room.partition.config.RoomPartitionProperties;
+import io.hyun424.openchat.chat.room.partition.dto.RoomPartitionRoute;
+import io.hyun424.openchat.chat.room.partition.metrics.RoomPartitionMetrics;
 import org.springframework.stereotype.Service;
 
 import java.util.List;

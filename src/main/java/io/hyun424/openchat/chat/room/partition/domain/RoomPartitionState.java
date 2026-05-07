@@ -1,4 +1,4 @@
-package io.hyun424.openchat.chat.room.partition;
+package io.hyun424.openchat.chat.room.partition.domain;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;

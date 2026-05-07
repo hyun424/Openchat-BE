@@ -1,4 +1,4 @@
-package io.hyun424.openchat.chat.room.partition;
+package io.hyun424.openchat.chat.room.partition.config;
 
 import io.hyun424.openchat.chat.room.hot.RoomScaleTier;
 import org.springframework.beans.factory.annotation.Autowired;

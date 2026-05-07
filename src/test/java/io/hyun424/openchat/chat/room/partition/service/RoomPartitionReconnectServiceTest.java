@@ -1,5 +1,11 @@
-package io.hyun424.openchat.chat.room.partition;
+package io.hyun424.openchat.chat.room.partition.service;
 
+import io.hyun424.openchat.chat.room.partition.domain.RoomPartitionState;
+import io.hyun424.openchat.chat.room.partition.domain.RoomPartitionStatus;
+import io.hyun424.openchat.chat.room.partition.dto.RoomPartitionControlCommand;
+import io.hyun424.openchat.chat.room.partition.infra.RoomPartitionControlPublisher;
+import io.hyun424.openchat.chat.room.partition.metrics.RoomPartitionMetrics;
+import io.hyun424.openchat.chat.room.partition.repository.RoomPartitionStateRepository;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

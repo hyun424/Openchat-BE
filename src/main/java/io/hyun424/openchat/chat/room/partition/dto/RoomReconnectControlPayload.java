@@ -1,4 +1,4 @@
-package io.hyun424.openchat.chat.room.partition;
+package io.hyun424.openchat.chat.room.partition.dto;
 
 public record RoomReconnectControlPayload(
         String type,
