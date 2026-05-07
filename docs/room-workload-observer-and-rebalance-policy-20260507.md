@@ -219,3 +219,36 @@ score = roomWorkPerSecond
 포트폴리오에서는 다음 문장으로 정리할 수 있다.
 
 > 대규모 채팅의 확장 기준을 단순 접속자 수가 아니라 active fan-out work로 정의하고, 현재 구현의 actual delivery proxy와 개념적 `input_msg_tps * active_sessions` 모델을 구분했다. room tier, partition recommendation, shard assignment, drain/reconnect 금지 조건을 문서화해 작은 방 폭증과 hot room fan-out을 분리해서 판단할 수 있는 운영 모델을 세웠다.
+
+## 2026-05-07 Mixed-room Observer Smoke
+
+`20260507-mixed5-workload-smoke`로 recommendation-only observer가 실제 GCP role-split 환경에서 동작하는지 확인했다.
+
+핵심 결과는 다음이다.
+
+| 항목 | 결과 |
+| --- | ---: |
+| VU | `100` |
+| room shape | hot `1 x 40`, medium `3 x 15`, small `5 x 3` |
+| connect success | `100%` |
+| HTTP error rate | `0%` |
+| sent / ack / DB rows | `1,304 / 1,304 / 1,304` |
+| visible p95 / p99 | `37ms / 37ms` |
+| passive unexpected messages | `0` |
+| partition limited count | `0` |
+
+Realtime node별 after snapshot에서 다음 workload 계열 metric이 확인됐다.
+
+| node | actual delivery work max | conceptual work max | scale decision work max |
+| --- | ---: | ---: | ---: |
+| app-2 | `386/s` | `195/s` | `386/s` |
+| app-3 | `420/s` | `210/s` | `420/s` |
+
+이 결과는 자동 rebalance 성공을 의미하지 않는다. 의미는 더 좁다.
+
+- 현재 `roomWorkPerSecond`가 actual delivery proxy로 유지되는지 확인했다.
+- 개념 모델인 `input_msg_tps * active_sessions`를 별도 metric으로 볼 수 있게 했다.
+- `scaleDecisionWorkPerSecond = max(actual, conceptual)`가 recommendation 보조 신호로 남는지 확인했다.
+- mixed-room smoke 조건에서는 partition cap에 걸리는 방이 없었다.
+
+상세 결과는 `infra/gcp-loadtest/results/2026-05-07-mixed-room-workload-observer-smoke.md`에 기록했다.

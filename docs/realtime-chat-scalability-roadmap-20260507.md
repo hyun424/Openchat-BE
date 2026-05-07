@@ -254,3 +254,19 @@ K8s는 다음 조건이 생겼을 때 검토한다.
 5. scale-down, node drain, queue full 같은 운영 상황에서도 silent drop 대신 reconnect와 DB catch-up으로 복구하는 기반을 만들었다.
 
 이 방향은 단순 성능 수치보다 3년차 백엔드 개발자에게 기대되는 판단, 즉 병목 정의, 장애 범위 축소, 복구 경로 설계, 운영 가능성까지 고려했다는 점을 보여준다.
+
+## 2026-05-07 Update: Mixed-room Observer Smoke
+
+Roadmap의 다음 단계였던 mixed-room workload observer를 GCP small smoke로 1차 검증했다.
+
+실행은 hot room `1개`, medium room `3개`, small room `5개`가 섞인 `100 VU` smoke였고, DB rows와 ack count가 `1,304`건으로 일치했다. passive unexpected message는 `0`이었고, visible p95/p99는 `37ms / 37ms`였다.
+
+가장 중요한 확인점은 room workload 판단 지표를 분리해서 볼 수 있게 된 것이다.
+
+- `actualDeliveryWorkPerSecond`: 실제 outbound delivery 관측치
+- `conceptualRoomWorkPerSecond`: `input_msg_tps * active_sessions` 개념 모델
+- `scaleDecisionWorkPerSecond`: 두 값 중 큰 값을 recommendation 보조 신호로 사용
+
+이번 smoke에서는 Realtime node별 `scaleDecisionWorkPerSecond` max가 `386/s`, `420/s` 수준이라 partition 증설이 필요한 부하는 아니었다. 따라서 다음 과제는 자동 scale이 아니라, 더 현실적인 mixed-room workload에서 클러스터 전체 summary와 recommendation 기준을 어떻게 만들지 정리하는 것이다.
+
+상세 결과는 `infra/gcp-loadtest/results/2026-05-07-mixed-room-workload-observer-smoke.md`에 남겼다.
