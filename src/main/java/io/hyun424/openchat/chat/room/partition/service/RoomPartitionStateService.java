@@ -2,11 +2,11 @@ package io.hyun424.openchat.chat.room.partition.service;
 
 import io.hyun424.openchat.chat.room.partition.config.RoomPartitionProperties;
 import io.hyun424.openchat.chat.room.partition.domain.RoomPartitionState;
+import io.hyun424.openchat.chat.room.partition.domain.RoomPartitionStatus;
 import io.hyun424.openchat.chat.room.partition.metrics.RoomPartitionMetrics;
 import io.hyun424.openchat.chat.room.partition.policy.RoomPartitionPolicy;
 import io.hyun424.openchat.chat.room.partition.repository.RoomPartitionStateRepository;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -50,40 +50,43 @@ public class RoomPartitionStateService implements RoomPartitionStateOperations, 
 
     public RoomPartitionState getOrInitialize(Long roomId) {
         return repository.findById(roomId)
-                .orElseGet(() -> {
-                    RoomPartitionState initialized = RoomPartitionState.initialize(
-                            roomId,
-                            policy.initialPartitionCount(roomId),
-                            now(),
-                            SYSTEM_UPDATED_BY
-                    );
-                    metrics.recordState(initialized.getStatus());
-                    try {
-                        return repository.saveAndFlush(initialized);
-                    } catch (DataIntegrityViolationException e) {
-                        return repository.findByIdForUpdate(roomId)
-                                .orElseThrow(() -> e);
-                    }
-                });
+                .orElseGet(() -> initializeIfAbsentAndRead(roomId));
     }
 
     private RoomPartitionState getOrInitializeForUpdate(Long roomId) {
         return repository.findByIdForUpdate(roomId)
-                .orElseGet(() -> {
-                    RoomPartitionState initialized = RoomPartitionState.initialize(
-                            roomId,
-                            policy.initialPartitionCount(roomId),
-                            now(),
-                            SYSTEM_UPDATED_BY
-                    );
-                    metrics.recordState(initialized.getStatus());
-                    try {
-                        return repository.saveAndFlush(initialized);
-                    } catch (DataIntegrityViolationException e) {
-                        return repository.findByIdForUpdate(roomId)
-                                .orElseThrow(() -> e);
-                    }
-                });
+                .orElseGet(() -> initializeIfAbsentAndReadForUpdate(roomId));
+    }
+
+    public void ensureInitialized(Long roomId) {
+        if (!properties.enabled()) {
+            return;
+        }
+        getOrInitialize(roomId);
+    }
+
+    private RoomPartitionState initializeIfAbsentAndRead(Long roomId) {
+        initializeIfAbsent(roomId);
+        return repository.findById(roomId)
+                .orElseThrow(() -> new IllegalStateException("Room partition state was not initialized roomId=" + roomId));
+    }
+
+    private RoomPartitionState initializeIfAbsentAndReadForUpdate(Long roomId) {
+        initializeIfAbsent(roomId);
+        return repository.findByIdForUpdate(roomId)
+                .orElseThrow(() -> new IllegalStateException("Room partition state was not initialized roomId=" + roomId));
+    }
+
+    private void initializeIfAbsent(Long roomId) {
+        int inserted = repository.insertIfAbsent(
+                roomId,
+                policy.initialPartitionCount(roomId),
+                now(),
+                SYSTEM_UPDATED_BY
+        );
+        if (inserted > 0) {
+            metrics.recordState(RoomPartitionStatus.ACTIVE);
+        }
     }
 
     @Override

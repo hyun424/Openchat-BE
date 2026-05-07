@@ -8,6 +8,7 @@ import io.hyun424.openchat.chat.room.dto.RoomCreateRequest;
 import io.hyun424.openchat.chat.room.dto.RoomListResponse;
 import io.hyun424.openchat.chat.room.dto.RoomMapResponse;
 import io.hyun424.openchat.chat.room.lifecycle.RoomLifecyclePublisher;
+import io.hyun424.openchat.chat.room.partition.service.RoomPartitionStateService;
 import io.hyun424.openchat.global.exception.ApiException;
 import io.hyun424.openchat.global.exception.ErrorCode;
 import io.hyun424.openchat.chat.room.repository.RoomRepository;
@@ -36,7 +37,9 @@ public class RoomService {
     private final RoomAfterCommitExecutor afterCommitExecutor;
     private final ChatPipelineMetrics chatPipelineMetrics;
     private final RoomShardAssignmentService roomShardAssignmentService;
+    private final RoomPartitionStateService roomPartitionStateService;
 
+    @Transactional
     public Room createRoom(String userId, RoomCreateRequest request) {
         int shardId = roomShardAssignmentService.assignShardForNewRoom();
         Room.RoomBuilder builder = Room.builder()
@@ -61,7 +64,9 @@ public class RoomService {
             builder.meetingTime(LocalTime.parse(request.getMeetingTime()));
         }
 
-        return roomRepository.save(builder.build());
+        Room room = roomRepository.save(builder.build());
+        roomPartitionStateService.ensureInitialized(room.getId());
+        return room;
     }
 
     /**
