@@ -76,9 +76,15 @@ public class RoomMemberService {
     public JoinResult join(Long roomId, String userId) {
         long totalStartNanos = System.nanoTime();
         long lockStartNanos = System.nanoTime();
-        joinLock.acquireOrThrow(roomId, userId);
-        chatPipelineMetrics.recordStage("room_member.join.lock_acquire", lockStartNanos);
+        boolean joinLockAcquired = false;
+        boolean capacityLockAcquired = false;
         try {
+            joinLock.acquireOrThrow(roomId, userId);
+            joinLockAcquired = true;
+            joinLock.acquireRoomCapacityOrThrow(roomId);
+            capacityLockAcquired = true;
+            chatPipelineMetrics.recordStage("room_member.join.lock_acquire", lockStartNanos);
+
             long roomLookupStartNanos = System.nanoTime();
             Room room = reader.getRoomOrThrow(roomId);
             chatPipelineMetrics.recordStage("room_member.join.room_lookup", roomLookupStartNanos);
@@ -97,7 +103,12 @@ public class RoomMemberService {
             chatPipelineMetrics.recordStage("room_member.join.save", saveStartNanos);
             return new JoinResult(member.getStatus(), requiresApproval);
         } finally {
-            joinLock.release(roomId, userId);
+            if (capacityLockAcquired) {
+                joinLock.releaseRoomCapacity(roomId);
+            }
+            if (joinLockAcquired) {
+                joinLock.release(roomId, userId);
+            }
             chatPipelineMetrics.recordStage("room_member.join.total", totalStartNanos);
         }
     }
@@ -127,13 +138,18 @@ public class RoomMemberService {
      */
     @Transactional
     public void approveMember(Long roomId, String targetUserId, String requesterId) {
-        Room room = reader.getRoomOrThrow(roomId);
-        policy.ensureRoomOwner(room, requesterId);
-        policy.ensureRoomHasCapacity(room);
+        joinLock.acquireRoomCapacityOrThrow(roomId);
+        try {
+            Room room = reader.getRoomOrThrow(roomId);
+            policy.ensureRoomOwner(room, requesterId);
+            policy.ensureRoomHasCapacity(room);
 
-        RoomMember member = reader.getPendingMemberOrThrow(roomId, targetUserId);
-        member.approve();
-        log.info("APPROVE roomId={}, userId={}", roomId, targetUserId);
+            RoomMember member = reader.getPendingMemberOrThrow(roomId, targetUserId);
+            member.approve();
+            log.info("APPROVE roomId={}, userId={}", roomId, targetUserId);
+        } finally {
+            joinLock.releaseRoomCapacity(roomId);
+        }
     }
 
     /**

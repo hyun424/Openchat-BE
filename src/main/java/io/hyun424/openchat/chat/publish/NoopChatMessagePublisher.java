@@ -6,6 +6,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.stereotype.Service;
 
+import java.util.concurrent.CompletableFuture;
+
 /**
  * Fallback publisher when neither Redis nor Kafka is configured.
  * Only activated when no other ChatMessagePublisher bean exists.
@@ -26,8 +28,9 @@ public class NoopChatMessagePublisher implements ChatMessagePublisher {
     }
 
     @Override
-    public void publish(ChatMessageDto message) {
+    public CompletableFuture<Void> publish(ChatMessageDto message) {
         log.warn("[NOOP PUB] roomId={} messageId={} - NOT delivered (no Redis/Kafka configured)",
                 message.getRoomId(), message.getMessageId());
+        return CompletableFuture.completedFuture(null);
     }
 }

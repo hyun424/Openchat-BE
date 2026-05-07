@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
+import java.util.concurrent.CompletionException;
 
 @Slf4j
 @Service
@@ -96,8 +97,16 @@ public class OutboxEventProcessor {
 
     private void processMessageCreated(ChatMessageDto message) {
         long publishStartNanos = System.nanoTime();
-        publisher.publish(message);
-        chatPipelineMetrics.recordStage("outbox.publish.redis", publishStartNanos);
+        try {
+            publisher.publish(message).join();
+            chatPipelineMetrics.recordStage("outbox.publish", publishStartNanos);
+        } catch (CompletionException e) {
+            Throwable cause = e.getCause() == null ? e : e.getCause();
+            if (cause instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            throw new IllegalStateException(cause);
+        }
     }
 
     private void markPublished(Long id) {

@@ -17,6 +17,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -70,6 +71,7 @@ class OutboxEventProcessorTest {
                 .thenReturn(1);
         when(outboxEventRepository.findById(1L)).thenReturn(Optional.of(event));
         when(payloadSerializer.deserialize(event.getPayloadJson())).thenReturn(message);
+        when(publisher.publish(message)).thenReturn(CompletableFuture.completedFuture(null));
 
         int processed = processor.processBatch();
 
@@ -90,7 +92,7 @@ class OutboxEventProcessorTest {
                 .thenReturn(1);
         when(outboxEventRepository.findById(1L)).thenReturn(Optional.of(event));
         when(payloadSerializer.deserialize(event.getPayloadJson())).thenReturn(message);
-        doThrow(new RuntimeException("redis down")).when(publisher).publish(message);
+        when(publisher.publish(message)).thenReturn(CompletableFuture.failedFuture(new RuntimeException("redis down")));
 
         int processed = processor.processBatch();
 

@@ -162,7 +162,10 @@ public class RoomSessionRegistry {
             sessionStore.closeSession(session, new CloseStatus(1001, "Server shutting down"), "[WS REJECT]");
             return;
         }
-        sessionStore.add(roomId, session);
+        WebSocketSession storedSession = sessionStore.add(roomId, session);
+        if (storedSession == null) {
+            return;
+        }
         stateTracker.register(roomId, partitionId, session.getId());
         roomTrafficMonitor.recordJoin(roomId, count(roomId));
     }

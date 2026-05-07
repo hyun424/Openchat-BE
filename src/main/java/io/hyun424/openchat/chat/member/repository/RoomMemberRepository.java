@@ -48,4 +48,14 @@ public interface RoomMemberRepository
 
     @Query(value = "SELECT RELEASE_LOCK(CONCAT('room_join:', :roomId, ':', :userId))", nativeQuery = true)
     Integer releaseJoinLock(@Param("roomId") Long roomId, @Param("userId") String userId);
+
+    /**
+     * Room-level lock for capacity-changing operations.
+     */
+    @Query(value = "SELECT GET_LOCK(CONCAT('room_capacity:', :roomId), :timeoutSeconds)", nativeQuery = true)
+    Integer acquireRoomCapacityLock(@Param("roomId") Long roomId,
+                                    @Param("timeoutSeconds") int timeoutSeconds);
+
+    @Query(value = "SELECT RELEASE_LOCK(CONCAT('room_capacity:', :roomId))", nativeQuery = true)
+    Integer releaseRoomCapacityLock(@Param("roomId") Long roomId);
 }

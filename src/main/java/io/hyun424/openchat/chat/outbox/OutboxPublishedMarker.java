@@ -100,6 +100,7 @@ public class OutboxPublishedMarker {
 
         Integer updated = transactionTemplate.execute(status -> outboxEventRepository.markPublishedByIds(
                 drained,
+                OutboxEventStatus.PENDING,
                 OutboxEventStatus.PUBLISHED,
                 System.currentTimeMillis()
         ));
@@ -107,6 +108,10 @@ public class OutboxPublishedMarker {
         chatPipelineMetrics.recordStage("outbox.published_marker.flush", startNanos);
         chatPipelineMetrics.recordDistribution("openchat_outbox_published_marker_batch_size", "ids", drained.size());
         chatPipelineMetrics.recordDistribution("openchat_outbox_published_marker_updated", "rows", safeUpdated);
+        if (safeUpdated < drained.size()) {
+            chatPipelineMetrics.incrementCounter("outbox.published_marker.state_mismatch");
+            log.warn("[OUTBOX PUBLISHED MARKER MISMATCH] requested={} updated={}", drained.size(), safeUpdated);
+        }
         chatPipelineMetrics.incrementCounter("outbox.published_marker.flush.success");
         return safeUpdated;
     }

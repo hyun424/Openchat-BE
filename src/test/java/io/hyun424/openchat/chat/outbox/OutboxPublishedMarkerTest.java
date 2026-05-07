@@ -34,7 +34,7 @@ class OutboxPublishedMarkerTest {
     @DisplayName("큐에 쌓인 outbox id를 bulk PUBLISHED 마킹한다")
     void flushOnce_marksPublishedInBatch() {
         OutboxPublishedMarker marker = marker(10, 500, 60_000);
-        when(outboxEventRepository.markPublishedByIds(anyList(), eq(OutboxEventStatus.PUBLISHED), anyLong()))
+        when(outboxEventRepository.markPublishedByIds(anyList(), eq(OutboxEventStatus.PENDING), eq(OutboxEventStatus.PUBLISHED), anyLong()))
                 .thenReturn(3);
 
         marker.enqueue(1L);
@@ -46,7 +46,7 @@ class OutboxPublishedMarkerTest {
 
         assertEquals(3, updated);
         verify(outboxEventRepository).markPublishedByIds(eq(java.util.List.of(1L, 2L, 3L)),
-                eq(OutboxEventStatus.PUBLISHED), anyLong());
+                eq(OutboxEventStatus.PENDING), eq(OutboxEventStatus.PUBLISHED), anyLong());
         marker.shutdown();
     }
 

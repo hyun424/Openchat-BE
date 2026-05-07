@@ -5,6 +5,7 @@ import io.hyun424.openchat.chat.metrics.ChatPipelineMetrics;
 import io.hyun424.openchat.chat.room.hot.RoomTrafficMonitor;
 import io.hyun424.openchat.chat.room.partition.metrics.RoomPartitionMetrics;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
@@ -17,6 +18,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 @Slf4j
 public class WebSocketBroadcaster {
+
+    private static final CloseStatus BROADCAST_QUEUE_OVERLOADED = new CloseStatus(1013, "broadcast_queue_overloaded");
 
     private final RoomSessionStore store;
     private final SessionStateTracker stateTracker;
@@ -233,12 +236,40 @@ public class WebSocketBroadcaster {
                     List.copyOf(laneBatch),
                     System.nanoTime()
             );
-            laneExecutor.enqueue(task, this::runBroadcastTask);
-            taskCount++;
+            if (laneExecutor.enqueue(task, this::runBroadcastTask)) {
+                taskCount++;
+            } else {
+                closeOverloadedSessions(task);
+            }
         }
         chatPipelineMetrics.recordStage("ws.broadcast.enqueue.total", enqueueStartNanos);
         chatPipelineMetrics.recordDistribution("openchat_pipeline_broadcast_lane_tasks", payloadType, taskCount);
         return taskCount;
+    }
+
+    private void closeOverloadedSessions(BroadcastTask task) {
+        chatPipelineMetrics.incrementCounter("ws.broadcast.lane.overload.resync_required", task.sessions().size());
+        if (!task.sessions().isEmpty()) {
+            log.warn("[WS BROADCAST LANE OVERLOAD] roomId={} lane={} type={} sessions={} messages={} - closing sessions for reconnect/resync",
+                    task.roomId(), task.laneIndex(), task.payloadType(), task.sessions().size(), task.messages().size());
+        }
+
+        int closed = 0;
+        int closeFailed = 0;
+        Set<WebSocketSession> overloadedSessions = ConcurrentHashMap.newKeySet();
+        for (WebSocketSession session : task.sessions()) {
+            if (store.closeSession(session, BROADCAST_QUEUE_OVERLOADED, "[WS BROADCAST OVERLOAD CLOSE FAIL]")) {
+                closed++;
+            } else {
+                closeFailed++;
+            }
+            overloadedSessions.add(session);
+        }
+        chatPipelineMetrics.incrementCounter("ws.broadcast.lane.overload.sessions_closed", closed);
+        if (closeFailed > 0) {
+            chatPipelineMetrics.incrementCounter("ws.broadcast.lane.overload.close_failed", closeFailed);
+        }
+        removeDeadSessions(task.roomId(), overloadedSessions);
     }
 
     private int laneIndex(WebSocketSession session) {

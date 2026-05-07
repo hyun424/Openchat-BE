@@ -105,7 +105,13 @@ class RoomPartitionStateServiceTest {
         Map<Long, RoomPartitionState> states = new HashMap<>();
         RoomPartitionStateRepository repository = mock(RoomPartitionStateRepository.class);
         when(repository.findById(any())).thenAnswer(invocation -> Optional.ofNullable(states.get(invocation.getArgument(0))));
+        when(repository.findByIdForUpdate(any())).thenAnswer(invocation -> Optional.ofNullable(states.get(invocation.getArgument(0))));
         when(repository.save(any())).thenAnswer(invocation -> {
+            RoomPartitionState state = invocation.getArgument(0);
+            states.put(state.getRoomId(), state);
+            return state;
+        });
+        when(repository.saveAndFlush(any())).thenAnswer(invocation -> {
             RoomPartitionState state = invocation.getArgument(0);
             states.put(state.getRoomId(), state);
             return state;

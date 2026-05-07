@@ -8,6 +8,7 @@ import io.hyun424.openchat.chat.room.hot.RoomTrafficMonitor;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -101,8 +102,20 @@ public class ChatIngestService {
         log.debug("[INGEST START][{}] roomId={} senderId={} clientMessageId={}",
                 instanceId, roomId, senderId, clientMessageId);
 
-        PersistedChatMessage persisted = persistMessageAndOutbox(
-                roomId, senderId, nickname, content, normalizedClientMessageId, messageId, createdAt);
+        PersistedChatMessage persisted;
+        try {
+            persisted = persistMessageAndOutbox(
+                    roomId, senderId, nickname, content, normalizedClientMessageId, messageId, createdAt);
+        } catch (DataIntegrityViolationException e) {
+            Message concurrentDuplicate = findDuplicateAfterInsertRace(roomId, senderId, normalizedClientMessageId);
+            if (concurrentDuplicate != null) {
+                chatPipelineMetrics.incrementCounter("ingest.dedupe_unique_violation_recovered");
+                ChatMessageDto duplicateDto = ChatMessageDto.from(concurrentDuplicate);
+                duplicateDto.setClientMessageId(normalizedClientMessageId);
+                return new ChatIngestResult(duplicateDto, false, null);
+            }
+            throw e;
+        }
         rememberClientMessageId(roomId, senderId, normalizedClientMessageId);
         chatPipelineMetrics.recordStage("ingest.total", ingestStartNanos);
 
@@ -140,6 +153,19 @@ public class ChatIngestService {
         rememberClientMessageId(roomId, senderId, clientMessageId);
         log.info("[INGEST DEDUPE][{}] roomId={} senderId={} clientMessageId={} messageId={}",
                 instanceId, roomId, senderId, clientMessageId, existing.getMessageId());
+        return existing;
+    }
+
+    private Message findDuplicateAfterInsertRace(Long roomId, String senderId, String clientMessageId) {
+        if (clientMessageId == null) {
+            return null;
+        }
+        Message existing = messageService.findByClientMessageId(roomId, senderId, clientMessageId);
+        if (existing != null) {
+            rememberClientMessageId(roomId, senderId, clientMessageId);
+            log.info("[INGEST DEDUPE UNIQUE][{}] roomId={} senderId={} clientMessageId={} messageId={}",
+                    instanceId, roomId, senderId, clientMessageId, existing.getMessageId());
+        }
         return existing;
     }
 

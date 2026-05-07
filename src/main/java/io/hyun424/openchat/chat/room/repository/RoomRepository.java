@@ -46,7 +46,7 @@ public interface RoomRepository extends JpaRepository<Room, Long> {
      */
     @Query("SELECT r FROM Room r " +
            "JOIN RoomMember rm ON r.id = rm.roomId " +
-           "WHERE rm.userId = :userId AND rm.leftAt IS NULL AND r.status = 'ACTIVE' " +
+           "WHERE rm.userId = :userId AND rm.leftAt IS NULL AND rm.status = 'APPROVED' AND r.status = 'ACTIVE' " +
            "ORDER BY COALESCE(r.lastMessageAt, 0) DESC, r.createdAt DESC")
     List<Room> findMyRooms(@Param("userId") String userId);
 
