@@ -63,6 +63,12 @@ public class RealtimeWorkloadClusterSummaryService {
         int limitedCount = activeSnapshots.stream()
                 .mapToInt(RealtimeNodeWorkloadSnapshot::partitionRecommendationLimitedCount)
                 .sum();
+        long sendFailedDelta = activeSnapshots.stream()
+                .mapToLong(RealtimeNodeWorkloadSnapshot::sendFailedDelta)
+                .sum();
+        long reconnectSentDelta = activeSnapshots.stream()
+                .mapToLong(RealtimeNodeWorkloadSnapshot::reconnectSentDelta)
+                .sum();
         List<RoomWorkloadCandidate> topRooms = activeSnapshots.stream()
                 .flatMap(snapshot -> snapshot.topRooms().stream())
                 .sorted(Comparator.comparingLong(RoomWorkloadCandidate::scaleDecisionWorkPerSecond).reversed())
@@ -96,6 +102,8 @@ public class RealtimeWorkloadClusterSummaryService {
                 maxConceptual,
                 maxDecision,
                 limitedCount,
+                sendFailedDelta,
+                reconnectSentDelta,
                 topRooms,
                 recommendations
         );

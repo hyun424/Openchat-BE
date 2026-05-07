@@ -155,6 +155,48 @@ Recommendation:
 - 이 실행 시점의 `sendFailedDelta`, `reconnectSentDelta`는 snapshot schema에는 있었지만 실제 counter delta가 아니라 placeholder `0`이었다.
 - 이후 workload signal delta 보강으로 두 값은 node-local 누적 counter의 snapshot 간 증가량으로 채워진다. 다음 mixed-room/risk-injection 실행에서는 이 두 값을 결과 표에 함께 기록한다.
 
+### Signal Delta Smoke: 100 VU
+
+`Workload Signal Delta` 보강 후, cluster summary API가 `sendFailedDelta`와 `reconnectSentDelta`를 실제 응답에 노출하는지 확인하기 위해 작은 GCP smoke를 재실행했다. 첫 smoke `20260507-signal-delta-smoke`는 k6/DB는 정상 통과했지만 cluster summary DTO가 두 delta 필드를 집계 응답에서 누락하고 있음을 확인했다. 이후 summary aggregation을 보강하고 `20260507-signal-delta-smoke2`로 재실행했다.
+
+| 항목 | 값 | 판정 |
+| --- | ---:| --- |
+| run id | `20260507-signal-delta-smoke2` | - |
+| profile | `mixed-room-workload-smoke` | - |
+| k6 exit code | `0` | 통과 |
+| checks | `620 / 620` | 통과 |
+| WebSocket connect success | `100 / 100` | 통과 |
+| HTTP error rate | `0%` | 통과 |
+| sent / acked | `1,316 / 1,316` | 통과 |
+| DB rows | `1,316` | 통과 |
+| passive unexpected messages | `0` | 통과 |
+| ack p95 / p99 | `22ms / 26ms` | 통과 |
+| visible p95 / p99 | `42.25ms / 42.85ms` | 통과 |
+
+`realtime-workload-summary-during-100vu-4.json` 기준 cluster summary는 다음과 같았다.
+
+| 지표 | 값 |
+| --- | ---:|
+| active realtime nodes | `2` |
+| stale realtime nodes | `0` |
+| total sessions | `25` |
+| active sessions | `25` |
+| passive sessions | `0` |
+| max actual delivery work/sec | `20` |
+| max conceptual room work/sec | `16` |
+| max scale decision work/sec | `20` |
+| partition recommendation limited count | `0` |
+| send failed delta | `0` |
+| reconnect sent delta | `0` |
+| recommendation | `NO_ACTION` |
+
+해석:
+
+- `sendFailedDelta`와 `reconnectSentDelta`가 더 이상 placeholder 설명에만 머물지 않고 cluster summary 응답에 실제 필드로 포함된다.
+- 정상 smoke에서는 두 값 모두 `0`으로 나타났다. 이는 이번 실행에서 WebSocket send failure와 reconnect control 전송 증가가 없었다는 뜻이다.
+- 첫 smoke에서 발견한 문제는 runtime 문제가 아니라 node snapshot에 있던 delta 값을 cluster summary API가 노출하지 않던 DTO/aggregation 누락이었다.
+- 이번 smoke는 성능 수치 홍보가 아니라 observer/recommendation 신뢰도 확인용이다.
+
 ### Scenario B: Hot-biased Risk Injection 1500 VU
 
 이번 실행에서는 비용과 목적을 고려해 Scenario A까지만 GCP에서 검증했다. Scenario B는 다음 단계에서 recommendation threshold가 `WATCH`에서 `SCALE_UP_CANDIDATE`로 올라가는지 확인하기 위한 위험 주입 시나리오로 남긴다.

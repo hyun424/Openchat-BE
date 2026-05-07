@@ -15,6 +15,8 @@ public record RealtimeWorkloadClusterSummary(
         long maxConceptualRoomWorkPerSecond,
         long maxScaleDecisionWorkPerSecond,
         int partitionRecommendationLimitedCount,
+        long sendFailedDelta,
+        long reconnectSentDelta,
         List<RoomWorkloadCandidate> topRooms,
         List<RealtimeWorkloadRecommendation> recommendations
 ) {

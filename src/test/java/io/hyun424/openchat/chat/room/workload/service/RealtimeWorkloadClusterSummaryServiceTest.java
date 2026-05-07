@@ -29,8 +29,8 @@ class RealtimeWorkloadClusterSummaryServiceTest {
         RealtimeWorkloadSnapshotRepository repository = mock(RealtimeWorkloadSnapshotRepository.class);
         long now = System.currentTimeMillis();
         when(repository.readAll()).thenReturn(List.of(
-                snapshot("node-1", now - 1_000, now + 20_000, 10, 7, 3, 500),
-                snapshot("node-2", now - 60_000, now - 1, 99, 99, 0, 9_000)
+                snapshot("node-1", now - 1_000, now + 20_000, 10, 7, 3, 500, 2, 1),
+                snapshot("node-2", now - 60_000, now - 1, 99, 99, 0, 9_000, 99, 99)
         ));
         RealtimeWorkloadClusterSummaryService service = new RealtimeWorkloadClusterSummaryService(
                 repository,
@@ -48,6 +48,8 @@ class RealtimeWorkloadClusterSummaryServiceTest {
         assertEquals(7, summary.activeSessions());
         assertEquals(3, summary.passiveSessions());
         assertEquals(500, summary.maxScaleDecisionWorkPerSecond());
+        assertEquals(2, summary.sendFailedDelta());
+        assertEquals(1, summary.reconnectSentDelta());
         assertEquals(1, summary.topRooms().size());
         assertEquals("node-1", summary.topRooms().get(0).sourceNodeId());
         assertTrue(summary.recommendations().stream()
@@ -59,8 +61,8 @@ class RealtimeWorkloadClusterSummaryServiceTest {
         RealtimeWorkloadSnapshotRepository repository = mock(RealtimeWorkloadSnapshotRepository.class);
         long now = System.currentTimeMillis();
         when(repository.readAll()).thenReturn(List.of(
-                snapshot("node-1", now, now + 20_000, 10, 7, 3, 100),
-                snapshot("node-2", now, now + 20_000, 20, 15, 5, 900)
+                snapshot("node-1", now, now + 20_000, 10, 7, 3, 100, 2, 3),
+                snapshot("node-2", now, now + 20_000, 20, 15, 5, 900, 5, 7)
         ));
         RealtimeWorkloadClusterSummaryService service = new RealtimeWorkloadClusterSummaryService(
                 repository,
@@ -73,6 +75,8 @@ class RealtimeWorkloadClusterSummaryServiceTest {
 
         assertEquals(2, summary.activeNodeCount());
         assertEquals(30, summary.totalSessions());
+        assertEquals(7, summary.sendFailedDelta());
+        assertEquals(10, summary.reconnectSentDelta());
         assertEquals(900, summary.topRooms().get(0).scaleDecisionWorkPerSecond());
         assertEquals("node-2", summary.topRooms().get(0).sourceNodeId());
     }
@@ -83,7 +87,9 @@ class RealtimeWorkloadClusterSummaryServiceTest {
                                                   int totalSessions,
                                                   int activeSessions,
                                                   int passiveSessions,
-                                                  long decisionWork) {
+                                                  long decisionWork,
+                                                  long sendFailedDelta,
+                                                  long reconnectSentDelta) {
         return new RealtimeNodeWorkloadSnapshot(
                 nodeId,
                 "realtime",
@@ -99,8 +105,8 @@ class RealtimeWorkloadClusterSummaryServiceTest {
                 decisionWork / 2,
                 decisionWork,
                 0,
-                0,
-                0,
+                sendFailedDelta,
+                reconnectSentDelta,
                 List.of(new RoomWorkloadCandidate(
                         nodeId.equals("node-1") ? 1L : 2L,
                         decisionWork,

@@ -66,6 +66,8 @@ class RealtimeWorkloadInternalControllerTest {
                 300,
                 500,
                 0,
+                3,
+                4,
                 List.of(),
                 List.of(RealtimeWorkloadRecommendation.of(
                         RealtimeWorkloadRecommendationType.NO_ACTION,
@@ -81,6 +83,8 @@ class RealtimeWorkloadInternalControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.activeNodeCount").value(2))
                 .andExpect(jsonPath("$.totalSessions").value(100))
+                .andExpect(jsonPath("$.sendFailedDelta").value(3))
+                .andExpect(jsonPath("$.reconnectSentDelta").value(4))
                 .andExpect(jsonPath("$.recommendations[0].type").value("NO_ACTION"));
     }
 
