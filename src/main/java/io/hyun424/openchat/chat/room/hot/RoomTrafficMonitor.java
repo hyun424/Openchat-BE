@@ -37,8 +37,12 @@ public class RoomTrafficMonitor {
     private final AtomicLong maxDeliveryLagP95Millis = new AtomicLong(0);
     private final AtomicLong maxOutboundFanoutPerSecond = new AtomicLong(0);
     private final AtomicLong maxRoomWorkPerSecond = new AtomicLong(0);
+    private final AtomicLong maxActualDeliveryWorkPerSecond = new AtomicLong(0);
+    private final AtomicLong maxConceptualRoomWorkPerSecond = new AtomicLong(0);
+    private final AtomicLong maxScaleDecisionWorkPerSecond = new AtomicLong(0);
     private final AtomicInteger maxRecommendedPartitionCount = new AtomicInteger(1);
     private final AtomicInteger maxEffectivePartitionCount = new AtomicInteger(1);
+    private final AtomicInteger partitionRecommendationLimitedCount = new AtomicInteger(0);
     private final AtomicLong podWorkBudgetDeliveryPerSecond = new AtomicLong(0);
 
     public RoomTrafficMonitor() {
@@ -182,7 +186,7 @@ public class RoomTrafficMonitor {
         if (stats == null) {
             return new RoomTrafficSnapshot(
                     roomId, 0, 0, 0, 0, 0, 0, RoomHotState.NORMAL,
-                    0, 0, RoomScaleTier.SMALL, 1, 1
+                    0, 0, 0, 0, 0, RoomScaleTier.SMALL, 1, 1
             );
         }
         return stats.snapshot(clock.getAsLong(), partitionAdvisor);
@@ -203,8 +207,12 @@ public class RoomTrafficMonitor {
         long maxLag = 0;
         long maxFanout = 0;
         long maxRoomWork = 0;
+        long maxActualDeliveryWork = 0;
+        long maxConceptualRoomWork = 0;
+        long maxScaleDecisionWork = 0;
         int maxRecommendedPartitions = 1;
         int maxEffectivePartitions = 1;
+        int limitedPartitionRecommendations = 0;
 
         for (RoomTrafficStats stats : rooms.values()) {
             if (stats.isInactive(nowMillis, properties.inactiveTtlMillis())) {
@@ -224,16 +232,26 @@ public class RoomTrafficMonitor {
             maxLag = Math.max(maxLag, updatedSnapshot.deliveryLagP95Millis());
             maxFanout = Math.max(maxFanout, updatedSnapshot.outboundFanoutPerSecond());
             maxRoomWork = Math.max(maxRoomWork, updatedSnapshot.roomWorkPerSecond());
+            maxActualDeliveryWork = Math.max(maxActualDeliveryWork, updatedSnapshot.actualDeliveryWorkPerSecond());
+            maxConceptualRoomWork = Math.max(maxConceptualRoomWork, updatedSnapshot.conceptualRoomWorkPerSecond());
+            maxScaleDecisionWork = Math.max(maxScaleDecisionWork, updatedSnapshot.scaleDecisionWorkPerSecond());
             maxRecommendedPartitions = Math.max(maxRecommendedPartitions, updatedSnapshot.recommendedPartitions());
             maxEffectivePartitions = Math.max(maxEffectivePartitions, updatedSnapshot.effectivePartitions());
+            if (updatedSnapshot.partitionRecommendationLimited()) {
+                limitedPartitionRecommendations++;
+            }
         }
 
         inactiveRooms.forEach(rooms::remove);
         maxDeliveryLagP95Millis.set(maxLag);
         maxOutboundFanoutPerSecond.set(maxFanout);
         maxRoomWorkPerSecond.set(maxRoomWork);
+        maxActualDeliveryWorkPerSecond.set(maxActualDeliveryWork);
+        maxConceptualRoomWorkPerSecond.set(maxConceptualRoomWork);
+        maxScaleDecisionWorkPerSecond.set(maxScaleDecisionWork);
         maxRecommendedPartitionCount.set(maxRecommendedPartitions);
         maxEffectivePartitionCount.set(maxEffectivePartitions);
+        partitionRecommendationLimitedCount.set(limitedPartitionRecommendations);
     }
 
     @PreDestroy
@@ -317,14 +335,18 @@ public class RoomTrafficMonitor {
         }
 
         stats.transitionScaleTierTo(nextTier, nowMillis);
-        log.info("[ROOM SCALE TIER] roomId={} {} -> {} roomWorkPerSec={} activeSessions={} recommendedPartitions={} effectivePartitions={}",
+        log.info("[ROOM SCALE TIER] roomId={} {} -> {} roomWorkPerSec={} actualDeliveryWorkPerSec={} conceptualRoomWorkPerSec={} scaleDecisionWorkPerSec={} activeSessions={} recommendedPartitions={} effectivePartitions={} limitedByMaxPartition={}",
                 snapshot.roomId(),
                 currentTier,
                 nextTier,
                 snapshot.roomWorkPerSecond(),
+                snapshot.actualDeliveryWorkPerSecond(),
+                snapshot.conceptualRoomWorkPerSecond(),
+                snapshot.scaleDecisionWorkPerSecond(),
                 snapshot.activeSessions(),
                 snapshot.recommendedPartitions(),
-                snapshot.effectivePartitions());
+                snapshot.effectivePartitions(),
+                snapshot.partitionRecommendationLimited());
     }
 
     private void registerGauges(MeterRegistry meterRegistry) {
@@ -355,6 +377,18 @@ public class RoomTrafficMonitor {
                         maxRoomWorkPerSecond, AtomicLong::get)
                 .description("Maximum room work rate per second")
                 .register(meterRegistry);
+        Gauge.builder("openchat_room_actual_delivery_work_max_per_second",
+                        maxActualDeliveryWorkPerSecond, AtomicLong::get)
+                .description("Maximum actual WebSocket delivery work rate per second")
+                .register(meterRegistry);
+        Gauge.builder("openchat_room_conceptual_work_max_per_second",
+                        maxConceptualRoomWorkPerSecond, AtomicLong::get)
+                .description("Maximum conceptual room work rate per second, input messages multiplied by active sessions")
+                .register(meterRegistry);
+        Gauge.builder("openchat_room_scale_decision_work_max_per_second",
+                        maxScaleDecisionWorkPerSecond, AtomicLong::get)
+                .description("Maximum conservative room work rate used as scale decision observation")
+                .register(meterRegistry);
         Gauge.builder("openchat_room_partition_recommended_count_max",
                         maxRecommendedPartitionCount, AtomicInteger::get)
                 .description("Maximum recommended fan-out partition count")
@@ -362,6 +396,10 @@ public class RoomTrafficMonitor {
         Gauge.builder("openchat_room_partition_effective_count_max",
                         maxEffectivePartitionCount, AtomicInteger::get)
                 .description("Maximum effective fan-out partition count after configured cap")
+                .register(meterRegistry);
+        Gauge.builder("openchat_room_partition_recommendation_limited_count",
+                        partitionRecommendationLimitedCount, AtomicInteger::get)
+                .description("Number of active rooms whose recommended partition count exceeds configured effective limit")
                 .register(meterRegistry);
         Gauge.builder("openchat_room_pod_budget_delivery_per_second",
                         podWorkBudgetDeliveryPerSecond, AtomicLong::get)

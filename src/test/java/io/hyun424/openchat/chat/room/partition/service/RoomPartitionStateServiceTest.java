@@ -149,6 +149,9 @@ class RoomPartitionStateServiceTest {
                 RoomHotState.NORMAL,
                 0,
                 0,
+                0,
+                0,
+                0,
                 tier,
                 effectivePartitions,
                 effectivePartitions

@@ -1,5 +1,6 @@
 package io.hyun424.openchat.chat.room.hot;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.atomic.AtomicLong;
@@ -132,6 +133,45 @@ class RoomTrafficMonitorTest {
         assertEquals(16, scaleMonitor.snapshot(3L).effectivePartitions());
     }
 
+    @Test
+    void snapshotSeparatesActualConceptualAndDecisionWork() {
+        RoomTrafficMonitor scaleMonitor = scaleMonitor(0, 0);
+
+        scaleMonitor.recordOutboundFanout(1L, 20_000, 300);
+        for (int i = 0; i < 100; i++) {
+            scaleMonitor.recordInboundMessage(1L);
+        }
+        scaleMonitor.refresh();
+
+        RoomTrafficSnapshot snapshot = scaleMonitor.snapshot(1L);
+        assertEquals(20_000, snapshot.outboundFanoutPerSecond());
+        assertEquals(20_000, snapshot.roomWorkPerSecond());
+        assertEquals(20_000, snapshot.actualDeliveryWorkPerSecond());
+        assertEquals(30_000, snapshot.conceptualRoomWorkPerSecond());
+        assertEquals(30_000, snapshot.scaleDecisionWorkPerSecond());
+        assertEquals(2, snapshot.recommendedPartitions());
+    }
+
+    @Test
+    void limitedPartitionRecommendationIsExposedAsMetric() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        RoomTrafficMonitor scaleMonitor = scaleMonitor(registry, 0, 0);
+
+        scaleMonitor.recordOutboundFanout(1L, 189_000, 450);
+        scaleMonitor.recordOutboundFanout(2L, 1_000, 1_001);
+        scaleMonitor.refresh();
+
+        assertEquals(1.0,
+                registry.get("openchat_room_partition_recommendation_limited_count").gauge().value(),
+                0.0);
+        assertEquals(189_000.0,
+                registry.get("openchat_room_actual_delivery_work_max_per_second").gauge().value(),
+                0.0);
+        assertEquals(189_000.0,
+                registry.get("openchat_room_scale_decision_work_max_per_second").gauge().value(),
+                0.0);
+    }
+
     private RoomHotStateProperties testProperties() {
         return new RoomHotStateProperties(
                 10,
@@ -168,8 +208,14 @@ class RoomTrafficMonitorTest {
     }
 
     private RoomTrafficMonitor scaleMonitor(long upgradeStableMillis, long downgradeStableMillis) {
+        return scaleMonitor(null, upgradeStableMillis, downgradeStableMillis);
+    }
+
+    private RoomTrafficMonitor scaleMonitor(SimpleMeterRegistry registry,
+                                            long upgradeStableMillis,
+                                            long downgradeStableMillis) {
         return new RoomTrafficMonitor(
-                null,
+                registry,
                 new RoomHotStateProperties(
                         1,
                         128,

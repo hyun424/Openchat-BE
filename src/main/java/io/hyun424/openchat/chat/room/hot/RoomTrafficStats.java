@@ -78,19 +78,26 @@ final class RoomTrafficStats {
     }
 
     RoomTrafficSnapshot snapshot(long nowMillis, RoomPartitionAdvisor partitionAdvisor) {
-        long roomWorkPerSecond = outboundFanout.ratePerSecond(nowMillis);
+        long inboundMessagesPerSecond = inboundMessages.ratePerSecond(nowMillis);
+        long actualDeliveryWorkPerSecond = outboundFanout.ratePerSecond(nowMillis);
         int activeSessionCount = activeSessions.get();
+        long conceptualRoomWorkPerSecond = safeMultiply(inboundMessagesPerSecond, activeSessionCount);
+        long scaleDecisionWorkPerSecond = Math.max(actualDeliveryWorkPerSecond, conceptualRoomWorkPerSecond);
+        long roomWorkPerSecond = actualDeliveryWorkPerSecond;
         return new RoomTrafficSnapshot(
                 roomId,
                 connectedSessions.get(),
                 joins.ratePerSecond(nowMillis),
-                inboundMessages.ratePerSecond(nowMillis),
-                roomWorkPerSecond,
+                inboundMessagesPerSecond,
+                actualDeliveryWorkPerSecond,
                 deliveryLag.p95(nowMillis),
                 laneQueueWait.p95(nowMillis),
                 state,
                 activeSessionCount,
                 roomWorkPerSecond,
+                actualDeliveryWorkPerSecond,
+                conceptualRoomWorkPerSecond,
+                scaleDecisionWorkPerSecond,
                 scaleTier,
                 partitionAdvisor.recommendedPartitionCount(roomWorkPerSecond, activeSessionCount),
                 partitionAdvisor.effectivePartitionCount(roomWorkPerSecond, activeSessionCount)
@@ -157,6 +164,17 @@ final class RoomTrafficStats {
             return requiredMillis <= 0;
         }
         return nowMillis - lastScaleCandidateChangedMillis >= requiredMillis;
+    }
+
+    private long safeMultiply(long left, int right) {
+        if (left <= 0 || right <= 0) {
+            return 0;
+        }
+        long result = left * (long) right;
+        if (result / right != left) {
+            return Long.MAX_VALUE;
+        }
+        return result;
     }
 
     private void markActive(long nowMillis) {
