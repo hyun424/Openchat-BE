@@ -4,6 +4,7 @@ import io.hyun424.openchat.infra.redis.health.RedisHealthState;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.actuate.health.Health;
 import org.springframework.boot.actuate.health.HealthIndicator;
+import org.springframework.data.redis.connection.RedisConnection;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.stereotype.Component;
 
@@ -22,9 +23,9 @@ public class RedisCustomHealthIndicator implements HealthIndicator {
                     .build();
         }
 
-        try {
+        try (RedisConnection connection = redisConnectionFactory.getConnection()) {
             long start = System.currentTimeMillis();
-            String pong = redisConnectionFactory.getConnection().ping();
+            String pong = connection.ping();
             long latency = System.currentTimeMillis() - start;
 
             return Health.up()

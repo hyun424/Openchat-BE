@@ -39,6 +39,21 @@ class ChatFanoutServiceTest {
     }
 
     @Test
+    @DisplayName("partition fanout은 같은 messageId라도 partition별로 한 번씩 전송한다")
+    void fanout_sameMessageIdDifferentPartitions_sendsOncePerPartition() throws Exception {
+        ChatMessageDto message = message("message-partition");
+
+        fanoutService.fanout(message, 0);
+        fanoutService.fanout(message, 1);
+        fanoutService.fanout(message, 1);
+        assertTrue(fanoutService.awaitBatchIdle(500));
+
+        verify(outboundSender).send(message, 0);
+        verify(outboundSender).send(message, 1);
+        verify(outboundSender, times(2)).send(eq(message), anyInt());
+    }
+
+    @Test
     @DisplayName("서로 다른 인스턴스는 같은 messageId라도 각자 local 세션에 전송한다")
     void fanout_sameMessageIdDifferentInstances_eachSendsLocally() throws Exception {
         ChatOutboundSender anotherOutboundSender = mock(ChatOutboundSender.class);

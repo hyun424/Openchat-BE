@@ -33,6 +33,7 @@ public class RoomService {
     private final RoomRepository roomRepository;
     private final RoomSessionRegistry roomSessionRegistry;
     private final RoomLifecyclePublisher roomLifecyclePublisher;
+    private final RoomAfterCommitExecutor afterCommitExecutor;
     private final ChatPipelineMetrics chatPipelineMetrics;
     private final RoomShardAssignmentService roomShardAssignmentService;
 
@@ -128,9 +129,10 @@ public class RoomService {
         room.delete();
         log.info("[ROOM DELETE] roomId={} by owner={}", roomId, userId);
 
-        // 해당 방의 모든 WebSocket 세션 종료
-        roomSessionRegistry.closeAllSessionsInRoom(roomId);
-        roomLifecyclePublisher.publishRoomEnded(roomId, "OWNER_DELETED");
+        afterCommitExecutor.execute(() -> {
+            roomSessionRegistry.closeAllSessionsInRoom(roomId);
+            roomLifecyclePublisher.publishRoomEnded(roomId, "OWNER_DELETED");
+        });
     }
 
     /**

@@ -17,13 +17,16 @@ import org.springframework.web.socket.handler.SessionLimitExceededException;
 import java.io.IOException;
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentCaptor.forClass;
@@ -186,6 +189,47 @@ class RoomSessionRegistryTest {
     }
 
     @Test
+    @DisplayName("broadcast lane queue full 시 대상 세션을 닫고 registry에서 제거한다")
+    void sendToRoom_queueFull_closesAffectedSessionsForResync() throws Exception {
+        SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+        ChatPipelineMetrics metrics = new ChatPipelineMetrics(meterRegistry);
+        RoomSessionRegistry registry = new RoomSessionRegistry(new ObjectMapper(), new RoomTrafficMonitor(), metrics,
+                1, 0, 1, 5000);
+        WebSocketSession blocking = mockOpenSession("blocking-session");
+        WebSocketSession queued = mockOpenSession("queued-session");
+        WebSocketSession overloaded = mockOpenSession("overloaded-session");
+        CountDownLatch firstSendStarted = new CountDownLatch(1);
+        CountDownLatch releaseFirstSend = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            firstSendStarted.countDown();
+            releaseFirstSend.await(1, TimeUnit.SECONDS);
+            return null;
+        }).when(blocking).sendMessage(any(TextMessage.class));
+        registry.add(1L, blocking);
+        registry.add(1L, queued);
+        registry.add(1L, overloaded);
+
+        registry.sendToRoom(1L, message(1L, "blocking"));
+        assertTrue(firstSendStarted.await(500, TimeUnit.MILLISECONDS));
+        registry.sendToRoom(1L, message(2L, "queued"));
+        registry.sendToRoom(1L, message(3L, "overloaded"));
+
+        ArgumentCaptor<CloseStatus> closeCaptor = ArgumentCaptor.forClass(CloseStatus.class);
+        verify(blocking, timeout(500)).close(any(CloseStatus.class));
+        verify(queued, timeout(500)).close(any(CloseStatus.class));
+        verify(overloaded, timeout(500)).close(closeCaptor.capture());
+        assertEquals(1013, closeCaptor.getValue().getCode());
+        assertEquals("broadcast_queue_overloaded", closeCaptor.getValue().getReason());
+        awaitCounter(meterRegistry, "ws.broadcast.lane.overload.sessions_closed", 3);
+        awaitCounter(meterRegistry, "ws.broadcast.lane.overload.resync_required", 3);
+        awaitRoomCount(registry, 1L, 0);
+
+        releaseFirstSend.countDown();
+        registry.shutdownExecutor();
+        metrics.shutdown();
+    }
+
+    @Test
     @DisplayName("입장/퇴장과 전송 시 방 단위 traffic metric을 기록한다")
     void roomTrafficMetricsRecorded() throws Exception {
         RoomTrafficMonitor monitor = mock(RoomTrafficMonitor.class);
@@ -237,6 +281,56 @@ class RoomSessionRegistryTest {
         registry.sendToRoom(1L, message());
 
         verify(session, timeout(500)).sendMessage(any(TextMessage.class));
+        registry.shutdownExecutor();
+    }
+
+    @Test
+    @DisplayName("partition fan-out은 같은 partition 세션에만 전송한다")
+    void sendToRoom_partition_sendsOnlyMatchingPartition() throws Exception {
+        RoomSessionRegistry registry = new RoomSessionRegistry(new ObjectMapper(), 2, 16);
+        WebSocketSession partition0 = mockOpenSession("partition-0");
+        WebSocketSession partition1 = mockOpenSession("partition-1");
+        registry.add(1L, 0, partition0);
+        registry.add(1L, 1, partition1);
+
+        registry.sendToRoom(1L, 1, message());
+
+        verify(partition0, never()).sendMessage(any(TextMessage.class));
+        verify(partition1, timeout(500)).sendMessage(any(TextMessage.class));
+        registry.shutdownExecutor();
+    }
+
+    @Test
+    @DisplayName("partition별 열린 세션 id만 조회한다")
+    void openSessionIds_filtersByPartitionAndOpenState() {
+        RoomSessionRegistry registry = new RoomSessionRegistry(new ObjectMapper(), 2, 16);
+        WebSocketSession partition0 = mockOpenSession("partition-0");
+        WebSocketSession partition1 = mockOpenSession("partition-1");
+        WebSocketSession closedPartition1 = mockSession("closed-partition-1", false);
+        registry.add(1L, 0, partition0);
+        registry.add(1L, 1, partition1);
+        registry.add(1L, 1, closedPartition1);
+
+        Set<String> sessionIds = new HashSet<>(registry.openSessionIds(1L, 1));
+
+        assertEquals(Set.of("partition-1"), sessionIds);
+        registry.shutdownExecutor();
+    }
+
+    @Test
+    @DisplayName("partition 내부에서도 passive 세션은 full fan-out 대상에서 제외한다")
+    void sendToRoom_partitionPassive_omitsFullPayload() throws Exception {
+        RoomSessionRegistry registry = new RoomSessionRegistry(new ObjectMapper(), 2, 16);
+        WebSocketSession active = mockOpenSession("active-partition");
+        WebSocketSession passive = mockOpenSession("passive-partition");
+        registry.add(1L, 1, active);
+        registry.add(1L, 1, passive);
+        registry.markPassive(1L, "passive-partition", 10L);
+
+        registry.sendToRoom(1L, 1, message());
+
+        verify(active, timeout(500)).sendMessage(any(TextMessage.class));
+        verify(passive, never()).sendMessage(any(TextMessage.class));
         registry.shutdownExecutor();
     }
 

@@ -10,6 +10,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.stereotype.Service;
 
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
@@ -75,8 +76,8 @@ public class PostCommitLivePublishService {
         long totalStartNanos = System.nanoTime();
         try {
             long publishStartNanos = System.nanoTime();
-            publisher.publish(message);
-            chatPipelineMetrics.recordStage("live_publish.redis", publishStartNanos);
+            awaitPublish(message);
+            chatPipelineMetrics.recordStage("live_publish.publish", publishStartNanos);
             outboxPublishedMarker.enqueue(outboxEventId);
             chatPipelineMetrics.recordStage("live_publish.total", totalStartNanos);
             chatPipelineMetrics.incrementCounter("live_publish.success");
@@ -85,6 +86,18 @@ public class PostCommitLivePublishService {
             chatPipelineMetrics.incrementCounter("live_publish.fail");
             log.warn("[LIVE PUBLISH FAIL] roomId={} messageId={} - outbox will retry",
                     message.getRoomId(), message.getMessageId(), e);
+        }
+    }
+
+    private void awaitPublish(ChatMessageDto message) {
+        try {
+            publisher.publish(message).join();
+        } catch (CompletionException e) {
+            Throwable cause = e.getCause() == null ? e : e.getCause();
+            if (cause instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            throw new IllegalStateException(cause);
         }
     }
 

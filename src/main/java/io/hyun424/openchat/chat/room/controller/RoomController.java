@@ -8,6 +8,8 @@ import io.hyun424.openchat.chat.room.dto.RoomCreateRequest;
 import io.hyun424.openchat.chat.room.dto.RoomListResponse;
 import io.hyun424.openchat.chat.room.dto.RoomMapResponse;
 import io.hyun424.openchat.chat.room.dto.RoomResponse;
+import io.hyun424.openchat.chat.room.partition.dto.RoomPartitionRoute;
+import io.hyun424.openchat.chat.room.partition.service.RoomPartitionRoutingService;
 import io.hyun424.openchat.chat.room.service.RoomService;
 import io.hyun424.openchat.global.exception.ApiException;
 import io.hyun424.openchat.global.exception.ErrorCode;
@@ -33,6 +35,7 @@ public class RoomController {
 
     private final RoomService roomService;
     private final RoomMemberService roomMemberService;
+    private final RoomPartitionRoutingService roomPartitionRoutingService;
 
     private static final int DEFAULT_PAGE = 0;
     private static final int MAX_PAGE_SIZE = 50;
@@ -107,6 +110,17 @@ public class RoomController {
         Room room = roomService.getRoomOrThrow(roomId);
         int currentMembers = roomMemberService.getApprovedMemberCount(roomId);
         return ResponseEntity.ok(RoomDetailResponse.from(room, currentMembers));
+    }
+
+    @GetMapping("/{roomId}/ws-route")
+    public ResponseEntity<RoomPartitionRoute> getWebSocketRoute(
+            @PathVariable @Positive Long roomId,
+            Authentication authentication
+    ) {
+        String userId = authenticatedUserId(authentication);
+        roomService.getActiveRoomOrThrow(roomId);
+        roomMemberService.getJoinedAtOrThrow(roomId, userId);
+        return ResponseEntity.ok(roomPartitionRoutingService.route(roomId, userId));
     }
 
     public record RoomDetailResponse(

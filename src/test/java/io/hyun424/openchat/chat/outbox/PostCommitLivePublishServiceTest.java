@@ -10,6 +10,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.concurrent.CompletableFuture;
+
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
@@ -38,6 +40,7 @@ class PostCommitLivePublishServiceTest {
     @DisplayName("commit 이후 async live publish 성공 시 marker에 outbox id를 넘긴다")
     void publishAsync_successEnqueuesPublishedMarker() {
         ChatMessageDto message = message();
+        when(publisher.publish(message)).thenReturn(CompletableFuture.completedFuture(null));
 
         service.publishAsync(message, 99L);
 
@@ -49,7 +52,7 @@ class PostCommitLivePublishServiceTest {
     @DisplayName("async live publish 실패 시 marker를 호출하지 않고 outbox worker retry에 맡긴다")
     void publishAsync_failureSkipsPublishedMarker() {
         ChatMessageDto message = message();
-        doThrow(new RuntimeException("redis down")).when(publisher).publish(message);
+        when(publisher.publish(message)).thenReturn(CompletableFuture.failedFuture(new RuntimeException("redis down")));
 
         service.publishAsync(message, 99L);
 

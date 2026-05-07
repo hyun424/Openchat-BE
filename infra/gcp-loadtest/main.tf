@@ -402,14 +402,24 @@ resource "google_compute_instance" "api" {
 
   metadata = {
     startup-script = templatefile("${path.module}/templates/app-startup.sh.tftpl", {
-      bucket_name               = google_storage_bucket.results.name
-      source_object             = google_storage_bucket_object.source.name
-      run_id                    = var.run_id
-      app_role                  = "api"
-      app_index                 = count.index + 1
-      mysql_ip                  = google_compute_instance.mysql.network_interface[0].network_ip
-      redis_ip                  = google_compute_instance.redis.network_interface[0].network_ip
-      websocket_broadcast_lanes = var.websocket_broadcast_lanes
+      bucket_name                            = google_storage_bucket.results.name
+      source_object                          = google_storage_bucket_object.source.name
+      run_id                                 = var.run_id
+      app_role                               = "api"
+      app_index                              = count.index + 1
+      mysql_ip                               = google_compute_instance.mysql.network_interface[0].network_ip
+      redis_ip                               = google_compute_instance.redis.network_interface[0].network_ip
+      websocket_broadcast_lanes              = var.websocket_broadcast_lanes
+      room_shard_enabled                     = var.room_shard_enabled ? "true" : "false"
+      room_shard_shard_count                 = var.room_shard_shard_count
+      room_shard_owned_shards                = tostring(count.index % var.room_shard_shard_count)
+      room_shard_legacy_subscribe_enabled    = var.room_shard_legacy_subscribe_enabled ? "true" : "false"
+      room_partition_enabled                 = var.room_partition_enabled ? "true" : "false"
+      room_partition_partition_count         = var.room_partition_partition_count
+      room_partition_owned_partitions        = tostring(count.index % var.room_partition_partition_count)
+      room_partition_hot_tier_threshold      = var.room_partition_hot_tier_threshold
+      room_partition_max_partitions_per_room = var.room_partition_max_partitions_per_room
+      room_partition_admin_api_enabled       = var.room_partition_admin_api_enabled ? "true" : "false"
     })
     shutdown-script = templatefile("${path.module}/templates/vm-shutdown.sh.tftpl", {
       run_id      = var.run_id
@@ -456,14 +466,24 @@ resource "google_compute_instance" "realtime" {
 
   metadata = {
     startup-script = templatefile("${path.module}/templates/app-startup.sh.tftpl", {
-      bucket_name               = google_storage_bucket.results.name
-      source_object             = google_storage_bucket_object.source.name
-      run_id                    = var.run_id
-      app_role                  = "realtime"
-      app_index                 = count.index + 1
-      mysql_ip                  = google_compute_instance.mysql.network_interface[0].network_ip
-      redis_ip                  = google_compute_instance.redis.network_interface[0].network_ip
-      websocket_broadcast_lanes = var.websocket_broadcast_lanes
+      bucket_name                            = google_storage_bucket.results.name
+      source_object                          = google_storage_bucket_object.source.name
+      run_id                                 = var.run_id
+      app_role                               = "realtime"
+      app_index                              = count.index + 1
+      mysql_ip                               = google_compute_instance.mysql.network_interface[0].network_ip
+      redis_ip                               = google_compute_instance.redis.network_interface[0].network_ip
+      websocket_broadcast_lanes              = var.websocket_broadcast_lanes
+      room_shard_enabled                     = var.room_shard_enabled ? "true" : "false"
+      room_shard_shard_count                 = var.room_shard_shard_count
+      room_shard_owned_shards                = tostring(count.index % var.room_shard_shard_count)
+      room_shard_legacy_subscribe_enabled    = var.room_shard_legacy_subscribe_enabled ? "true" : "false"
+      room_partition_enabled                 = var.room_partition_enabled ? "true" : "false"
+      room_partition_partition_count         = var.room_partition_partition_count
+      room_partition_owned_partitions        = tostring(count.index % var.room_partition_partition_count)
+      room_partition_hot_tier_threshold      = var.room_partition_hot_tier_threshold
+      room_partition_max_partitions_per_room = var.room_partition_max_partitions_per_room
+      room_partition_admin_api_enabled       = var.room_partition_admin_api_enabled ? "true" : "false"
     })
     shutdown-script = templatefile("${path.module}/templates/vm-shutdown.sh.tftpl", {
       run_id      = var.run_id
@@ -629,6 +649,7 @@ resource "google_compute_instance" "k6" {
       k6_worker_index              = count.index + 1
       k6_worker_count              = var.k6_worker_count
       k6_is_coordinator            = count.index == 0 ? "true" : "false"
+      k6_cleanup_enabled           = var.k6_cleanup_enabled ? "true" : "false"
       monitoring_vm_name           = var.enable_monitoring ? google_compute_instance.monitoring[0].name : ""
       monitoring_internal_ip       = var.enable_monitoring ? google_compute_instance.monitoring[0].network_interface[0].network_ip : ""
       enable_monitoring            = var.enable_monitoring ? "true" : "false"

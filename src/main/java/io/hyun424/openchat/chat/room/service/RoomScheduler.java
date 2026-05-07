@@ -22,6 +22,7 @@ public class RoomScheduler {
     private final RoomRepository roomRepository;
     private final RoomSessionRegistry roomSessionRegistry;
     private final RoomLifecyclePublisher roomLifecyclePublisher;
+    private final RoomAfterCommitExecutor afterCommitExecutor;
 
     /**
      * 매 10분마다 만료된 방 자동 종료
@@ -47,9 +48,11 @@ public class RoomScheduler {
             log.info("[SCHEDULER] Auto-ended room: id={}, name={}, meetingDate={}, meetingTime={}",
                     room.getId(), room.getName(), room.getMeetingDate(), room.getMeetingTime());
 
-            // 해당 방의 모든 WebSocket 세션 종료
-            roomSessionRegistry.closeAllSessionsInRoom(room.getId());
-            roomLifecyclePublisher.publishRoomEnded(room.getId(), "SCHEDULED_EXPIRED");
+            Long roomId = room.getId();
+            afterCommitExecutor.execute(() -> {
+                roomSessionRegistry.closeAllSessionsInRoom(roomId);
+                roomLifecyclePublisher.publishRoomEnded(roomId, "SCHEDULED_EXPIRED");
+            });
         }
     }
 }
