@@ -259,6 +259,22 @@ public class RoomSessionRegistry {
         return getSessions(roomId).size();
     }
 
+    public List<String> openSessionIds(Long roomId, Integer partitionId) {
+        Set<WebSocketSession> sessions = getSessions(roomId);
+        if (sessions.isEmpty()) {
+            return List.of();
+        }
+
+        List<String> sessionIds = new ArrayList<>(sessions.size());
+        for (WebSocketSession session : sessions) {
+            if (!matchesPartition(session, partitionId) || !session.isOpen()) {
+                continue;
+            }
+            sessionIds.add(session.getId());
+        }
+        return sessionIds;
+    }
+
     public int totalBroadcastQueueDepth() {
         int total = 0;
         for (ThreadPoolExecutor executor : broadcastLaneExecutors) {
@@ -466,20 +482,22 @@ public class RoomSessionRegistry {
         return message.getSequence() != null ? message.getSequence() : message.getId();
     }
 
-    public void sendControlToSession(String sessionId, Object payload, String payloadType) {
+    public boolean sendControlToSession(String sessionId, Object payload, String payloadType) {
         WebSocketSession session = sessionsById.get(sessionId);
         if (session == null || !session.isOpen()) {
-            return;
+            return false;
         }
 
         long startNanos = System.nanoTime();
         try {
             session.sendMessage(new TextMessage(objectMapper.writeValueAsString(payload)));
             chatPipelineMetrics.recordStage("ws.control." + payloadType + ".send", startNanos);
+            return true;
         } catch (Exception e) {
             chatPipelineMetrics.recordStage("ws.control." + payloadType + ".send.fail", startNanos);
             chatPipelineMetrics.incrementCounter("ws.control." + payloadType + ".send.fail");
             log.warn("[WS CONTROL SEND FAIL] sessionId={} type={}", sessionId, payloadType, e);
+            return false;
         }
     }
 

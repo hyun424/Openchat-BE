@@ -16,6 +16,16 @@ public class RoomPartitionMetrics {
     private final ConcurrentHashMap<String, Counter> publishCounters = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Counter> subscribeCounters = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Counter> routeCounters = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Counter> stateCounters = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Counter> scaleCounters = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Counter> controlPublishCounters = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Counter> controlReceivedCounters = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Counter> controlIgnoredCounters = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Counter> reconnectRequestedCounters = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Counter> reconnectTargetedCounters = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Counter> reconnectControlSentCounters = new ConcurrentHashMap<>();
+    private final Counter routeDrainingAvoidedCounter;
+    private final DistributionSummary drainingCountSummary;
     private final DistributionSummary activeSessionSummary;
     private final DistributionSummary fanoutDeliverySummary;
     private final AtomicInteger ownedPartitionCount = new AtomicInteger(0);
@@ -30,6 +40,12 @@ public class RoomPartitionMetrics {
                 .register(meterRegistry);
         this.fanoutDeliverySummary = DistributionSummary
                 .builder("openchat_room_partition_fanout_deliveries")
+                .register(meterRegistry);
+        this.drainingCountSummary = DistributionSummary
+                .builder("openchat_room_partition_draining_count")
+                .register(meterRegistry);
+        this.routeDrainingAvoidedCounter = Counter
+                .builder("openchat_room_partition_route_draining_avoided_total")
                 .register(meterRegistry);
     }
 
@@ -61,6 +77,35 @@ public class RoomPartitionMetrics {
                 .increment();
     }
 
+    public void recordState(RoomPartitionStatus status) {
+        String state = status == null ? "unknown" : status.name().toLowerCase();
+        stateCounters.computeIfAbsent(state, key -> Counter
+                .builder("openchat_room_partition_state_total")
+                .tag("state", key)
+                .register(meterRegistry))
+                .increment();
+    }
+
+    public void recordScaleEvent(String direction, String result) {
+        String safeDirection = safeTag(direction);
+        String safeResult = safeTag(result);
+        String key = safeDirection + ":" + safeResult;
+        scaleCounters.computeIfAbsent(key, ignored -> Counter
+                .builder("openchat_room_partition_scale_event_total")
+                .tag("direction", safeDirection)
+                .tag("result", safeResult)
+                .register(meterRegistry))
+                .increment();
+    }
+
+    public void recordRouteDrainingAvoided() {
+        routeDrainingAvoidedCounter.increment();
+    }
+
+    public void recordDrainingCount(int count) {
+        drainingCountSummary.record(Math.max(0, count));
+    }
+
     public void recordLegacyWebSocket() {
         Counter.builder("openchat_room_partition_legacy_ws_total")
                 .register(meterRegistry)
@@ -73,6 +118,72 @@ public class RoomPartitionMetrics {
 
     public void recordFanoutDeliveries(long deliveries) {
         fanoutDeliverySummary.record(Math.max(0, deliveries));
+    }
+
+    public void recordControlPublish(String type, String result) {
+        String safeType = safeTag(type);
+        String safeResult = safeTag(result);
+        String key = safeType + ":" + safeResult;
+        controlPublishCounters.computeIfAbsent(key, ignored -> Counter
+                        .builder("openchat_room_partition_control_publish_total")
+                        .tag("type", safeType)
+                        .tag("result", safeResult)
+                        .register(meterRegistry))
+                .increment();
+    }
+
+    public void recordControlReceived(String type, String result) {
+        String safeType = safeTag(type);
+        String safeResult = safeTag(result);
+        String key = safeType + ":" + safeResult;
+        controlReceivedCounters.computeIfAbsent(key, ignored -> Counter
+                        .builder("openchat_room_partition_control_received_total")
+                        .tag("type", safeType)
+                        .tag("result", safeResult)
+                        .register(meterRegistry))
+                .increment();
+    }
+
+    public void recordControlIgnored(String reason) {
+        String safeReason = safeTag(reason);
+        controlIgnoredCounters.computeIfAbsent(safeReason, ignored -> Counter
+                        .builder("openchat_room_partition_control_ignored_total")
+                        .tag("reason", safeReason)
+                        .register(meterRegistry))
+                .increment();
+    }
+
+    public void recordReconnectRequested(String reason) {
+        String safeReason = safeTag(reason);
+        reconnectRequestedCounters.computeIfAbsent(safeReason, ignored -> Counter
+                        .builder("openchat_room_reconnect_requested_total")
+                        .tag("reason", safeReason)
+                        .register(meterRegistry))
+                .increment();
+    }
+
+    public void recordReconnectTargeted(String reason, int sessionCount) {
+        if (sessionCount <= 0) {
+            return;
+        }
+        String safeReason = safeTag(reason);
+        reconnectTargetedCounters.computeIfAbsent(safeReason, ignored -> Counter
+                        .builder("openchat_room_reconnect_sessions_targeted_total")
+                        .tag("reason", safeReason)
+                        .register(meterRegistry))
+                .increment(sessionCount);
+    }
+
+    public void recordReconnectControlSent(String reason, String result) {
+        String safeReason = safeTag(reason);
+        String safeResult = safeTag(result);
+        String key = safeReason + ":" + safeResult;
+        reconnectControlSentCounters.computeIfAbsent(key, ignored -> Counter
+                        .builder("openchat_room_reconnect_control_sent_total")
+                        .tag("reason", safeReason)
+                        .tag("result", safeResult)
+                        .register(meterRegistry))
+                .increment();
     }
 
     private String safeTag(String value) {

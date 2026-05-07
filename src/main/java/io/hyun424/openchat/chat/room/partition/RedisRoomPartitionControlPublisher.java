@@ -1,0 +1,51 @@
+package io.hyun424.openchat.chat.room.partition;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.context.annotation.Primary;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.stereotype.Component;
+
+@Slf4j
+@Primary
+@Component
+public class RedisRoomPartitionControlPublisher implements RoomPartitionControlPublisher {
+
+    private final StringRedisTemplate redisTemplate;
+    private final ObjectMapper redisObjectMapper;
+    private final RoomPartitionControlChannelResolver channelResolver;
+    private final RoomPartitionMetrics metrics;
+
+    public RedisRoomPartitionControlPublisher(
+            StringRedisTemplate redisTemplate,
+            @Qualifier("redisObjectMapper") ObjectMapper redisObjectMapper,
+            RoomPartitionControlChannelResolver channelResolver,
+            RoomPartitionMetrics metrics
+    ) {
+        this.redisTemplate = redisTemplate;
+        this.redisObjectMapper = redisObjectMapper;
+        this.channelResolver = channelResolver;
+        this.metrics = metrics;
+    }
+
+    @Override
+    public boolean publish(RoomPartitionControlCommand command) {
+        String type = command == null ? "unknown" : command.type();
+        try {
+            if (command == null || command.roomId() == null) {
+                metrics.recordControlPublish(type, "invalid");
+                return false;
+            }
+            String payload = redisObjectMapper.writeValueAsString(command);
+            redisTemplate.convertAndSend(channelResolver.channel(command.roomId()), payload);
+            metrics.recordControlPublish(type, "success");
+            return true;
+        } catch (Exception e) {
+            metrics.recordControlPublish(type, "publish_failed");
+            log.warn("[ROOM PARTITION CONTROL PUB FAIL] type={} roomId={}",
+                    type, command != null ? command.roomId() : null, e);
+            return false;
+        }
+    }
+}
