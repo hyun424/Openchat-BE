@@ -199,8 +199,82 @@ Recommendation:
 
 ### Scenario B: Hot-biased Risk Injection 1500 VU
 
-이번 실행에서는 비용과 목적을 고려해 Scenario A까지만 GCP에서 검증했다. Scenario B는 다음 단계에서 recommendation threshold가 `WATCH`에서 `SCALE_UP_CANDIDATE`로 올라가는지 확인하기 위한 위험 주입 시나리오로 남긴다.
+`Workload Signal Delta` 보강 이후 같은 1500명에서 hot room 비중을 키운 위험 주입 시나리오를 실행했다.
+
+| 항목 | 값 |
+| --- | --- |
+| run id | `20260507-risk-injection-1500` |
+| profile | `mixed-room-risk-injection-1500` |
+| 앱 리소스 | API `e2-standard-2 x1`, Realtime `e2-standard-4 x2` |
+| 부하/스토리지 리소스 | k6 `e2-standard-8 x1`, MySQL/Redis/LB `e2-standard-2` |
+| 총 리소스 | 약 `24 vCPU`, SSD `110GB` |
+| monitoring | off |
+| scenario | `k6/scenarios/11-mixed-room-workload-ramped.js` |
+| 실행 형태 | 61 rooms, 1500 VU, 120s ramp, 120s chat |
+| cleanup | 완료, `labels.run_id=20260507-risk-injection-1500` 잔여 VM 없음 |
+
+#### k6 / DB 결과
+
+| 지표 | 결과 | 기준 | 판정 |
+| --- | ---:| ---:| --- |
+| k6 exit code | `0` | `0` | 통과 |
+| checks | `99.84%` | 참고 | 통과 |
+| WebSocket connect success | `100%` | `>= 99%` | 통과 |
+| HTTP error rate | `0.153%` | `< 1%` | 통과 |
+| sender ack p95 / p99 | `128ms / 996ms` | p95 `< 300ms` | 통과 |
+| observer visible p95 / p99 | `281.34ms / 4.73s` | p95 `< 500ms` | 통과 |
+| sent / acked | `49,525 / 49,525` | 일치 | 통과 |
+| DB rows | `49,525` | ack count와 일치 | 통과 |
+| passive unexpected messages | `0` | `0` | 통과 |
+
+초기 route 조회에서 `getWsRoute` 500 응답이 7건 있었다. k6 threshold 기준인 HTTP error rate `< 1%` 안에는 들어왔고, WebSocket 연결은 최종 `1500 / 1500` 성공했다.
+
+#### Cluster Workload Summary
+
+17개 실행 중 snapshot 전체 기준 peak는 다음과 같았다.
+
+| 지표 | 값 |
+| --- | ---:|
+| active realtime nodes | `2` |
+| stale realtime nodes | `0` |
+| max total sessions | `1,433` |
+| max active sessions | `805` |
+| max passive sessions | `650` |
+| max actual delivery work/sec | `14,000` |
+| max conceptual room work/sec | `17,920` |
+| max scale decision work/sec | `17,920` |
+| partition recommendation limited count | `0` |
+| send failed delta | `0` |
+| reconnect sent delta | `0` |
+
+Peak snapshot의 top room은 `roomId=1` hot room이었다.
+
+| roomId | source node | actual work/s | conceptual work/s | decision work/s | active sessions | recommendation partitions |
+| ---:| --- | ---:| ---:| ---:| ---:| ---:|
+| `1` | `gcp-realtime-1` | `7,000` | `17,920` | `17,920` | `140` | `1` |
+
+Recommendation:
+
+```json
+[
+  {
+    "type": "SCALE_UP_CANDIDATE",
+    "reason": "room scale decision work reached pod budget",
+    "roomId": 1,
+    "nodeId": "gcp-realtime-1",
+    "observedValue": 17920,
+    "threshold": 10000
+  }
+]
+```
+
+해석:
+
+- 같은 1500명이라도 hot room 비중을 키우면 `WATCH`를 넘어 `SCALE_UP_CANDIDATE`가 발생했다.
+- `roomId=1` hot room의 conceptual work가 pod budget `10,000`을 넘으면서 위험 후보로 분류됐다.
+- `staleNodeCount=0`, `partitionRecommendationLimitedCount=0`이라 snapshot freshness와 partition cap 관점의 이상은 없었다.
+- `sendFailedDelta=0`, `reconnectSentDelta=0`이므로 이번 위험 주입에서는 WebSocket send failure나 reconnect control 증가 없이 recommendation path만 검증됐다.
 
 ## Portfolio Note
 
-> 단일 hot room 최대치만 보지 않고, small/medium/large/hot room이 섞인 서비스형 workload를 정의했다. Cluster summary가 node-local WebSocket 상태를 Redis snapshot으로 모아 top room과 scale recommendation을 제공하는지 검증해, 자동 rebalance 이전에 운영자가 믿을 수 있는 판단 근거를 먼저 만들었다.
+> 단일 hot room 최대치만 보지 않고, small/medium/large/hot room이 섞인 서비스형 workload를 정의했다. Cluster summary가 node-local WebSocket 상태를 Redis snapshot으로 모아 top room, signal delta, scale recommendation을 제공하는지 검증해, 자동 rebalance 이전에 운영자가 믿을 수 있는 판단 근거를 먼저 만들었다.
