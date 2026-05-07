@@ -181,6 +181,12 @@ variable "k6_worker_count" {
   }
 }
 
+variable "k6_cleanup_enabled" {
+  description = "Whether the k6 coordinator deletes temporary VM resources after the run."
+  type        = bool
+  default     = true
+}
+
 variable "shared_room_mode" {
   description = "When true, distributed k6 workers join one coordinator-created room instead of splitting hot rooms."
   type        = bool
@@ -299,6 +305,12 @@ variable "room_partition_max_partitions_per_room" {
     condition     = var.room_partition_max_partitions_per_room >= 1
     error_message = "room_partition_max_partitions_per_room must be at least 1."
   }
+}
+
+variable "room_partition_admin_api_enabled" {
+  description = "Enable internal room partition operation API for smoke/operation tooling."
+  type        = bool
+  default     = false
 }
 
 variable "enable_monitoring" {

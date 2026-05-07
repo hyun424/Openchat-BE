@@ -419,6 +419,7 @@ resource "google_compute_instance" "api" {
       room_partition_owned_partitions        = tostring(count.index % var.room_partition_partition_count)
       room_partition_hot_tier_threshold      = var.room_partition_hot_tier_threshold
       room_partition_max_partitions_per_room = var.room_partition_max_partitions_per_room
+      room_partition_admin_api_enabled       = var.room_partition_admin_api_enabled ? "true" : "false"
     })
     shutdown-script = templatefile("${path.module}/templates/vm-shutdown.sh.tftpl", {
       run_id      = var.run_id
@@ -482,6 +483,7 @@ resource "google_compute_instance" "realtime" {
       room_partition_owned_partitions        = tostring(count.index % var.room_partition_partition_count)
       room_partition_hot_tier_threshold      = var.room_partition_hot_tier_threshold
       room_partition_max_partitions_per_room = var.room_partition_max_partitions_per_room
+      room_partition_admin_api_enabled       = var.room_partition_admin_api_enabled ? "true" : "false"
     })
     shutdown-script = templatefile("${path.module}/templates/vm-shutdown.sh.tftpl", {
       run_id      = var.run_id
@@ -647,6 +649,7 @@ resource "google_compute_instance" "k6" {
       k6_worker_index              = count.index + 1
       k6_worker_count              = var.k6_worker_count
       k6_is_coordinator            = count.index == 0 ? "true" : "false"
+      k6_cleanup_enabled           = var.k6_cleanup_enabled ? "true" : "false"
       monitoring_vm_name           = var.enable_monitoring ? google_compute_instance.monitoring[0].name : ""
       monitoring_internal_ip       = var.enable_monitoring ? google_compute_instance.monitoring[0].network_interface[0].network_ip : ""
       enable_monitoring            = var.enable_monitoring ? "true" : "false"
