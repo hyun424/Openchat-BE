@@ -246,9 +246,9 @@ public class RoomTrafficMonitor {
         maxDeliveryLagP95Millis.set(maxLag);
         maxOutboundFanoutPerSecond.set(maxFanout);
         maxRoomWorkPerSecond.set(maxRoomWork);
-        maxActualDeliveryWorkPerSecond.set(maxActualDeliveryWork);
-        maxConceptualRoomWorkPerSecond.set(maxConceptualRoomWork);
-        maxScaleDecisionWorkPerSecond.set(maxScaleDecisionWork);
+        updateMax(maxActualDeliveryWorkPerSecond, maxActualDeliveryWork);
+        updateMax(maxConceptualRoomWorkPerSecond, maxConceptualRoomWork);
+        updateMax(maxScaleDecisionWorkPerSecond, maxScaleDecisionWork);
         maxRecommendedPartitionCount.set(maxRecommendedPartitions);
         maxEffectivePartitionCount.set(maxEffectivePartitions);
         partitionRecommendationLimitedCount.set(limitedPartitionRecommendations);
@@ -274,6 +274,10 @@ public class RoomTrafficMonitor {
         long nowMillis = clock.getAsLong();
         return rooms.computeIfAbsent(roomId,
                 id -> new RoomTrafficStats(id, properties.windowSeconds(), properties.maxLatencySamples(), nowMillis));
+    }
+
+    private void updateMax(AtomicLong target, long candidate) {
+        target.accumulateAndGet(candidate, Math::max);
     }
 
     private void transitionIfStable(RoomTrafficStats stats,
@@ -379,15 +383,15 @@ public class RoomTrafficMonitor {
                 .register(meterRegistry);
         Gauge.builder("openchat_room_actual_delivery_work_max_per_second",
                         maxActualDeliveryWorkPerSecond, AtomicLong::get)
-                .description("Maximum actual WebSocket delivery work rate per second")
+                .description("Maximum actual WebSocket delivery work rate per second observed since process start")
                 .register(meterRegistry);
         Gauge.builder("openchat_room_conceptual_work_max_per_second",
                         maxConceptualRoomWorkPerSecond, AtomicLong::get)
-                .description("Maximum conceptual room work rate per second, input messages multiplied by active sessions")
+                .description("Maximum conceptual room work rate per second observed since process start, input messages multiplied by active sessions")
                 .register(meterRegistry);
         Gauge.builder("openchat_room_scale_decision_work_max_per_second",
                         maxScaleDecisionWorkPerSecond, AtomicLong::get)
-                .description("Maximum conservative room work rate used as scale decision observation")
+                .description("Maximum conservative room work rate observed since process start for scale decision analysis")
                 .register(meterRegistry);
         Gauge.builder("openchat_room_partition_recommended_count_max",
                         maxRecommendedPartitionCount, AtomicInteger::get)

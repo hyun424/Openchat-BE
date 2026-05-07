@@ -172,6 +172,34 @@ class RoomTrafficMonitorTest {
                 0.0);
     }
 
+
+    @Test
+    void workObserverMaxMetricsPreservePeakAfterRateWindowExpires() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        RoomTrafficMonitor scaleMonitor = scaleMonitor(registry, 0, 0);
+
+        scaleMonitor.recordOutboundFanout(1L, 20_000, 300);
+        for (int i = 0; i < 100; i++) {
+            scaleMonitor.recordInboundMessage(1L);
+        }
+        scaleMonitor.refresh();
+
+        now.addAndGet(2_000);
+        scaleMonitor.refresh();
+
+        assertEquals(0, scaleMonitor.snapshot(1L).actualDeliveryWorkPerSecond());
+        assertEquals(0, scaleMonitor.snapshot(1L).conceptualRoomWorkPerSecond());
+        assertEquals(20_000.0,
+                registry.get("openchat_room_actual_delivery_work_max_per_second").gauge().value(),
+                0.0);
+        assertEquals(30_000.0,
+                registry.get("openchat_room_conceptual_work_max_per_second").gauge().value(),
+                0.0);
+        assertEquals(30_000.0,
+                registry.get("openchat_room_scale_decision_work_max_per_second").gauge().value(),
+                0.0);
+    }
+
     private RoomHotStateProperties testProperties() {
         return new RoomHotStateProperties(
                 10,
