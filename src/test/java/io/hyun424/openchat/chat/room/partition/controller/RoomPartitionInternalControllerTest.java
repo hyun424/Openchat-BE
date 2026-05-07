@@ -1,7 +1,6 @@
 package io.hyun424.openchat.chat.room.partition.controller;
 
 import io.hyun424.openchat.chat.room.partition.service.RoomPartitionReconnectOperations;
-import io.hyun424.openchat.chat.room.partition.service.RoomPartitionReconnectService;
 import io.hyun424.openchat.chat.room.partition.service.RoomPartitionStateOperations;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -99,7 +98,7 @@ class RoomPartitionInternalControllerTest {
     @DisplayName("POST /drain/reconnect - Redis control command publish 요청")
     void reconnectDrainingCallsReconnectOperations() throws Exception {
         when(reconnectOperations.reconnectDraining(eq(10L), eq("scale_down"), eq(750L), eq(25)))
-                .thenReturn(new RoomPartitionReconnectService.RoomPartitionReconnectResult(10L, "scale_down", true, 2));
+                .thenReturn(new RoomPartitionReconnectOperations.RoomPartitionReconnectResult(10L, "scale_down", true, 2));
 
         mockMvc.perform(post("/api/internal/rooms/10/partitions/drain/reconnect")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -135,7 +134,7 @@ class RoomPartitionInternalControllerTest {
     @DisplayName("POST /drain/reconnect - optional body 값 기본값 적용")
     void reconnectDrainingUsesDefaults() throws Exception {
         when(reconnectOperations.reconnectDraining(eq(10L), eq("scale_down"), eq(500L), org.mockito.ArgumentMatchers.isNull()))
-                .thenReturn(new RoomPartitionReconnectService.RoomPartitionReconnectResult(10L, "scale_down", true, 1));
+                .thenReturn(new RoomPartitionReconnectOperations.RoomPartitionReconnectResult(10L, "scale_down", true, 1));
 
         mockMvc.perform(post("/api/internal/rooms/10/partitions/drain/reconnect")
                         .contentType(MediaType.APPLICATION_JSON)

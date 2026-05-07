@@ -17,7 +17,7 @@ import java.util.stream.IntStream;
 
 @Service
 @Transactional
-public class RoomPartitionStateService implements RoomPartitionStateOperations {
+public class RoomPartitionStateService implements RoomPartitionStateOperations, RoomPartitionStateReader {
 
     private static final String SYSTEM_UPDATED_BY = "system";
 
@@ -61,6 +61,7 @@ public class RoomPartitionStateService implements RoomPartitionStateOperations {
                 });
     }
 
+    @Override
     public int partitionCountForRoom(Long roomId) {
         if (!properties.enabled()) {
             return 1;
@@ -68,6 +69,7 @@ public class RoomPartitionStateService implements RoomPartitionStateOperations {
         return getOrInitialize(roomId).getPartitionCount();
     }
 
+    @Override
     public List<Integer> publishPartitions(Long roomId) {
         int partitionCount = partitionCountForRoom(roomId);
         if (partitionCount <= 1) {
@@ -78,6 +80,7 @@ public class RoomPartitionStateService implements RoomPartitionStateOperations {
                 .toList();
     }
 
+    @Override
     public int routePartition(Long roomId, String userId) {
         RoomPartitionState state = getOrInitialize(roomId);
         int partitionCount = Math.max(1, state.getPartitionCount());
@@ -96,6 +99,7 @@ public class RoomPartitionStateService implements RoomPartitionStateOperations {
         return decision.partitionId();
     }
 
+    @Override
     public int versionForRoom(Long roomId) {
         if (!properties.enabled()) {
             return 0;

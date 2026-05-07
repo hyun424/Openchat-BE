@@ -1,7 +1,6 @@
 package io.hyun424.openchat.chat.room.partition.controller;
 
 import io.hyun424.openchat.chat.room.partition.service.RoomPartitionReconnectOperations;
-import io.hyun424.openchat.chat.room.partition.service.RoomPartitionReconnectService;
 import io.hyun424.openchat.chat.room.partition.service.RoomPartitionStateOperations;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
@@ -62,7 +61,7 @@ public class RoomPartitionInternalController {
             @PathVariable @Positive Long roomId,
             @Valid @RequestBody ReconnectRequest request
     ) {
-        RoomPartitionReconnectService.RoomPartitionReconnectResult result = reconnectOperations.reconnectDraining(
+        RoomPartitionReconnectOperations.RoomPartitionReconnectResult result = reconnectOperations.reconnectDraining(
                 roomId,
                 reason(request.reason()),
                 retryAfterMs(request.retryAfterMs()),

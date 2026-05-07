@@ -11,32 +11,29 @@ import java.util.List;
 public class RoomPartitionRoutingService {
 
     private final RoomPartitionProperties properties;
-    private final RoomPartitionStateService stateService;
+    private final RoomPartitionStateReader stateReader;
     private final RoomPartitionMetrics metrics;
 
     public RoomPartitionRoutingService(RoomPartitionProperties properties,
-                                       RoomPartitionStateService stateService,
+                                       RoomPartitionStateReader stateReader,
                                        RoomPartitionMetrics metrics) {
         this.properties = properties;
-        this.stateService = stateService;
+        this.stateReader = stateReader;
         this.metrics = metrics;
         this.metrics.updateConfig(properties);
     }
 
     public RoomPartitionRoute route(Long roomId, String userId) {
         int partitionCount = partitionCountForRoom(roomId);
-        boolean partitioned = partitionCount > 1;
-        int partitionId = partitioned ? stateService.routePartition(roomId, userId) : 0;
-        int version = partitioned ? stateService.versionForRoom(roomId) : 0;
-        metrics.recordRoute(partitioned ? "partitioned" : "legacy");
-        return new RoomPartitionRoute(
-                roomId,
-                partitioned,
-                partitionId,
-                partitionCount,
-                version,
-                "/ws/chat?roomId=" + roomId + "&partitionId=" + partitionId + "&routeVersion=" + version
-        );
+        if (partitionCount <= 1) {
+            metrics.recordRoute("legacy");
+            return RoomPartitionRoute.legacy(roomId);
+        }
+
+        int partitionId = stateReader.routePartition(roomId, userId);
+        int version = stateReader.versionForRoom(roomId);
+        metrics.recordRoute("partitioned");
+        return RoomPartitionRoute.partitioned(roomId, partitionId, partitionCount, version);
     }
 
     public boolean shouldPartition(Long roomId) {
@@ -47,14 +44,14 @@ public class RoomPartitionRoutingService {
         if (!properties.enabled()) {
             return 1;
         }
-        return stateService.partitionCountForRoom(roomId);
+        return stateReader.partitionCountForRoom(roomId);
     }
 
     public List<Integer> publishPartitions(Long roomId) {
         if (!properties.enabled()) {
             return List.of();
         }
-        return stateService.publishPartitions(roomId);
+        return stateReader.publishPartitions(roomId);
     }
 
     public Integer partitionIdForChannel(String channel) {

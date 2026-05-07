@@ -21,7 +21,7 @@ class RoomPartitionRoutingServiceTest {
 
     @Test
     void disabledMode_returnsLegacyRouteWithoutStateLookup() {
-        RoomPartitionStateService stateService = mock(RoomPartitionStateService.class);
+        RoomPartitionStateReader stateService = mock(RoomPartitionStateReader.class);
         RoomPartitionRoutingService service = service(false, stateService);
 
         RoomPartitionRoute route = service.route(1L, "user-1");
@@ -35,7 +35,7 @@ class RoomPartitionRoutingServiceTest {
 
     @Test
     void enabledMode_usesStateRouteAndIncludesRouteVersionInWsUrl() {
-        RoomPartitionStateService stateService = mock(RoomPartitionStateService.class);
+        RoomPartitionStateReader stateService = mock(RoomPartitionStateReader.class);
         when(stateService.partitionCountForRoom(1L)).thenReturn(4);
         when(stateService.routePartition(1L, "user-1")).thenReturn(2);
         when(stateService.versionForRoom(1L)).thenReturn(7);
@@ -52,14 +52,14 @@ class RoomPartitionRoutingServiceTest {
 
     @Test
     void publishPartitions_usesStateServiceWhenEnabled() {
-        RoomPartitionStateService stateService = mock(RoomPartitionStateService.class);
+        RoomPartitionStateReader stateService = mock(RoomPartitionStateReader.class);
         when(stateService.publishPartitions(1L)).thenReturn(java.util.List.of(0, 1, 2));
         RoomPartitionRoutingService service = service(true, stateService);
 
         assertEquals(java.util.List.of(0, 1, 2), service.publishPartitions(1L));
     }
 
-    private RoomPartitionRoutingService service(boolean enabled, RoomPartitionStateService stateService) {
+    private RoomPartitionRoutingService service(boolean enabled, RoomPartitionStateReader stateService) {
         RoomPartitionProperties properties = new RoomPartitionProperties(
                 enabled,
                 4,

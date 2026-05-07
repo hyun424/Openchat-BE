@@ -5,6 +5,7 @@ import io.hyun424.openchat.chat.room.partition.domain.RoomPartitionStatus;
 import io.hyun424.openchat.chat.room.partition.dto.RoomPartitionControlCommand;
 import io.hyun424.openchat.chat.room.partition.infra.RoomPartitionControlPublisher;
 import io.hyun424.openchat.chat.room.partition.metrics.RoomPartitionMetrics;
+import io.hyun424.openchat.chat.room.partition.policy.RoomPartitionPolicy;
 import io.hyun424.openchat.chat.room.partition.repository.RoomPartitionStateRepository;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.DisplayName;
@@ -13,6 +14,7 @@ import org.mockito.ArgumentCaptor;
 
 import java.time.Instant;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -31,12 +33,14 @@ class RoomPartitionReconnectServiceTest {
     void reconnectDraining_publishesCommandPerDrainingPartition() {
         RoomPartitionStateRepository repository = mock(RoomPartitionStateRepository.class);
         RoomPartitionControlPublisher publisher = mock(RoomPartitionControlPublisher.class);
+        RoomPartitionPolicy policy = mock(RoomPartitionPolicy.class);
         RoomPartitionReconnectService service = new RoomPartitionReconnectService(
                 repository,
                 publisher,
+                policy,
                 new RoomPartitionMetrics(new SimpleMeterRegistry())
         );
-        when(repository.findById(1L)).thenReturn(Optional.of(new RoomPartitionState(
+        RoomPartitionState state = new RoomPartitionState(
                 1L,
                 4,
                 8,
@@ -44,10 +48,12 @@ class RoomPartitionReconnectServiceTest {
                 "1,2",
                 Instant.parse("2026-05-07T00:00:00Z"),
                 "test"
-        )));
+        );
+        when(repository.findById(1L)).thenReturn(Optional.of(state));
+        when(policy.drainingPartitions(state)).thenReturn(Set.of(1, 2));
         when(publisher.publish(any())).thenReturn(true);
 
-        RoomPartitionReconnectService.RoomPartitionReconnectResult result =
+        RoomPartitionReconnectOperations.RoomPartitionReconnectResult result =
                 service.reconnectDraining(1L, "scale_down", 500, 25);
 
         assertTrue(result.accepted());
@@ -70,11 +76,12 @@ class RoomPartitionReconnectServiceTest {
         RoomPartitionReconnectService service = new RoomPartitionReconnectService(
                 repository,
                 publisher,
+                mock(RoomPartitionPolicy.class),
                 new RoomPartitionMetrics(new SimpleMeterRegistry())
         );
         when(repository.findById(1L)).thenReturn(Optional.empty());
 
-        RoomPartitionReconnectService.RoomPartitionReconnectResult result =
+        RoomPartitionReconnectOperations.RoomPartitionReconnectResult result =
                 service.reconnectDraining(1L, "scale_down", 500, null);
 
         assertFalse(result.accepted());
@@ -90,6 +97,7 @@ class RoomPartitionReconnectServiceTest {
         RoomPartitionReconnectService service = new RoomPartitionReconnectService(
                 repository,
                 publisher,
+                mock(RoomPartitionPolicy.class),
                 new RoomPartitionMetrics(new SimpleMeterRegistry())
         );
         when(publisher.publish(any())).thenReturn(true);
