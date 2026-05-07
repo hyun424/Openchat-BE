@@ -245,7 +245,7 @@ public class RoomTrafficMonitor {
         inactiveRooms.forEach(rooms::remove);
         maxDeliveryLagP95Millis.set(maxLag);
         maxOutboundFanoutPerSecond.set(maxFanout);
-        maxRoomWorkPerSecond.set(maxRoomWork);
+        updateMax(maxRoomWorkPerSecond, maxRoomWork);
         updateMax(maxActualDeliveryWorkPerSecond, maxActualDeliveryWork);
         updateMax(maxConceptualRoomWorkPerSecond, maxConceptualRoomWork);
         updateMax(maxScaleDecisionWorkPerSecond, maxScaleDecisionWork);

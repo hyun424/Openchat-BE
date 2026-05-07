@@ -190,6 +190,9 @@ class RoomTrafficMonitorTest {
         assertEquals(0, scaleMonitor.snapshot(1L).actualDeliveryWorkPerSecond());
         assertEquals(0, scaleMonitor.snapshot(1L).conceptualRoomWorkPerSecond());
         assertEquals(20_000.0,
+                registry.get("openchat_room_work_max_per_second").gauge().value(),
+                0.0);
+        assertEquals(20_000.0,
                 registry.get("openchat_room_actual_delivery_work_max_per_second").gauge().value(),
                 0.0);
         assertEquals(30_000.0,
