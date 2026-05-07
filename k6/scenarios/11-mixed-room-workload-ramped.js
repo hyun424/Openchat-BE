@@ -36,6 +36,11 @@ const MEDIUM_ROOM_VUS = Number(__ENV.MIXED_MEDIUM_ROOM_VUS || '15');
 const MEDIUM_ACTIVE_RATIO = Number(__ENV.MIXED_MEDIUM_ACTIVE_RATIO || '0.30');
 const MEDIUM_SEND_INTERVAL_MS = Number(__ENV.MIXED_MEDIUM_SEND_INTERVAL_MS || '3000');
 
+const LARGE_ROOM_COUNT = Number(__ENV.MIXED_LARGE_ROOM_COUNT || '0');
+const LARGE_ROOM_VUS = Number(__ENV.MIXED_LARGE_ROOM_VUS || '120');
+const LARGE_ACTIVE_RATIO = Number(__ENV.MIXED_LARGE_ACTIVE_RATIO || '0.35');
+const LARGE_SEND_INTERVAL_MS = Number(__ENV.MIXED_LARGE_SEND_INTERVAL_MS || '2000');
+
 const SMALL_ROOM_COUNT = Number(__ENV.MIXED_SMALL_ROOM_COUNT || '5');
 const SMALL_ROOM_VUS = Number(__ENV.MIXED_SMALL_ROOM_VUS || '3');
 const SMALL_ACTIVE_RATIO = Number(__ENV.MIXED_SMALL_ACTIVE_RATIO || '0.30');
@@ -132,6 +137,7 @@ function pushRoomSpecs(specs, type, count, vusPerRoom, activeRatio, sendInterval
 function buildRoomSpecs() {
   const specs = [];
   pushRoomSpecs(specs, 'hot', HOT_ROOM_COUNT, HOT_ROOM_VUS, HOT_ACTIVE_RATIO, HOT_SEND_INTERVAL_MS);
+  pushRoomSpecs(specs, 'large', LARGE_ROOM_COUNT, LARGE_ROOM_VUS, LARGE_ACTIVE_RATIO, LARGE_SEND_INTERVAL_MS);
   pushRoomSpecs(specs, 'medium', MEDIUM_ROOM_COUNT, MEDIUM_ROOM_VUS, MEDIUM_ACTIVE_RATIO, MEDIUM_SEND_INTERVAL_MS);
   pushRoomSpecs(specs, 'small', SMALL_ROOM_COUNT, SMALL_ROOM_VUS, SMALL_ACTIVE_RATIO, SMALL_SEND_INTERVAL_MS);
   return specs;

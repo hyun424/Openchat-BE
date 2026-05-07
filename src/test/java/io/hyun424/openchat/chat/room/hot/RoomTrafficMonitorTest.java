@@ -203,6 +203,24 @@ class RoomTrafficMonitorTest {
                 0.0);
     }
 
+    @Test
+    void exposesTopRoomsAndWorkloadSummaryForClusterObserver() {
+        RoomTrafficMonitor scaleMonitor = scaleMonitor(0, 0);
+
+        scaleMonitor.recordOutboundFanout(1L, 1_000, 10);
+        scaleMonitor.recordOutboundFanout(2L, 20_000, 100);
+        for (int i = 0; i < 50; i++) {
+            scaleMonitor.recordInboundMessage(2L);
+        }
+        scaleMonitor.refresh();
+
+        assertEquals(2L, scaleMonitor.topRoomsByScaleDecisionWork(1).get(0).roomId());
+        RoomTrafficWorkloadSummary summary = scaleMonitor.workloadSummary();
+        assertEquals(20_000, summary.maxActualDeliveryWorkPerSecond());
+        assertEquals(5_000, summary.maxConceptualRoomWorkPerSecond());
+        assertEquals(20_000, summary.maxScaleDecisionWorkPerSecond());
+    }
+
     private RoomHotStateProperties testProperties() {
         return new RoomHotStateProperties(
                 10,

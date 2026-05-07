@@ -250,6 +250,103 @@ variable "passive_settle_ms" {
   }
 }
 
+
+variable "mixed_hot_room_count" {
+  description = "Number of hot rooms in the mixed-room workload scenario."
+  type        = number
+  default     = 1
+}
+
+variable "mixed_hot_room_vus" {
+  description = "VUs assigned to each hot room in the mixed-room workload scenario."
+  type        = number
+  default     = 40
+}
+
+variable "mixed_hot_active_ratio" {
+  description = "Active user ratio for hot rooms in the mixed-room workload scenario."
+  type        = number
+  default     = 0.30
+}
+
+variable "mixed_hot_send_interval_ms" {
+  description = "Sender interval for hot rooms in the mixed-room workload scenario."
+  type        = number
+  default     = 1000
+}
+
+variable "mixed_large_room_count" {
+  description = "Number of large rooms in the mixed-room workload scenario."
+  type        = number
+  default     = 0
+}
+
+variable "mixed_large_room_vus" {
+  description = "VUs assigned to each large room in the mixed-room workload scenario."
+  type        = number
+  default     = 120
+}
+
+variable "mixed_large_active_ratio" {
+  description = "Active user ratio for large rooms in the mixed-room workload scenario."
+  type        = number
+  default     = 0.35
+}
+
+variable "mixed_large_send_interval_ms" {
+  description = "Sender interval for large rooms in the mixed-room workload scenario."
+  type        = number
+  default     = 2000
+}
+
+variable "mixed_medium_room_count" {
+  description = "Number of medium rooms in the mixed-room workload scenario."
+  type        = number
+  default     = 3
+}
+
+variable "mixed_medium_room_vus" {
+  description = "VUs assigned to each medium room in the mixed-room workload scenario."
+  type        = number
+  default     = 15
+}
+
+variable "mixed_medium_active_ratio" {
+  description = "Active user ratio for medium rooms in the mixed-room workload scenario."
+  type        = number
+  default     = 0.30
+}
+
+variable "mixed_medium_send_interval_ms" {
+  description = "Sender interval for medium rooms in the mixed-room workload scenario."
+  type        = number
+  default     = 3000
+}
+
+variable "mixed_small_room_count" {
+  description = "Number of small rooms in the mixed-room workload scenario."
+  type        = number
+  default     = 5
+}
+
+variable "mixed_small_room_vus" {
+  description = "VUs assigned to each small room in the mixed-room workload scenario."
+  type        = number
+  default     = 3
+}
+
+variable "mixed_small_active_ratio" {
+  description = "Active user ratio for small rooms in the mixed-room workload scenario."
+  type        = number
+  default     = 0.30
+}
+
+variable "mixed_small_send_interval_ms" {
+  description = "Sender interval for small rooms in the mixed-room workload scenario."
+  type        = number
+  default     = 5000
+}
+
 variable "room_shard_enabled" {
   description = "Enable Redis room shard channels for app VMs."
   type        = bool
@@ -389,4 +486,49 @@ variable "ttl_hours" {
   description = "Informational TTL label for cleanup."
   type        = number
   default     = 2
+}
+
+variable "realtime_workload_publish_enabled" {
+  description = "Whether Realtime nodes publish workload snapshots to Redis."
+  type        = bool
+  default     = false
+}
+
+variable "realtime_workload_summary_enabled" {
+  description = "Whether API nodes expose read-only realtime workload summary endpoints."
+  type        = bool
+  default     = false
+}
+
+variable "realtime_workload_publish_interval_ms" {
+  description = "Realtime workload snapshot publish interval in milliseconds."
+  type        = number
+  default     = 5000
+
+  validation {
+    condition     = var.realtime_workload_publish_interval_ms >= 1000
+    error_message = "realtime_workload_publish_interval_ms must be at least 1000."
+  }
+}
+
+variable "realtime_workload_snapshot_ttl_ms" {
+  description = "Realtime workload snapshot TTL in milliseconds."
+  type        = number
+  default     = 30000
+
+  validation {
+    condition     = var.realtime_workload_snapshot_ttl_ms >= 2000
+    error_message = "realtime_workload_snapshot_ttl_ms must be at least 2000."
+  }
+}
+
+variable "realtime_workload_top_room_limit" {
+  description = "Maximum number of top room workload candidates included in each snapshot and summary."
+  type        = number
+  default     = 10
+
+  validation {
+    condition     = var.realtime_workload_top_room_limit >= 1
+    error_message = "realtime_workload_top_room_limit must be at least 1."
+  }
 }

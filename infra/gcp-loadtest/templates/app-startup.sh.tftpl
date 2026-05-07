@@ -180,6 +180,11 @@ docker run -d \
   -e ROOM_PARTITION_HOT_TIER_THRESHOLD="${room_partition_hot_tier_threshold}" \
   -e ROOM_PARTITION_MAX_PARTITIONS_PER_ROOM="${room_partition_max_partitions_per_room}" \
   -e ROOM_PARTITION_ADMIN_API_ENABLED="${room_partition_admin_api_enabled}" \
+  -e REALTIME_WORKLOAD_PUBLISH_ENABLED="${realtime_workload_publish_enabled}" \
+  -e REALTIME_WORKLOAD_SUMMARY_ENABLED="${realtime_workload_summary_enabled}" \
+  -e REALTIME_WORKLOAD_PUBLISH_INTERVAL_MS="${realtime_workload_publish_interval_ms}" \
+  -e REALTIME_WORKLOAD_SNAPSHOT_TTL_MS="${realtime_workload_snapshot_ttl_ms}" \
+  -e REALTIME_WORKLOAD_TOP_ROOM_LIMIT="${realtime_workload_top_room_limit}" \
   -e WS_BROADCAST_LANES=${websocket_broadcast_lanes} \
   -e WS_BROADCAST_QUEUE_CAPACITY_PER_LANE=10000 \
   -e JAVA_OPTS="-XX:MaxRAMPercentage=70 -XX:+UseG1GC -Djava.security.egd=file:/dev/./urandom" \

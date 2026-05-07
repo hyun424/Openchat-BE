@@ -24,6 +24,9 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -42,9 +45,53 @@ class RoomPartitionStateServiceTest {
     }
 
     @Test
+    void missingState_readsStateAfterConcurrentInsertNoop() {
+        RoomPartitionStateRepository repository = mock(RoomPartitionStateRepository.class);
+        RoomTrafficMonitor monitor = mock(RoomTrafficMonitor.class);
+        RoomPartitionProperties properties = properties();
+        RoomPartitionState concurrentState = RoomPartitionState.initialize(
+                1L,
+                4,
+                Instant.parse("2026-05-07T00:00:00Z"),
+                "system"
+        );
+
+        when(repository.findById(1L))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(concurrentState));
+        when(repository.insertIfAbsent(anyLong(), anyInt(), any(), anyString()))
+                .thenReturn(0);
+        when(monitor.snapshot(1L)).thenReturn(snapshot(RoomScaleTier.CRITICAL, 4));
+
+        RoomPartitionStateService service = new RoomPartitionStateService(
+                repository,
+                properties,
+                new RoomPartitionPolicy(properties, monitor),
+                new RoomPartitionMetrics(new SimpleMeterRegistry()),
+                Clock.fixed(Instant.parse("2026-05-07T00:00:00Z"), ZoneOffset.UTC)
+        );
+
+        RoomPartitionState state = service.getOrInitialize(1L);
+
+        assertEquals(4, state.getPartitionCount());
+        assertEquals(RoomPartitionStatus.ACTIVE, state.getStatus());
+    }
+
+    @Test
     void scaleUp_increasesCountAndVersion() {
         TestContext context = context(snapshot(RoomScaleTier.CRITICAL, 2));
         context.service.getOrInitialize(1L);
+
+        RoomPartitionState scaled = context.service.scaleUp(1L, 4, "test");
+
+        assertEquals(4, scaled.getPartitionCount());
+        assertEquals(2, scaled.getVersion());
+        assertEquals(RoomPartitionStatus.SCALING_UP, scaled.getStatus());
+    }
+
+    @Test
+    void scaleUp_missingState_initializesBeforeLocking() {
+        TestContext context = context(snapshot(RoomScaleTier.CRITICAL, 2));
 
         RoomPartitionState scaled = context.service.scaleUp(1L, 4, "test");
 
@@ -106,12 +153,21 @@ class RoomPartitionStateServiceTest {
         RoomPartitionStateRepository repository = mock(RoomPartitionStateRepository.class);
         when(repository.findById(any())).thenAnswer(invocation -> Optional.ofNullable(states.get(invocation.getArgument(0))));
         when(repository.findByIdForUpdate(any())).thenAnswer(invocation -> Optional.ofNullable(states.get(invocation.getArgument(0))));
-        when(repository.save(any())).thenAnswer(invocation -> {
-            RoomPartitionState state = invocation.getArgument(0);
-            states.put(state.getRoomId(), state);
-            return state;
+        when(repository.insertIfAbsent(anyLong(), anyInt(), any(), anyString())).thenAnswer(invocation -> {
+            Long roomId = invocation.getArgument(0);
+            if (states.containsKey(roomId)) {
+                return 0;
+            }
+            RoomPartitionState state = RoomPartitionState.initialize(
+                    roomId,
+                    invocation.getArgument(1),
+                    invocation.getArgument(2),
+                    invocation.getArgument(3)
+            );
+            states.put(roomId, state);
+            return 1;
         });
-        when(repository.saveAndFlush(any())).thenAnswer(invocation -> {
+        when(repository.save(any())).thenAnswer(invocation -> {
             RoomPartitionState state = invocation.getArgument(0);
             states.put(state.getRoomId(), state);
             return state;
@@ -120,13 +176,7 @@ class RoomPartitionStateServiceTest {
         RoomTrafficMonitor monitor = mock(RoomTrafficMonitor.class);
         when(monitor.snapshot(1L)).thenReturn(snapshot);
 
-        RoomPartitionProperties properties = new RoomPartitionProperties(
-                true,
-                4,
-                Set.of(0, 1, 2, 3),
-                RoomScaleTier.CRITICAL,
-                16
-        );
+        RoomPartitionProperties properties = properties();
         RoomPartitionStateService service = new RoomPartitionStateService(
                 repository,
                 properties,
@@ -135,6 +185,16 @@ class RoomPartitionStateServiceTest {
                 Clock.fixed(Instant.parse("2026-05-07T00:00:00Z"), ZoneOffset.UTC)
         );
         return new TestContext(service);
+    }
+
+    private RoomPartitionProperties properties() {
+        return new RoomPartitionProperties(
+                true,
+                4,
+                Set.of(0, 1, 2, 3),
+                RoomScaleTier.CRITICAL,
+                16
+        );
     }
 
     private RoomTrafficSnapshot snapshot(RoomScaleTier tier, int effectivePartitions) {

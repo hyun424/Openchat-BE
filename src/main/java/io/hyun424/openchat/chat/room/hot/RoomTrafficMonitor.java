@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
@@ -197,6 +198,32 @@ public class RoomTrafficMonitor {
         return rooms.values().stream()
                 .map(stats -> stats.snapshot(nowMillis, partitionAdvisor))
                 .toList();
+    }
+
+    public List<RoomTrafficSnapshot> topRoomsByScaleDecisionWork(int limit) {
+        if (limit <= 0) {
+            return List.of();
+        }
+        return snapshots().stream()
+                .sorted(Comparator.comparingLong(RoomTrafficSnapshot::scaleDecisionWorkPerSecond).reversed())
+                .limit(limit)
+                .toList();
+    }
+
+    public RoomTrafficWorkloadSummary workloadSummary() {
+        long maxActual = 0;
+        long maxConceptual = 0;
+        long maxDecision = 0;
+        int limitedCount = 0;
+        for (RoomTrafficSnapshot snapshot : snapshots()) {
+            maxActual = Math.max(maxActual, snapshot.actualDeliveryWorkPerSecond());
+            maxConceptual = Math.max(maxConceptual, snapshot.conceptualRoomWorkPerSecond());
+            maxDecision = Math.max(maxDecision, snapshot.scaleDecisionWorkPerSecond());
+            if (snapshot.partitionRecommendationLimited()) {
+                limitedCount++;
+            }
+        }
+        return new RoomTrafficWorkloadSummary(maxActual, maxConceptual, maxDecision, limitedCount);
     }
 
     public void refresh() {
