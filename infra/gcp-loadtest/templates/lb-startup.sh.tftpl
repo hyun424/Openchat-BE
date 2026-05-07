@@ -85,11 +85,24 @@ http {
 %{ endfor ~}
     }
 
+%{ for index, ip in realtime_ips ~}
+    upstream openchat_realtime_partition_${index} {
+        server ${ip}:8080 max_fails=3 fail_timeout=10s;
+    }
+
+%{ endfor ~}
+    map $arg_partitionId $openchat_realtime_backend {
+        default http://openchat_realtime;
+%{ for index, ip in realtime_ips ~}
+        "${index}" http://openchat_realtime_partition_${index};
+%{ endfor ~}
+    }
+
     server {
         listen 8080;
 
         location /ws/ {
-            proxy_pass http://openchat_realtime;
+            proxy_pass $openchat_realtime_backend;
             proxy_http_version 1.1;
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection "upgrade";

@@ -181,6 +181,12 @@ variable "k6_worker_count" {
   }
 }
 
+variable "k6_cleanup_enabled" {
+  description = "Whether the k6 coordinator deletes temporary VM resources after the run."
+  type        = bool
+  default     = true
+}
+
 variable "shared_room_mode" {
   description = "When true, distributed k6 workers join one coordinator-created room instead of splitting hot rooms."
   type        = bool
@@ -242,6 +248,69 @@ variable "passive_settle_ms" {
     condition     = var.passive_settle_ms >= 0
     error_message = "passive_settle_ms must be zero or greater."
   }
+}
+
+variable "room_shard_enabled" {
+  description = "Enable Redis room shard channels for app VMs."
+  type        = bool
+  default     = false
+}
+
+variable "room_shard_shard_count" {
+  description = "Configured room shard count."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.room_shard_shard_count >= 1
+    error_message = "room_shard_shard_count must be at least 1."
+  }
+}
+
+variable "room_shard_legacy_subscribe_enabled" {
+  description = "Whether app VMs also subscribe to legacy room channels while room shard mode is enabled."
+  type        = bool
+  default     = true
+}
+
+variable "room_partition_enabled" {
+  description = "Enable hot-room fan-out partition channels."
+  type        = bool
+  default     = false
+}
+
+variable "room_partition_partition_count" {
+  description = "Configured fan-out partition count."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.room_partition_partition_count >= 1
+    error_message = "room_partition_partition_count must be at least 1."
+  }
+}
+
+variable "room_partition_hot_tier_threshold" {
+  description = "Minimum room scale tier that uses fan-out partitioning."
+  type        = string
+  default     = "CRITICAL"
+}
+
+variable "room_partition_max_partitions_per_room" {
+  description = "Maximum fan-out partitions per room."
+  type        = number
+  default     = 16
+
+  validation {
+    condition     = var.room_partition_max_partitions_per_room >= 1
+    error_message = "room_partition_max_partitions_per_room must be at least 1."
+  }
+}
+
+variable "room_partition_admin_api_enabled" {
+  description = "Enable internal room partition operation API for smoke/operation tooling."
+  type        = bool
+  default     = false
 }
 
 variable "enable_monitoring" {

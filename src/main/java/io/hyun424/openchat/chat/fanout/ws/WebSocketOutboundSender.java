@@ -20,8 +20,18 @@ public class WebSocketOutboundSender implements ChatOutboundSender {
     }
 
     @Override
+    public void send(ChatMessageDto message, Integer partitionId) {
+        roomSessionRegistry.sendToRoom(message.getRoomId(), partitionId, message);
+    }
+
+    @Override
     public void sendBatch(Long roomId, List<ChatMessageDto> messages) {
         roomSessionRegistry.sendBatchToRoom(roomId, messages);
+    }
+
+    @Override
+    public void sendBatch(Long roomId, Integer partitionId, List<ChatMessageDto> messages) {
+        roomSessionRegistry.sendBatchToRoom(roomId, partitionId, messages);
     }
 
     @Override
@@ -31,5 +41,15 @@ public class WebSocketOutboundSender implements ChatOutboundSender {
                           int omittedCount,
                           Long lastSequence) {
         roomSessionRegistry.sendBatchToRoom(roomId, messages, realtimeComplete, omittedCount, lastSequence);
+    }
+
+    @Override
+    public void sendBatch(Long roomId,
+                          Integer partitionId,
+                          List<ChatMessageDto> messages,
+                          boolean realtimeComplete,
+                          int omittedCount,
+                          Long lastSequence) {
+        roomSessionRegistry.sendBatchToRoom(roomId, partitionId, messages, realtimeComplete, omittedCount, lastSequence);
     }
 }

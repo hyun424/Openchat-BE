@@ -84,6 +84,7 @@ function countUnexpectedFullPayloadMessages(data) {
  * @param {Object} opts
  * @param {string} opts.token       - JWT 토큰
  * @param {number} opts.roomId      - 채팅방 ID
+ * @param {number|string} opts.partitionId - WebSocket fan-out partition id (선택)
  * @param {number} opts.duration    - 연결 유지 시간(초)
  * @param {number} opts.sendInterval - 메시지 전송 간격(ms), 기본 200
  * @param {string} opts.messageText - 전송할 메시지 텍스트
@@ -100,6 +101,7 @@ export function connectAndChat(opts) {
   const {
     token,
     roomId,
+    partitionId = null,
     duration = 60,
     sendInterval = 200,
     messageText = 'k6 load test message',
@@ -113,7 +115,10 @@ export function connectAndChat(opts) {
     tags = {},
   } = opts;
 
-  const url = `${WS_BASE_URL}/ws/chat?roomId=${roomId}&token=${token}`;
+  const partitionQuery = partitionId === null || partitionId === undefined || String(partitionId) === ''
+    ? ''
+    : `&partitionId=${partitionId}`;
+  const url = `${WS_BASE_URL}/ws/chat?roomId=${roomId}${partitionQuery}&token=${token}`;
   const connectStart = Date.now();
   const resolvedPresenceMode = resolvePresenceMode(presenceMode);
   const resolvedClientMode = resolveClientMode(clientMode);

@@ -12,7 +12,7 @@ import { login, authHeaders, BASE_URL } from '../lib/auth.js';
 import { enterRoom } from '../lib/http-helpers.js';
 import { makeUserId, makeNickname, makeChatMessage } from '../lib/data-factory.js';
 import { connectAndChat } from '../lib/ws.js';
-import { restCreateRoom, httpErrorRate, wsPresenceAssigned } from '../lib/metrics.js';
+import { restCreateRoom, restWsRoute, httpErrorRate, wsPresenceAssigned } from '../lib/metrics.js';
 
 const TARGET_VUS = Number(__ENV.TARGET_VUS || '500');
 const TOTAL_TARGET_VUS = Number(__ENV.TOTAL_TARGET_VUS || String(TARGET_VUS));
@@ -168,6 +168,45 @@ function createUnlimitedHotRoom(token) {
   }
 }
 
+function getWebSocketRoute(token, roomId) {
+  const res = http.get(`${BASE_URL}/api/rooms/${roomId}/ws-route`, {
+    headers: authHeaders(token),
+    tags: { name: 'get_ws_route' },
+  });
+
+  restWsRoute.add(res.timings.duration);
+  httpErrorRate.add(res.status >= 400);
+
+  check(res, {
+    'getWsRoute status 2xx': (r) => r.status >= 200 && r.status < 300,
+    'getWsRoute has partition id': (r) => {
+      try {
+        const body = JSON.parse(r.body);
+        return body.partitionId !== undefined;
+      } catch (e) {
+        return false;
+      }
+    },
+  });
+
+  if (res.status < 200 || res.status >= 300) {
+    console.error(`getWsRoute failed roomId=${roomId} status=${res.status} body=${res.body}`);
+    return { partitionId: null, partitioned: false, partitionCount: 1 };
+  }
+
+  try {
+    const body = JSON.parse(res.body);
+    return {
+      partitionId: body.partitionId,
+      partitioned: Boolean(body.partitioned),
+      partitionCount: Number(body.partitionCount || 1),
+    };
+  } catch (e) {
+    console.error(`getWsRoute parse failed roomId=${roomId}`);
+    return { partitionId: null, partitioned: false, partitionCount: 1 };
+  }
+}
+
 export function setup() {
   if (SHARED_ROOM_ID) {
     console.log(`Setup: using shared active/passive hot room roomId=${SHARED_ROOM_ID} targetVus=${TARGET_VUS} totalTargetVus=${TOTAL_TARGET_VUS} worker=${K6_WORKER_INDEX}/${K6_WORKER_COUNT}`);
@@ -222,10 +261,12 @@ export default function (data) {
 
   enterRoom(token, roomId);
   sleep(0.2);
+  const wsRoute = getWebSocketRoute(token, roomId);
 
   connectAndChat({
     token,
     roomId,
+    partitionId: wsRoute.partitionId,
     duration: CHAT_DURATION_SECONDS,
     sendInterval: sendIntervalForMode(presenceMode, clientMode),
     messageText: MESSAGE_TEXT,

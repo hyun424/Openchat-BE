@@ -1,5 +1,8 @@
 package io.hyun424.openchat.infra.redis.config;
 
+import io.hyun424.openchat.chat.room.partition.infra.RoomPartitionControlChannelResolver;
+import io.hyun424.openchat.chat.room.partition.infra.RoomPartitionControlSubscriber;
+import io.hyun424.openchat.chat.room.shard.ChatRedisChannelResolver;
 import io.hyun424.openchat.chat.subscribe.ChatRedisSubscriber;
 import io.hyun424.openchat.infra.redis.health.RedisHealthState;
 import lombok.RequiredArgsConstructor;
@@ -21,7 +24,10 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 public class RedisSubscriberConfig {
 
     private final ChatRedisSubscriber subscriber;
+    private final RoomPartitionControlSubscriber controlSubscriber;
     private final RedisHealthState redisHealthState;
+    private final ChatRedisChannelResolver channelResolver;
+    private final RoomPartitionControlChannelResolver controlChannelResolver;
 
     @Bean
     public RedisMessageListenerContainer redisMessageListenerContainer(
@@ -47,21 +53,38 @@ public class RedisSubscriberConfig {
         // Recovery settings
         container.setRecoveryInterval(5000L); // 5초마다 재연결 시도
 
+        for (String topicPattern : channelResolver.subscribePatterns()) {
+            container.addMessageListener(
+                    (message, pattern) -> {
+                        try {
+                            String channel = new String(message.getChannel());
+                            String body = new String(message.getBody());
+                            subscriber.onMessage(body, channel);
+                            redisHealthState.markUp(); // 메시지 받으면 healthy
+                        } catch (Exception e) {
+                            log.error("[REDIS SUB] message handling failed", e);
+                        }
+                    },
+                    new PatternTopic(topicPattern)
+            );
+        }
+
         container.addMessageListener(
                 (message, pattern) -> {
                     try {
                         String channel = new String(message.getChannel());
                         String body = new String(message.getBody());
-                        subscriber.onMessage(body, channel);
-                        redisHealthState.markUp(); // 메시지 받으면 healthy
+                        controlSubscriber.onMessage(body, channel);
+                        redisHealthState.markUp();
                     } catch (Exception e) {
-                        log.error("[REDIS SUB] message handling failed", e);
+                        log.error("[REDIS CONTROL SUB] message handling failed", e);
                     }
                 },
-                new PatternTopic("chat:room:*")
+                new PatternTopic(controlChannelResolver.subscribePattern())
         );
 
-        log.info("RedisMessageListenerContainer configured with recovery interval 5s");
+        log.info("RedisMessageListenerContainer configured with recovery interval 5s topics={} controlTopic={}",
+                channelResolver.subscribePatterns(), controlChannelResolver.subscribePattern());
         return container;
     }
 }

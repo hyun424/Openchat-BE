@@ -17,8 +17,10 @@ import org.springframework.web.socket.handler.SessionLimitExceededException;
 import java.io.IOException;
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -237,6 +239,56 @@ class RoomSessionRegistryTest {
         registry.sendToRoom(1L, message());
 
         verify(session, timeout(500)).sendMessage(any(TextMessage.class));
+        registry.shutdownExecutor();
+    }
+
+    @Test
+    @DisplayName("partition fan-out은 같은 partition 세션에만 전송한다")
+    void sendToRoom_partition_sendsOnlyMatchingPartition() throws Exception {
+        RoomSessionRegistry registry = new RoomSessionRegistry(new ObjectMapper(), 2, 16);
+        WebSocketSession partition0 = mockOpenSession("partition-0");
+        WebSocketSession partition1 = mockOpenSession("partition-1");
+        registry.add(1L, 0, partition0);
+        registry.add(1L, 1, partition1);
+
+        registry.sendToRoom(1L, 1, message());
+
+        verify(partition0, never()).sendMessage(any(TextMessage.class));
+        verify(partition1, timeout(500)).sendMessage(any(TextMessage.class));
+        registry.shutdownExecutor();
+    }
+
+    @Test
+    @DisplayName("partition별 열린 세션 id만 조회한다")
+    void openSessionIds_filtersByPartitionAndOpenState() {
+        RoomSessionRegistry registry = new RoomSessionRegistry(new ObjectMapper(), 2, 16);
+        WebSocketSession partition0 = mockOpenSession("partition-0");
+        WebSocketSession partition1 = mockOpenSession("partition-1");
+        WebSocketSession closedPartition1 = mockSession("closed-partition-1", false);
+        registry.add(1L, 0, partition0);
+        registry.add(1L, 1, partition1);
+        registry.add(1L, 1, closedPartition1);
+
+        Set<String> sessionIds = new HashSet<>(registry.openSessionIds(1L, 1));
+
+        assertEquals(Set.of("partition-1"), sessionIds);
+        registry.shutdownExecutor();
+    }
+
+    @Test
+    @DisplayName("partition 내부에서도 passive 세션은 full fan-out 대상에서 제외한다")
+    void sendToRoom_partitionPassive_omitsFullPayload() throws Exception {
+        RoomSessionRegistry registry = new RoomSessionRegistry(new ObjectMapper(), 2, 16);
+        WebSocketSession active = mockOpenSession("active-partition");
+        WebSocketSession passive = mockOpenSession("passive-partition");
+        registry.add(1L, 1, active);
+        registry.add(1L, 1, passive);
+        registry.markPassive(1L, "passive-partition", 10L);
+
+        registry.sendToRoom(1L, 1, message());
+
+        verify(active, timeout(500)).sendMessage(any(TextMessage.class));
+        verify(passive, never()).sendMessage(any(TextMessage.class));
         registry.shutdownExecutor();
     }
 

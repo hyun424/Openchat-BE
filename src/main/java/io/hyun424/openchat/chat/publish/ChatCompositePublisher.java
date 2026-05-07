@@ -3,6 +3,9 @@ package io.hyun424.openchat.chat.publish;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
 import io.hyun424.openchat.chat.metrics.ChatPipelineMetrics;
+import io.hyun424.openchat.chat.room.partition.metrics.RoomPartitionMetrics;
+import io.hyun424.openchat.chat.room.shard.ChatRedisChannelResolver;
+import io.hyun424.openchat.chat.room.shard.RoomShardMetrics;
 import io.hyun424.openchat.infra.redis.health.RedisHealthState;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -27,6 +30,9 @@ public class ChatCompositePublisher implements ChatMessagePublisher {
     private final KafkaTemplate<String, ChatMessageDto> kafkaTemplate;
     private final RedisHealthState redisHealthState;
     private final ChatPipelineMetrics chatPipelineMetrics;
+    private final ChatRedisChannelResolver channelResolver;
+    private final RoomShardMetrics roomShardMetrics;
+    private final RoomPartitionMetrics roomPartitionMetrics;
 
     @Value("${app.instance-id:local}")
     private String instanceId;
@@ -36,13 +42,19 @@ public class ChatCompositePublisher implements ChatMessagePublisher {
             ObjectMapper objectMapper,
             KafkaTemplate<String, ChatMessageDto> kafkaTemplate,
             RedisHealthState redisHealthState,
-            ChatPipelineMetrics chatPipelineMetrics
+            ChatPipelineMetrics chatPipelineMetrics,
+            ChatRedisChannelResolver channelResolver,
+            RoomShardMetrics roomShardMetrics,
+            RoomPartitionMetrics roomPartitionMetrics
     ) {
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper;
         this.kafkaTemplate = kafkaTemplate;
         this.redisHealthState = redisHealthState;
         this.chatPipelineMetrics = chatPipelineMetrics;
+        this.channelResolver = channelResolver;
+        this.roomShardMetrics = roomShardMetrics;
+        this.roomPartitionMetrics = roomPartitionMetrics;
         log.info("ChatCompositePublisher initialized (Redis + Kafka)");
     }
 
@@ -62,17 +74,20 @@ public class ChatCompositePublisher implements ChatMessagePublisher {
             return;
         }
 
-        String channel = "chat:room:" + message.getRoomId();
         try {
             long serializeStartNanos = System.nanoTime();
             String payload = objectMapper.writeValueAsString(message);
             chatPipelineMetrics.recordStage("publish.redis.serialize", serializeStartNanos);
-            long publishStartNanos = System.nanoTime();
-            redisTemplate.convertAndSend(channel, payload);
-            chatPipelineMetrics.recordStage("publish.redis.convert_and_send", publishStartNanos);
-            chatPipelineMetrics.recordSinceCreated("publish.redis.after_send.since_created", message);
-            log.debug("[REDIS PUB][{}] channel={} messageId={}",
-                    instanceId, channel, message.getMessageId());
+            for (ChatRedisChannelResolver.ResolvedChannel resolvedChannel : channelResolver.publishChannels(message)) {
+                long publishStartNanos = System.nanoTime();
+                redisTemplate.convertAndSend(resolvedChannel.channel(), payload);
+                roomShardMetrics.recordPublish(resolvedChannel.mode());
+                roomPartitionMetrics.recordPublish(resolvedChannel.mode());
+                chatPipelineMetrics.recordStage("publish.redis.convert_and_send", publishStartNanos);
+                chatPipelineMetrics.recordSinceCreated("publish.redis.after_send.since_created", message);
+                log.debug("[REDIS PUB][{}] channel={} messageId={}",
+                        instanceId, resolvedChannel.channel(), message.getMessageId());
+            }
         } catch (Exception e) {
             chatPipelineMetrics.incrementCounter("publish.redis.fail");
             // Mark Redis as down, Kafka will handle durability

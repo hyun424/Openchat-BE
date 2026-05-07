@@ -13,6 +13,7 @@ K6_VM_NAMES="${k6_vm_names}"
 K6_WORKER_INDEX="${k6_worker_index}"
 K6_WORKER_COUNT="${k6_worker_count}"
 K6_IS_COORDINATOR="${k6_is_coordinator}"
+K6_CLEANUP_ENABLED="${k6_cleanup_enabled}"
 MONITORING_VM_NAME="${monitoring_vm_name}"
 MONITORING_INTERNAL_IP="${monitoring_internal_ip}"
 ENABLE_MONITORING="${enable_monitoring}"
@@ -348,6 +349,11 @@ cleanup() {
   sync_results
   write_done_marker
 
+  if [ "$K6_CLEANUP_ENABLED" != "true" ]; then
+    echo "[k6] cleanup disabled; leaving VMs running for manual smoke verification"
+    exit "$exit_code"
+  fi
+
   if [ "$K6_IS_COORDINATOR" != "true" ]; then
     echo "[k6] non-coordinator scheduling self delete $K6_VM_NAME"
     (sleep 5; gcloud compute instances delete "$K6_VM_NAME" --project "$PROJECT_ID" --zone "$ZONE" --quiet) >/tmp/openchat-self-delete.log 2>&1 &
@@ -389,7 +395,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "[k6] startup begin run_id=$RUN_ID worker=$WORKER_LABEL/$K6_WORKER_COUNT profile=$PROFILE vus_list=$VUS_LIST base=$BASE_URL connect_ramp_seconds=$CONNECT_RAMP_SECONDS hot_rooms=$HOT_ROOMS vus_per_room=$VUS_PER_ROOM monitoring=$ENABLE_MONITORING shared_room_mode=$SHARED_ROOM_MODE"
+echo "[k6] startup begin run_id=$RUN_ID worker=$WORKER_LABEL/$K6_WORKER_COUNT profile=$PROFILE vus_list=$VUS_LIST base=$BASE_URL connect_ramp_seconds=$CONNECT_RAMP_SECONDS hot_rooms=$HOT_ROOMS vus_per_room=$VUS_PER_ROOM monitoring=$ENABLE_MONITORING shared_room_mode=$SHARED_ROOM_MODE cleanup=$K6_CLEANUP_ENABLED"
 apply_socket_tuning
 collect_socket_snapshot "socket-before"
 
