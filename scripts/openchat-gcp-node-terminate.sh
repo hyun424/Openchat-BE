@@ -174,10 +174,14 @@ build_guards_json() {
   local decision_action="${4:-}"
   local decision_node="${5:-}"
   local decision_created_at="${6:-}"
-  local instance_run_id="${7:-}"
-  local instance_role="${8:-}"
-  local instance_app_index="${9:-}"
-  local instance_status="${10:-}"
+  local decision_remaining_sessions="${7:-}"
+  local decision_source_status="${8:-}"
+  local decision_source_next_action="${9:-}"
+  local decision_guards_all_passed="${10:-}"
+  local instance_run_id="${11:-}"
+  local instance_role="${12:-}"
+  local instance_app_index="${13:-}"
+  local instance_status="${14:-}"
 
   jq -n \
     --arg decisionContract "$decision_contract" \
@@ -186,6 +190,10 @@ build_guards_json() {
     --arg decisionAction "$decision_action" \
     --arg decisionNode "$decision_node" \
     --arg decisionCreatedAt "$decision_created_at" \
+    --arg decisionRemainingSessions "$decision_remaining_sessions" \
+    --arg decisionSourceStatus "$decision_source_status" \
+    --arg decisionSourceNextAction "$decision_source_next_action" \
+    --arg decisionGuardsAllPassed "$decision_guards_all_passed" \
     --arg expectedNode "$NODE_ID" \
     --arg instanceRunId "$instance_run_id" \
     --arg expectedRunId "$RUN_ID" \
@@ -201,6 +209,10 @@ build_guards_json() {
       {name:"decision_termination_allowed", passed:($decisionAllowed == "true"), expected:"true", actual:$decisionAllowed},
       {name:"decision_recommended_action", passed:($decisionAction == "terminate_node"), expected:"terminate_node", actual:$decisionAction},
       {name:"decision_node_id_match", passed:($decisionNode == $expectedNode), expected:$expectedNode, actual:$decisionNode},
+      {name:"decision_remaining_sessions_zero", passed:($decisionRemainingSessions == "0"), expected:"0", actual:$decisionRemainingSessions},
+      {name:"decision_source_status_complete", passed:($decisionSourceStatus == "complete"), expected:"complete", actual:$decisionSourceStatus},
+      {name:"decision_source_next_action_none", passed:($decisionSourceNextAction == "none"), expected:"none", actual:$decisionSourceNextAction},
+      {name:"decision_guards_all_passed", passed:($decisionGuardsAllPassed == "true"), expected:"true", actual:$decisionGuardsAllPassed},
       {name:"instance_run_id_match", passed:($instanceRunId == $expectedRunId), expected:$expectedRunId, actual:$instanceRunId},
       {name:"instance_role_realtime", passed:($instanceRole == "realtime"), expected:"realtime", actual:$instanceRole},
       {name:"instance_app_index_match", passed:($instanceAppIndex == $expectedAppIndex), expected:$expectedAppIndex, actual:$instanceAppIndex},
@@ -279,6 +291,10 @@ load_decision_fields() {
     and (.recommendedAction | type == "string")
     and (.nodeId | type == "string")
     and (.createdAt | type == "string")
+    and (.remainingSessions | type == "number")
+    and (.sourceStatus | type == "string")
+    and (.sourceNextAction | type == "string")
+    and (.guards | type == "array")
   ' "$DECISION" >/dev/null 2>&1; then
     write_unexpected_input "decision missing required fields"
   fi
@@ -323,15 +339,23 @@ main() {
   local decision_action
   local decision_node
   local decision_created_at
+  local decision_remaining_sessions
+  local decision_source_status
+  local decision_source_next_action
+  local decision_guards_all_passed
   decision_contract="$(jq -r '.contractVersion' "$DECISION")"
   decision_result="$(jq -r '.result' "$DECISION")"
   decision_allowed="$(jq -r '.terminationAllowed' "$DECISION")"
   decision_action="$(jq -r '.recommendedAction' "$DECISION")"
   decision_node="$(jq -r '.nodeId' "$DECISION")"
   decision_created_at="$(jq -r '.createdAt' "$DECISION")"
+  decision_remaining_sessions="$(jq -r '.remainingSessions' "$DECISION")"
+  decision_source_status="$(jq -r '.sourceStatus' "$DECISION")"
+  decision_source_next_action="$(jq -r '.sourceNextAction' "$DECISION")"
+  decision_guards_all_passed="$(jq -r 'all(.guards[]?; .passed == true)' "$DECISION")"
 
   local pre_gcp_guards
-  pre_gcp_guards="$(build_guards_json "$decision_contract" "$decision_result" "$decision_allowed" "$decision_action" "$decision_node" "$decision_created_at" "" "" "" "")"
+  pre_gcp_guards="$(build_guards_json "$decision_contract" "$decision_result" "$decision_allowed" "$decision_action" "$decision_node" "$decision_created_at" "$decision_remaining_sessions" "$decision_source_status" "$decision_source_next_action" "$decision_guards_all_passed" "" "" "" "")"
   if [ "$decision_node" != "$NODE_ID" ]; then
     write_result "unsafe" false "decision nodeId does not match requested node" 20 "$pre_gcp_guards"
   fi
@@ -346,6 +370,11 @@ main() {
   if [ "$decision_contract" != "openchat.node-termination-decision.v1" ]; then
     write_unexpected_input "unsupported decision contractVersion"
   fi
+  local pre_gcp_failed_count
+  pre_gcp_failed_count="$(printf '%s' "$pre_gcp_guards" | jq 'map(select((.name | startswith("decision_")) and .passed == false)) | length')"
+  if [ "$pre_gcp_failed_count" != "0" ]; then
+    write_result "unsafe" false "decision safety guards failed" 20 "$pre_gcp_guards"
+  fi
 
   resolve_instance
 
@@ -357,7 +386,7 @@ main() {
   instance_app_index="$(printf '%s' "$INSTANCE_JSON" | jq -r '.labels.app_index // ""')"
 
   local guards
-  guards="$(build_guards_json "$decision_contract" "$decision_result" "$decision_allowed" "$decision_action" "$decision_node" "$decision_created_at" "$instance_run_id" "$instance_role" "$instance_app_index" "$BEFORE_STATUS")"
+  guards="$(build_guards_json "$decision_contract" "$decision_result" "$decision_allowed" "$decision_action" "$decision_node" "$decision_created_at" "$decision_remaining_sessions" "$decision_source_status" "$decision_source_next_action" "$decision_guards_all_passed" "$instance_run_id" "$instance_role" "$instance_app_index" "$BEFORE_STATUS")"
   local failed_count
   failed_count="$(printf '%s' "$guards" | jq 'map(select(.passed == false)) | length')"
   if [ "$failed_count" != "0" ]; then

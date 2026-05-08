@@ -252,6 +252,50 @@ collect_node_drain_status_snapshot() {
     > "$RESULT_ROOT/metrics/node-drain-status-$suffix.json" || true
 }
 
+assert_target_node_removed_after_stop() {
+  local label="$1"
+  local target_node="$2"
+  local summary_file="$RESULT_ROOT/metrics/gcp-node-termination-target-removed-$label.json"
+
+  for attempt in $(seq 1 15); do
+    local suffix="gcp-node-termination-target-removed-$label-$attempt"
+    collect_assignment_snapshot "$suffix"
+
+    local nodes_file="$RESULT_ROOT/metrics/room-partition-nodes-$suffix.json"
+    local assignments_file="$RESULT_ROOT/metrics/room-partition-assignments-$suffix.json"
+    local active_count
+    local owner_count
+    local ready_count
+    active_count=$(jq -r --arg node "$target_node" '[ (.activeNodes // [])[] | select(.nodeId == $node) ] | length' "$nodes_file" 2>/dev/null || echo "parse_failed")
+    owner_count=$(jq -r --arg node "$target_node" '[ (.assignments // {})[] | select(.nodeId == $node) ] | length' "$assignments_file" 2>/dev/null || echo "parse_failed")
+    ready_count=$(jq -r '[ (.assignments // {})[] | select(.ready == true) ] | length' "$assignments_file" 2>/dev/null || echo "parse_failed")
+
+    jq -nc \
+      --arg targetNode "$target_node" \
+      --argjson attempt "$attempt" \
+      --arg activeCount "$active_count" \
+      --arg ownerCount "$owner_count" \
+      --arg readyCount "$ready_count" \
+      '{
+        targetNode: $targetNode,
+        attempt: $attempt,
+        activeCount: $activeCount,
+        ownerCount: $ownerCount,
+        readyCount: $readyCount,
+        removed: ($activeCount == "0" and $ownerCount == "0")
+      }' > "$summary_file" || true
+
+    if [ "$active_count" = "0" ] && [ "$owner_count" = "0" ]; then
+      echo "[k6] target node removed from active registry and assignments target_node=$target_node attempt=$attempt"
+      return 0
+    fi
+    sleep 2
+  done
+
+  echo "[k6] target node still appears active or assigned after stop target_node=$target_node" >&2
+  return 1
+}
+
 run_gcp_node_termination_post_stop_probe() {
   local label="$1"
   local target_node="$2"
@@ -471,6 +515,8 @@ trigger_node_drain_during_run() {
         fi
 
         if [ "$K6_GCP_NODE_TERMINATION_ADAPTER_MODE" = "stop" ]; then
+          assert_target_node_removed_after_stop "$label" "$target_node" || return 1
+
           local post_stop_probe_status=0
           run_gcp_node_termination_post_stop_probe "$label" "$target_node" || post_stop_probe_status=$?
           if jq -e . "$output_file" >/dev/null 2>&1; then

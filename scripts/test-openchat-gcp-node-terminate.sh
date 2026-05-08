@@ -51,7 +51,7 @@ fi
 
 if [[ "$args" == *"compute instances describe"* ]]; then
   if [ -f "$FAKE_GCLOUD_STOP_MARKER" ]; then
-    jq '.status = "TERMINATED"' "$FAKE_GCLOUD_DESCRIBE_JSON"
+    jq --arg status "${FAKE_GCLOUD_FINAL_STATUS:-TERMINATED}" '.status = $status' "$FAKE_GCLOUD_DESCRIBE_JSON"
   else
     cat "$FAKE_GCLOUD_DESCRIBE_JSON"
   fi
@@ -85,7 +85,19 @@ ready_decision_json() {
   "recommendedAction": "terminate_node",
   "nodeId": "gcp-realtime-2",
   "remainingSessions": 0,
-  "createdAt": "__CREATED_AT__"
+  "sourceStatus": "complete",
+  "sourceNextAction": "none",
+  "createdAt": "__CREATED_AT__",
+  "guards": [
+    {"name": "node_id_match", "passed": true},
+    {"name": "source_exit_code_zero", "passed": true},
+    {"name": "source_result_complete", "passed": true},
+    {"name": "source_termination_allowed", "passed": true},
+    {"name": "source_status_complete", "passed": true},
+    {"name": "source_next_action_none", "passed": true},
+    {"name": "remaining_sessions_zero", "passed": true},
+    {"name": "result_fresh", "passed": true}
+  ]
 }
 JSON
 }
@@ -265,6 +277,83 @@ test_stale_decision_is_unsafe() {
   assert_eq "false" "$(jq -r '.guards[] | select(.name == "decision_fresh") | .passed' "$CASE_DIR/result.json")" "decision freshness guard"
 }
 
+test_nonzero_remaining_sessions_is_unsafe() {
+  new_case "remaining-sessions"
+  ready_decision_json | jq '.remainingSessions = 1' > "$CASE_DIR/decision.json"
+  write_instance
+
+  set +e
+  run_adapter --mode stop
+  exit_code=$?
+  set -e
+
+  assert_eq "20" "$exit_code" "exit code"
+  assert_eq "unsafe" "$(jq -r '.result' "$CASE_DIR/result.json")" "result"
+  assert_eq "false" "$(jq -r '.guards[] | select(.name == "decision_remaining_sessions_zero") | .passed' "$CASE_DIR/result.json")" "remaining sessions guard"
+}
+
+test_failed_decision_guard_is_unsafe() {
+  new_case "failed-decision-guard"
+  ready_decision_json | jq '.guards[0].passed = false' > "$CASE_DIR/decision.json"
+  write_instance
+
+  set +e
+  run_adapter --mode stop
+  exit_code=$?
+  set -e
+
+  assert_eq "20" "$exit_code" "exit code"
+  assert_eq "unsafe" "$(jq -r '.result' "$CASE_DIR/result.json")" "result"
+  assert_eq "false" "$(jq -r '.guards[] | select(.name == "decision_guards_all_passed") | .passed' "$CASE_DIR/result.json")" "decision guards guard"
+}
+
+test_non_running_instance_is_unsafe() {
+  new_case "not-running"
+  write_decision "$(ready_decision_json)"
+  write_instance "openchat-lt-run-realtime-2" "TERMINATED"
+
+  set +e
+  run_adapter --mode stop
+  exit_code=$?
+  set -e
+
+  assert_eq "20" "$exit_code" "exit code"
+  assert_eq "unsafe" "$(jq -r '.result' "$CASE_DIR/result.json")" "result"
+  assert_eq "false" "$(jq -r '.guards[] | select(.name == "instance_running") | .passed' "$CASE_DIR/result.json")" "running guard"
+}
+
+test_multiple_candidates_are_gcp_failure() {
+  new_case "multiple-candidates"
+  write_decision "$(ready_decision_json)"
+  write_instance
+  jq -s '.[0] as $one | [$one, ($one | .name = "openchat-lt-run-realtime-2-duplicate")]' "$CASE_DIR/describe.json" > "$CASE_DIR/list.json"
+
+  set +e
+  run_adapter --mode stop
+  exit_code=$?
+  set -e
+
+  assert_eq "40" "$exit_code" "exit code"
+  assert_eq "gcp_failure" "$(jq -r '.result' "$CASE_DIR/result.json")" "result"
+}
+
+test_final_status_must_be_terminated() {
+  new_case "final-status"
+  write_decision "$(ready_decision_json)"
+  write_instance
+  export FAKE_GCLOUD_FINAL_STATUS="RUNNING"
+
+  set +e
+  run_adapter --mode stop
+  exit_code=$?
+  set -e
+  unset FAKE_GCLOUD_FINAL_STATUS
+
+  assert_eq "40" "$exit_code" "exit code"
+  assert_eq "gcp_failure" "$(jq -r '.result' "$CASE_DIR/result.json")" "result"
+  assert_eq "RUNNING" "$(jq -r '.afterStatus' "$CASE_DIR/result.json")" "afterStatus"
+}
+
 test_missing_args_are_usage_error() {
   new_case "missing-args"
 
@@ -286,6 +375,11 @@ test_app_index_mismatch_is_unsafe
 test_instance_not_found_is_gcp_failure
 test_invalid_decision_json_is_unexpected_input
 test_stale_decision_is_unsafe
+test_nonzero_remaining_sessions_is_unsafe
+test_failed_decision_guard_is_unsafe
+test_non_running_instance_is_unsafe
+test_multiple_candidates_are_gcp_failure
+test_final_status_must_be_terminated
 test_missing_args_are_usage_error
 
 echo "openchat gcp node terminate tests passed"
