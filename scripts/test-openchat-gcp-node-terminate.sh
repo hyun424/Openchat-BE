@@ -223,7 +223,6 @@ test_instance_not_found_is_gcp_failure() {
   new_case "not-found"
   write_decision "$(ready_decision_json)"
   printf '[]\n' > "$CASE_DIR/list.json"
-  write_instance
 
   set +e
   run_adapter --mode stop
