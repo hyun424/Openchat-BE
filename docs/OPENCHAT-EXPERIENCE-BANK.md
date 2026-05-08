@@ -369,6 +369,8 @@ GCP node drain smoke에서 WebSocket connect success `145/145`, route failure/fa
 
 이후 external drain orchestrator를 추가해 `nextAction`을 실제로 소비하는 운영 command를 만들었다. `20260508-node-drain-orchestrator-smoke`에서는 orchestrator exitCode `0`, `terminationAllowed=true`, final status `complete`, route failure/fallback/mismatch `0/0/0`, reconnect control `51`건, sent/ack/DB rows `22265/22265/22265`, drained node openSessions `0`을 확인했다. 이로써 앱이 상태를 알려주는 수준을 넘어, 외부 runner가 node 종료 가능 판정까지 자동으로 수행할 수 있음을 검증했다.
 
+그 다음 단계에서는 실제 VM 종료 전에 provider-neutral termination decision contract를 추가했다. `20260508-node-termination-contract-smoke`에서는 orchestrator exitCode `0`, `terminationAllowed=true`, decision `result=ready`, `recommendedAction=terminate_node`, route failure/fallback/mismatch `0/0/0`, sent/ack/DB rows `22266/22266/22266`, drained node openSessions `0`을 확인했다. 실제 VM stop/delete는 하지 않고, GCP/MIG/EKS adapter가 공통으로 소비할 수 있는 안전 게이트만 검증했다.
+
 ### 배운 점
 
 실시간 시스템의 scale-out은 서버 수 증가가 아니라 ownership contract를 맞추는 문제다. route, 실제 연결, subscriber, reconnect, drain completion signal이 모두 같은 기준을 따라야 운영 가능한 구조가 된다. 또한 EKS나 MIG 자동 종료를 붙이기 전에, 애플리케이션이 먼저 "이 node는 안전하게 비워졌다"는 상태를 증명할 수 있어야 한다.

@@ -575,6 +575,37 @@ orchestrator는 `POST drain`과 `GET drain/status`를 반복 호출하면서 `ne
 
 이 결과로 "앱이 종료 가능 상태를 알려준다"에서 한 단계 더 나아가, 외부 runner가 그 응답 계약을 소비해 node drain completion까지 자동으로 도달할 수 있음을 확인했다. 여전히 VM stop/delete, MIG scale-in, EKS eviction은 후속 작업이다.
 
+#### Update: Generic Node Termination Contract v1
+
+drain orchestrator 이후에는 바로 GCP VM 종료 adapter를 붙이지 않고, provider-neutral termination decision contract를 먼저 추가했다. 면접에서 "오버엔지니어링 아닌가"라는 질문을 받을 수 있는 지점이라 범위를 의도적으로 작게 잡았다. 이 작업은 multi-cloud framework가 아니라, orchestrator 결과 JSON을 읽고 "이 node를 종료해도 되는가"를 표준 JSON과 exit code로 판정하는 safety gate다.
+
+decision command는 `scripts/openchat-node-termination-decision.sh`로 추가했다. ready 판정은 `nodeId` 일치, `exitCode=0`, `result=complete`, `terminationAllowed=true`, `lastStatus=complete`, `lastNextAction=none`, `remainingSessions=0`, `completedAt` freshness를 모두 만족해야 한다. stale 또는 future `completedAt`, node mismatch, `terminationAllowed=true`인데 다른 guard가 실패하는 모순된 입력은 `unsafe`로 처리한다. output에는 `contractVersion=openchat.node-termination-decision.v1`, guard별 pass/fail, `recommendedAction`을 남긴다.
+
+이 선택의 trade-off는 다음과 같다.
+
+- 장점: GCP VM, MIG, EKS adapter가 같은 app-level drain 결과를 소비할 수 있다.
+- 장점: 실제 termination 실행 전에 종료 가능 판정을 독립적으로 테스트할 수 있다.
+- 비용: orchestrator JSON과 일부 정보가 중복된다.
+- 제한: 실제 VM stop/delete, MIG scale-in, EKS eviction은 하지 않는다.
+
+`20260508-node-termination-contract-smoke` GCP smoke 결과는 다음이다.
+
+- k6 exit code `0`
+- orchestrator exitCode `0`
+- orchestrator terminationAllowed `true`
+- termination decision result `ready`
+- termination decision recommendedAction `terminate_node`
+- termination decision guard 전부 `passed=true`
+- drained node `gcp-realtime-2` openSessions `0`
+- route failure/fallback/mismatch `0/0/0`
+- sent/ack/DB rows `22,266 / 22,266 / 22,266`
+- observer visible freshness p95 `114.95ms`
+- orchestrator history `reconnect_published -> sessions_remaining -> reconnect_published -> complete`
+- cleanup 후 RUN_ID GCE VM 잔여 없음
+- 실제 VM stop/delete는 수행하지 않음
+
+이 결과로 앱이 만든 drain completion 신호를 외부 provider-neutral termination gate가 소비해 `terminate_node` 권고까지 낼 수 있음을 확인했다. 다음 단계는 이 decision output을 입력으로 받는 GCP VM adapter를 만들고, run-scoped guard와 dry-run/stop/delete mode를 붙여 실제 VM 종료 smoke를 수행하는 것이다.
+
 ---
 
 ## 포트폴리오에서 사용할 최종 서사
