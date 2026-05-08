@@ -41,6 +41,7 @@ K6_NODE_DRAIN_ORCHESTRATOR_ENABLED="${k6_node_drain_orchestrator_enabled}"
 K6_NODE_DRAIN_ORCHESTRATOR_TIMEOUT_SECONDS="${k6_node_drain_orchestrator_timeout_seconds}"
 K6_NODE_DRAIN_ORCHESTRATOR_POLL_INTERVAL_MS="${k6_node_drain_orchestrator_poll_interval_ms}"
 K6_NODE_DRAIN_ORCHESTRATOR_MAX_RECONNECT_ATTEMPTS="${k6_node_drain_orchestrator_max_reconnect_attempts}"
+K6_NODE_TERMINATION_DECISION_ENABLED="${k6_node_termination_decision_enabled}"
 REALTIME_WORKLOAD_SUMMARY_ENABLED="${realtime_workload_summary_enabled}"
 CONNECT_RAMP_SECONDS="${connect_ramp_seconds}"
 HOT_ROOMS="${hot_rooms}"
@@ -318,7 +319,43 @@ trigger_node_drain_during_run() {
     else
       echo "{\"targetNode\":\"$target_node\",\"complete\":false,\"status\":\"orchestrator_output_missing\",\"exitCode\":$orchestrator_status}" > "$output_file"
     fi
-    return "$orchestrator_status"
+
+    if [ "$orchestrator_status" -ne 0 ]; then
+      return "$orchestrator_status"
+    fi
+
+    if [ "$K6_NODE_TERMINATION_DECISION_ENABLED" = "true" ]; then
+      echo "[k6] validating node termination decision target_node=$target_node label=$label"
+      local decision_output="$RESULT_ROOT/metrics/node-termination-decision-$label.json"
+      local decision_stdout="$RESULT_ROOT/metrics/node-termination-decision-stdout-$label.json"
+      chmod +x "$WORKDIR/scripts/openchat-node-termination-decision.sh" || true
+
+      set +e
+      "$WORKDIR/scripts/openchat-node-termination-decision.sh" \
+        --input "$orchestrator_output" \
+        --node-id "$target_node" \
+        --output "$decision_output" \
+        > "$decision_stdout"
+      local decision_status=$?
+      set -e
+
+      if jq -e . "$decision_output" >/dev/null 2>&1 && jq -e . "$output_file" >/dev/null 2>&1; then
+        local output_tmp="$output_file.tmp"
+        jq --argjson decision "$(cat "$decision_output")" \
+          '. + {
+            terminationDecision: $decision,
+            terminationDecisionReady: ($decision.result == "ready"),
+            terminationDecisionRecommendedAction: $decision.recommendedAction
+          }' "$output_file" > "$output_tmp" 2>/dev/null && mv "$output_tmp" "$output_file" || rm -f "$output_tmp"
+      fi
+
+      if [ "$decision_status" -ne 0 ]; then
+        echo "[k6] node termination decision failed target_node=$target_node status=$decision_status" >&2
+        return "$decision_status"
+      fi
+    fi
+
+    return 0
   fi
 
   echo "[k6] triggering node drain target_node=$target_node label=$label"

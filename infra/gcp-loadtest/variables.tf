@@ -144,6 +144,12 @@ variable "k6_node_drain_orchestrator_max_reconnect_attempts" {
   default     = 5
 }
 
+variable "k6_node_termination_decision_enabled" {
+  description = "Validate the node drain orchestrator result with the provider-neutral termination decision command."
+  type        = bool
+  default     = false
+}
+
 variable "connect_ramp_seconds" {
   description = "Seconds used by ramped k6 scenarios to spread login, room entry, and WebSocket connection attempts."
   type        = number
