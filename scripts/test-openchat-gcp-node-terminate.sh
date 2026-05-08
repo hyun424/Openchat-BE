@@ -75,14 +75,17 @@ write_decision() {
 }
 
 ready_decision_json() {
-  cat <<'JSON'
+  local created_at
+  created_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  cat <<'JSON' | sed "s/__CREATED_AT__/$created_at/g"
 {
   "contractVersion": "openchat.node-termination-decision.v1",
   "result": "ready",
   "terminationAllowed": true,
   "recommendedAction": "terminate_node",
   "nodeId": "gcp-realtime-2",
-  "remainingSessions": 0
+  "remainingSessions": 0,
+  "createdAt": "__CREATED_AT__"
 }
 JSON
 }
@@ -247,6 +250,21 @@ test_invalid_decision_json_is_unexpected_input() {
   assert_eq "unexpected_input" "$(jq -r '.result' "$CASE_DIR/result.json")" "result"
 }
 
+test_stale_decision_is_unsafe() {
+  new_case "stale-decision"
+  ready_decision_json | jq '.createdAt = "2020-01-01T00:00:00Z"' > "$CASE_DIR/decision.json"
+  write_instance
+
+  set +e
+  run_adapter --mode stop --max-decision-age-seconds 60
+  exit_code=$?
+  set -e
+
+  assert_eq "20" "$exit_code" "exit code"
+  assert_eq "unsafe" "$(jq -r '.result' "$CASE_DIR/result.json")" "result"
+  assert_eq "false" "$(jq -r '.guards[] | select(.name == "decision_fresh") | .passed' "$CASE_DIR/result.json")" "decision freshness guard"
+}
+
 test_missing_args_are_usage_error() {
   new_case "missing-args"
 
@@ -267,6 +285,7 @@ test_role_mismatch_is_unsafe
 test_app_index_mismatch_is_unsafe
 test_instance_not_found_is_gcp_failure
 test_invalid_decision_json_is_unexpected_input
+test_stale_decision_is_unsafe
 test_missing_args_are_usage_error
 
 echo "openchat gcp node terminate tests passed"

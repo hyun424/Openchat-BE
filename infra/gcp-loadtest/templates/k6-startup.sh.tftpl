@@ -42,6 +42,11 @@ K6_NODE_DRAIN_ORCHESTRATOR_TIMEOUT_SECONDS="${k6_node_drain_orchestrator_timeout
 K6_NODE_DRAIN_ORCHESTRATOR_POLL_INTERVAL_MS="${k6_node_drain_orchestrator_poll_interval_ms}"
 K6_NODE_DRAIN_ORCHESTRATOR_MAX_RECONNECT_ATTEMPTS="${k6_node_drain_orchestrator_max_reconnect_attempts}"
 K6_NODE_TERMINATION_DECISION_ENABLED="${k6_node_termination_decision_enabled}"
+K6_GCP_NODE_TERMINATION_ADAPTER_ENABLED="${k6_gcp_node_termination_adapter_enabled}"
+K6_GCP_NODE_TERMINATION_ADAPTER_MODE="${k6_gcp_node_termination_adapter_mode}"
+K6_GCP_NODE_TERMINATION_POST_STOP_PROBE_ENABLED="${k6_gcp_node_termination_post_stop_probe_enabled}"
+K6_GCP_NODE_TERMINATION_POST_STOP_PROBE_VUS="${k6_gcp_node_termination_post_stop_probe_vus}"
+K6_GCP_NODE_TERMINATION_POST_STOP_PROBE_DURATION_SECONDS="${k6_gcp_node_termination_post_stop_probe_duration_seconds}"
 REALTIME_WORKLOAD_SUMMARY_ENABLED="${realtime_workload_summary_enabled}"
 CONNECT_RAMP_SECONDS="${connect_ramp_seconds}"
 HOT_ROOMS="${hot_rooms}"
@@ -247,6 +252,80 @@ collect_node_drain_status_snapshot() {
     > "$RESULT_ROOT/metrics/node-drain-status-$suffix.json" || true
 }
 
+run_gcp_node_termination_post_stop_probe() {
+  local label="$1"
+  local target_node="$2"
+  if [ "$K6_GCP_NODE_TERMINATION_POST_STOP_PROBE_ENABLED" != "true" ]; then
+    return 0
+  fi
+
+  local probe_vus="$K6_GCP_NODE_TERMINATION_POST_STOP_PROBE_VUS"
+  local probe_duration="$K6_GCP_NODE_TERMINATION_POST_STOP_PROBE_DURATION_SECONDS"
+  local probe_label="$PROFILE-post-stop-$label"
+  local probe_output_dir="$RESULT_ROOT/k6/$PROFILE/post-stop"
+  mkdir -p "$probe_output_dir"
+
+  echo "[k6] running post-stop probe target_node=$target_node label=$probe_label vus=$probe_vus duration=$probe_duration"
+  set +e
+  k6 run \
+    --summary-export "$probe_output_dir/$label-summary.json" \
+    -e BASE_URL="$BASE_URL" \
+    -e WS_BASE_URL="$WS_BASE_URL" \
+    -e TARGET_VUS="$probe_vus" \
+    -e TOTAL_TARGET_VUS="$probe_vus" \
+    -e TEST_LABEL="$probe_label" \
+    -e SEND_INTERVAL_MS="500" \
+    -e CHAT_DURATION_SECONDS="$probe_duration" \
+    -e K6_WS_SEND_STOP_AFTER_SECONDS="$probe_duration" \
+    -e K6_CHAT_ACK_P95_THRESHOLD_MS="$K6_CHAT_ACK_P95_THRESHOLD_MS" \
+    -e K6_VISIBLE_FRESHNESS_P95_THRESHOLD_MS="1000" \
+    -e K6_ASSIGNMENT_PREFLIGHT_ENABLED="true" \
+    -e K6_ASSIGNMENT_PREFLIGHT_PARTITION_COUNT="$K6_ASSIGNMENT_PREFLIGHT_PARTITION_COUNT" \
+    -e K6_ASSIGNMENT_PREFLIGHT_EXPECTED_NODES="1" \
+    -e K6_ASSIGNMENT_PREFLIGHT_TIMEOUT_SECONDS="$K6_ASSIGNMENT_PREFLIGHT_TIMEOUT_SECONDS" \
+    -e CONNECT_RAMP_SECONDS="3" \
+    -e HOT_ROOMS="1" \
+    -e VUS_PER_ROOM="$probe_vus" \
+    -e ROOM_INDEX_OFFSET="0" \
+    -e VU_INDEX_OFFSET="0" \
+    -e K6_WORKER_INDEX="1" \
+    -e K6_WORKER_COUNT="1" \
+    -e SHARED_ROOM_MODE="false" \
+    -e K6_SENDER_RATIO="0.80" \
+    -e K6_OBSERVER_RATIO="0.20" \
+    -e K6_VALIDATOR_RATIO="0" \
+    -e OBSERVER_SEND_INTERVAL_MS="0" \
+    -e ACTIVE_HEARTBEAT_INTERVAL_MS="$ACTIVE_HEARTBEAT_INTERVAL_MS" \
+    -e PASSIVE_SETTLE_MS="$PASSIVE_SETTLE_MS" \
+    -e MIXED_HOT_ROOM_COUNT="1" \
+    -e MIXED_HOT_ROOM_VUS="$probe_vus" \
+    -e MIXED_HOT_ACTIVE_RATIO="1.0" \
+    -e MIXED_HOT_SEND_INTERVAL_MS="500" \
+    -e MIXED_LARGE_ROOM_COUNT="0" \
+    -e MIXED_LARGE_ROOM_VUS="0" \
+    -e MIXED_LARGE_ACTIVE_RATIO="0" \
+    -e MIXED_LARGE_SEND_INTERVAL_MS="5000" \
+    -e MIXED_MEDIUM_ROOM_COUNT="0" \
+    -e MIXED_MEDIUM_ROOM_VUS="0" \
+    -e MIXED_MEDIUM_ACTIVE_RATIO="0" \
+    -e MIXED_MEDIUM_SEND_INTERVAL_MS="5000" \
+    -e MIXED_SMALL_ROOM_COUNT="0" \
+    -e MIXED_SMALL_ROOM_VUS="0" \
+    -e MIXED_SMALL_ACTIVE_RATIO="0" \
+    -e MIXED_SMALL_SEND_INTERVAL_MS="5000" \
+    -e K6_COUNTER_FLUSH_INTERVAL_MS="1000" \
+    -e K6_VISIBLE_FRESHNESS_SAMPLE_EVERY="1" \
+    "$SCENARIO" 2>&1 | tee "$probe_output_dir/$label.log"
+  local probe_status=$${PIPESTATUS[0]}
+  set -e
+
+  echo "$probe_status" > "$probe_output_dir/$label-exit-code.txt"
+  collect_db_message_count "$probe_label" "$probe_output_dir"
+  collect_assignment_snapshot "gcp-node-termination-post-stop-probe-$label"
+  collect_node_drain_status_snapshot "$target_node" "gcp-node-termination-post-stop-probe-$label" ""
+  return "$probe_status"
+}
+
 trigger_node_drain_during_run() {
   local label="$1"
   local output_file="$RESULT_ROOT/metrics/node-drain-$label.json"
@@ -352,6 +431,63 @@ trigger_node_drain_during_run() {
       if [ "$decision_status" -ne 0 ]; then
         echo "[k6] node termination decision failed target_node=$target_node status=$decision_status" >&2
         return "$decision_status"
+      fi
+
+      if [ "$K6_GCP_NODE_TERMINATION_ADAPTER_ENABLED" = "true" ]; then
+        echo "[k6] stopping drained GCP node target_node=$target_node label=$label mode=$K6_GCP_NODE_TERMINATION_ADAPTER_MODE"
+        local gcp_termination_output="$RESULT_ROOT/metrics/gcp-node-termination-$label.json"
+        local gcp_termination_stdout="$RESULT_ROOT/metrics/gcp-node-termination-stdout-$label.json"
+        chmod +x "$WORKDIR/scripts/openchat-gcp-node-terminate.sh" || true
+
+        set +e
+        "$WORKDIR/scripts/openchat-gcp-node-terminate.sh" \
+          --decision "$decision_output" \
+          --project "$PROJECT_ID" \
+          --zone "$ZONE" \
+          --run-id "$RUN_ID" \
+          --node-id "$target_node" \
+          --mode "$K6_GCP_NODE_TERMINATION_ADAPTER_MODE" \
+          --output "$gcp_termination_output" \
+          > "$gcp_termination_stdout"
+        local gcp_termination_status=$?
+        set -e
+
+        collect_assignment_snapshot "gcp-node-termination-after-$label"
+        collect_node_drain_status_snapshot "$target_node" "gcp-node-termination-after-$label" "$token"
+
+        if jq -e . "$gcp_termination_output" >/dev/null 2>&1 && jq -e . "$output_file" >/dev/null 2>&1; then
+          local output_tmp="$output_file.tmp"
+          jq --argjson gcpTermination "$(cat "$gcp_termination_output")" \
+            '. + {
+              gcpNodeTermination: $gcpTermination,
+              gcpNodeTerminationResult: $gcpTermination.result,
+              gcpNodeTerminationPerformed: $gcpTermination.terminationPerformed
+            }' "$output_file" > "$output_tmp" 2>/dev/null && mv "$output_tmp" "$output_file" || rm -f "$output_tmp"
+        fi
+
+        if [ "$gcp_termination_status" -ne 0 ]; then
+          echo "[k6] GCP node termination adapter failed target_node=$target_node status=$gcp_termination_status" >&2
+          return "$gcp_termination_status"
+        fi
+
+        if [ "$K6_GCP_NODE_TERMINATION_ADAPTER_MODE" = "stop" ]; then
+          local post_stop_probe_status=0
+          run_gcp_node_termination_post_stop_probe "$label" "$target_node" || post_stop_probe_status=$?
+          if jq -e . "$output_file" >/dev/null 2>&1; then
+            local output_tmp="$output_file.tmp"
+            jq --argjson postStopProbeExitCode "$post_stop_probe_status" \
+              '. + {
+                postStopProbe: {
+                  enabled: true,
+                  exitCode: $postStopProbeExitCode
+                }
+              }' "$output_file" > "$output_tmp" 2>/dev/null && mv "$output_tmp" "$output_file" || rm -f "$output_tmp"
+          fi
+          if [ "$post_stop_probe_status" -ne 0 ]; then
+            echo "[k6] post-stop probe failed target_node=$target_node status=$post_stop_probe_status" >&2
+            return "$post_stop_probe_status"
+          fi
+        fi
       fi
     fi
 

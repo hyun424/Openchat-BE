@@ -150,6 +150,41 @@ variable "k6_node_termination_decision_enabled" {
   default     = false
 }
 
+variable "k6_gcp_node_termination_adapter_enabled" {
+  description = "Run the GCP VM termination adapter after node termination decision succeeds."
+  type        = bool
+  default     = false
+}
+
+variable "k6_gcp_node_termination_adapter_mode" {
+  description = "GCP VM termination adapter mode."
+  type        = string
+  default     = "dry-run"
+
+  validation {
+    condition     = contains(["dry-run", "stop"], var.k6_gcp_node_termination_adapter_mode)
+    error_message = "k6_gcp_node_termination_adapter_mode must be dry-run or stop."
+  }
+}
+
+variable "k6_gcp_node_termination_post_stop_probe_enabled" {
+  description = "Run a short k6 probe after the drained realtime VM is stopped."
+  type        = bool
+  default     = false
+}
+
+variable "k6_gcp_node_termination_post_stop_probe_vus" {
+  description = "VU count for the post-stop k6 probe."
+  type        = number
+  default     = 20
+}
+
+variable "k6_gcp_node_termination_post_stop_probe_duration_seconds" {
+  description = "Duration seconds for the post-stop k6 probe."
+  type        = number
+  default     = 20
+}
+
 variable "connect_ramp_seconds" {
   description = "Seconds used by ramped k6 scenarios to spread login, room entry, and WebSocket connection attempts."
   type        = number

@@ -9,6 +9,7 @@ NODE_ID=""
 MODE="dry-run"
 INSTANCE=""
 OUTPUT=""
+MAX_DECISION_AGE_SECONDS=600
 
 STARTED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 INSTANCE_JSON=""
@@ -26,6 +27,7 @@ Options:
   --mode dry-run|stop
   --instance INSTANCE_NAME
   --output PATH
+  --max-decision-age-seconds SECONDS
 USAGE
 }
 
@@ -93,6 +95,13 @@ while [ "$#" -gt 0 ]; do
       OUTPUT="${2:-}"
       shift 2
       ;;
+    --max-decision-age-seconds)
+      if [ "$#" -lt 2 ] || [[ "${2:-}" == --* ]]; then
+        invalid_usage "--max-decision-age-seconds requires a value"
+      fi
+      MAX_DECISION_AGE_SECONDS="${2:-}"
+      shift 2
+      ;;
     --help|-h)
       usage
       exit 0
@@ -110,6 +119,10 @@ require_command() {
   fi
 }
 
+is_non_negative_integer() {
+  [[ "$1" =~ ^[0-9]+$ ]]
+}
+
 validate_args() {
   require_command jq
   require_command gcloud
@@ -124,6 +137,10 @@ validate_args() {
       exit 30
       ;;
   esac
+  if ! is_non_negative_integer "$MAX_DECISION_AGE_SECONDS"; then
+    echo "--max-decision-age-seconds must be a non-negative integer" >&2
+    exit 30
+  fi
   if [[ "$NODE_ID" =~ ^gcp-realtime-([0-9]+)$ ]]; then
     EXPECTED_APP_INDEX="${BASH_REMATCH[1]}"
   else
@@ -156,10 +173,11 @@ build_guards_json() {
   local decision_allowed="${3:-}"
   local decision_action="${4:-}"
   local decision_node="${5:-}"
-  local instance_run_id="${6:-}"
-  local instance_role="${7:-}"
-  local instance_app_index="${8:-}"
-  local instance_status="${9:-}"
+  local decision_created_at="${6:-}"
+  local instance_run_id="${7:-}"
+  local instance_role="${8:-}"
+  local instance_app_index="${9:-}"
+  local instance_status="${10:-}"
 
   jq -n \
     --arg decisionContract "$decision_contract" \
@@ -167,6 +185,7 @@ build_guards_json() {
     --arg decisionAllowed "$decision_allowed" \
     --arg decisionAction "$decision_action" \
     --arg decisionNode "$decision_node" \
+    --arg decisionCreatedAt "$decision_created_at" \
     --arg expectedNode "$NODE_ID" \
     --arg instanceRunId "$instance_run_id" \
     --arg expectedRunId "$RUN_ID" \
@@ -174,7 +193,9 @@ build_guards_json() {
     --arg instanceAppIndex "$instance_app_index" \
     --arg expectedAppIndex "$EXPECTED_APP_INDEX" \
     --arg instanceStatus "$instance_status" \
+    --argjson maxDecisionAgeSeconds "$MAX_DECISION_AGE_SECONDS" \
     '[
+      {name:"decision_fresh", passed:(($decisionCreatedAt | fromdateiso8601?) as $epoch | ($epoch != null and (now - $epoch) >= 0 and (now - $epoch) <= $maxDecisionAgeSeconds)), expected:("0 <= age <= " + ($maxDecisionAgeSeconds | tostring)), actual:(($decisionCreatedAt | fromdateiso8601?) as $epoch | if $epoch == null then "invalid createdAt" else ((now - $epoch) | floor | tostring) end)},
       {name:"decision_contract_version", passed:($decisionContract == "openchat.node-termination-decision.v1"), expected:"openchat.node-termination-decision.v1", actual:$decisionContract},
       {name:"decision_ready", passed:($decisionResult == "ready"), expected:"ready", actual:$decisionResult},
       {name:"decision_termination_allowed", passed:($decisionAllowed == "true"), expected:"true", actual:$decisionAllowed},
@@ -257,6 +278,7 @@ load_decision_fields() {
     and (.terminationAllowed | type == "boolean")
     and (.recommendedAction | type == "string")
     and (.nodeId | type == "string")
+    and (.createdAt | type == "string")
   ' "$DECISION" >/dev/null 2>&1; then
     write_unexpected_input "decision missing required fields"
   fi
@@ -300,16 +322,23 @@ main() {
   local decision_allowed
   local decision_action
   local decision_node
+  local decision_created_at
   decision_contract="$(jq -r '.contractVersion' "$DECISION")"
   decision_result="$(jq -r '.result' "$DECISION")"
   decision_allowed="$(jq -r '.terminationAllowed' "$DECISION")"
   decision_action="$(jq -r '.recommendedAction' "$DECISION")"
   decision_node="$(jq -r '.nodeId' "$DECISION")"
+  decision_created_at="$(jq -r '.createdAt' "$DECISION")"
 
   local pre_gcp_guards
-  pre_gcp_guards="$(build_guards_json "$decision_contract" "$decision_result" "$decision_allowed" "$decision_action" "$decision_node" "" "" "" "")"
+  pre_gcp_guards="$(build_guards_json "$decision_contract" "$decision_result" "$decision_allowed" "$decision_action" "$decision_node" "$decision_created_at" "" "" "" "")"
   if [ "$decision_node" != "$NODE_ID" ]; then
     write_result "unsafe" false "decision nodeId does not match requested node" 20 "$pre_gcp_guards"
+  fi
+  local decision_fresh
+  decision_fresh="$(printf '%s' "$pre_gcp_guards" | jq -r '.[] | select(.name == "decision_fresh") | .passed')"
+  if [ "$decision_fresh" != "true" ]; then
+    write_result "unsafe" false "decision result is stale or from the future" 20 "$pre_gcp_guards"
   fi
   if [ "$decision_result" != "ready" ] || [ "$decision_allowed" != "true" ] || [ "$decision_action" != "terminate_node" ]; then
     write_result "blocked" false "decision is not ready for GCP termination" 10 "$pre_gcp_guards"
@@ -328,7 +357,7 @@ main() {
   instance_app_index="$(printf '%s' "$INSTANCE_JSON" | jq -r '.labels.app_index // ""')"
 
   local guards
-  guards="$(build_guards_json "$decision_contract" "$decision_result" "$decision_allowed" "$decision_action" "$decision_node" "$instance_run_id" "$instance_role" "$instance_app_index" "$BEFORE_STATUS")"
+  guards="$(build_guards_json "$decision_contract" "$decision_result" "$decision_allowed" "$decision_action" "$decision_node" "$decision_created_at" "$instance_run_id" "$instance_role" "$instance_app_index" "$BEFORE_STATUS")"
   local failed_count
   failed_count="$(printf '%s' "$guards" | jq 'map(select(.passed == false)) | length')"
   if [ "$failed_count" != "0" ]; then
