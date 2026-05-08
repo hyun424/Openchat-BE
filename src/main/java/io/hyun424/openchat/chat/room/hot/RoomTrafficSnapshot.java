@@ -11,8 +11,14 @@ public record RoomTrafficSnapshot(
         RoomHotState state,
         int activeSessions,
         long roomWorkPerSecond,
+        long actualDeliveryWorkPerSecond,
+        long conceptualRoomWorkPerSecond,
+        long scaleDecisionWorkPerSecond,
         RoomScaleTier scaleTier,
         int recommendedPartitions,
         int effectivePartitions
 ) {
+    public boolean partitionRecommendationLimited() {
+        return recommendedPartitions > effectivePartitions;
+    }
 }

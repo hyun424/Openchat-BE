@@ -72,6 +72,25 @@ public class SessionStateTracker {
         return state.isActive(now, activeTtlMillis);
     }
 
+    public RoomSessionWorkloadSnapshot workloadSnapshot(Collection<WebSocketSession> sessions, int broadcastQueueDepth) {
+        if (sessions.isEmpty()) {
+            return RoomSessionWorkloadSnapshot.empty(broadcastQueueDepth);
+        }
+        long now = nowMillis();
+        int total = 0;
+        int active = 0;
+        for (WebSocketSession session : sessions) {
+            if (!session.isOpen()) {
+                continue;
+            }
+            total++;
+            if (isActiveSession(session, now)) {
+                active++;
+            }
+        }
+        return new RoomSessionWorkloadSnapshot(total, active, Math.max(0, total - active), broadcastQueueDepth);
+    }
+
     private void updateSessionState(Long roomId, String sessionId, Long lastSeenSequence, boolean active) {
         if (sessionId == null) {
             return;

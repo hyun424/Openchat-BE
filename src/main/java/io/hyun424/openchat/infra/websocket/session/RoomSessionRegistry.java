@@ -202,6 +202,10 @@ public class RoomSessionRegistry {
         return laneExecutor.totalQueueDepth();
     }
 
+    public RoomSessionWorkloadSnapshot workloadSnapshot() {
+        return stateTracker.workloadSnapshot(sessionStore.allSessions(), laneExecutor.totalQueueDepth());
+    }
+
     public void sendToRoom(Long roomId, ChatMessageDto message) {
         broadcaster.sendToRoom(roomId, message);
     }
