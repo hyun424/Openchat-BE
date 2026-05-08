@@ -36,9 +36,15 @@ docs/GCP-smoke-결과-{YYYYMMDD}-{runId}.md
 docs/GCP-smoke-결과-20260508-dynamic-ownership-smoke.md
 ```
 
+## 실행 명령 원칙
+
+에이전트에게는 목표만 주지 않는다. 반드시 실제 실행 명령을 `COMMAND`로 고정해서 넘긴다.
+
+백그라운드 자동 실행이면 `terraform apply -auto-approve`를 사용한다. 수동 확인을 원하면 `-auto-approve`를 제거하고 현재 세션에서 직접 실행한다.
+
 ## 에이전트 호출 프롬프트
 
-아래 프롬프트에서 `RUN_ID`, `EXPECTED_HEAD`, `RESULT_DOC`만 실행마다 바꿔서 사용한다.
+아래 프롬프트에서 `RUN_ID`, `EXPECTED_HEAD`, `RESULT_DOC`, `COMMAND`를 실행마다 바꿔서 사용한다.
 
 ```text
 너는 OpenChat GCP smoke runner 에이전트다.
@@ -59,6 +65,7 @@ docs/GCP-smoke-결과-20260508-dynamic-ownership-smoke.md
 - 기대 HEAD: EXPECTED_HEAD
 - run id: RUN_ID
 - 결과 문서: RESULT_DOC
+- 실행 명령: COMMAND
 
 시작 전에 반드시 확인:
 1. `git status --short --branch`
@@ -69,6 +76,8 @@ docs/GCP-smoke-결과-20260508-dynamic-ownership-smoke.md
 조건:
 - HEAD가 다르거나 working tree가 dirty면 smoke를 시작하지 말고 결과 문서에 중단 사유를 적어라.
 - 필요한 환경변수나 GCP 권한이 없으면 smoke를 시작하지 말고 무엇이 필요한지 적어라.
+- 실행 명령이 비어 있거나 모호하면 smoke를 시작하지 말고 ABORTED로 기록해라.
+- HEAD/clean 확인이 끝나면 RESULT_DOC를 즉시 만들고 상태를 RUNNING으로 기록한 뒤 COMMAND를 그대로 실행해라.
 - 장시간 실행 중에는 중간 상태를 RESULT_DOC에 한국어로 갱신해라.
 
 실행 목표:
@@ -104,16 +113,51 @@ docs/GCP-smoke-결과-20260508-dynamic-ownership-smoke.md
 - cleanup 결과
 - 최종 판단: PASS / FAIL / ABORTED
 - 실패 또는 중단 시 다음 액션
+
+실행할 명령:
+
+COMMAND
 ```
 
-## 현재 브랜치 예시
+## Dynamic Ownership Smoke 예시
 
-현재 기준으로 사용할 수 있는 값:
+오늘 만든 Dynamic Realtime Partition Ownership v1을 검증할 때는 아래 값을 사용한다.
 
 ```text
 RUN_ID=20260508-dynamic-ownership-smoke
-EXPECTED_HEAD=aa9c2b1
+EXPECTED_HEAD=$(git rev-parse HEAD)
 RESULT_DOC=docs/GCP-smoke-결과-20260508-dynamic-ownership-smoke.md
+COMMAND=cd infra/gcp-loadtest && terraform apply -auto-approve \
+  -var="project_id=openchat-495102" \
+  -var="run_id=20260508-dynamic-ownership-smoke" \
+  -var-file="profiles/room-partition-dynamic-ownership-smoke.tfvars.example"
 ```
 
 실제 실행 전에는 `EXPECTED_HEAD`를 `git rev-parse HEAD` 값으로 다시 맞춘다.
+
+이 smoke의 목적은 lifecycle이 아니다. 아래 항목만 먼저 증명한다.
+
+- realtime node registry 등록
+- dynamic subscriber readiness 기반 route
+- `/ws-route` direct `wsUrl`, `nodeId`, `assignmentVersion` 반환
+- k6 실제 연결 node와 route node 일치
+- route failure/mismatch/fallback 0건
+- sent == ack == DB rows
+
+## Load Test로 확장할 때
+
+부하테스트도 같은 방식으로 실행한다. 차이는 profile과 성공 기준이다.
+
+예:
+
+```text
+TEST_TYPE=load
+RUN_ID=20260508-dynamic-ownership-load-500
+RESULT_DOC=docs/GCP-load-결과-20260508-dynamic-ownership-load-500.md
+COMMAND=cd infra/gcp-loadtest && terraform apply -auto-approve \
+  -var="project_id=openchat-495102" \
+  -var="run_id=20260508-dynamic-ownership-load-500" \
+  -var-file="profiles/<load-profile>.tfvars.example"
+```
+
+load/soak은 새 profile을 먼저 만들고 커밋한 뒤 에이전트에 넘긴다.
