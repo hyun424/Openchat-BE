@@ -19,6 +19,11 @@ vus_list              = "100"
 chat_duration_seconds = 90
 send_interval_ms      = 500
 connect_ramp_seconds  = 15
+
+# This profile verifies routing/ownership. Freshness is still collected, but
+# fanout/live-publish performance gating belongs to a separate performance run.
+k6_visible_freshness_p95_threshold_ms = 0
+
 hot_rooms                 = 1
 scenario                  = "k6/scenarios/11-mixed-room-workload-ramped.js"
 websocket_broadcast_lanes = 8

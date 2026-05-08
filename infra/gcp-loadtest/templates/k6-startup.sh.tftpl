@@ -28,6 +28,7 @@ CHAT_DURATION_SECONDS="${chat_duration_seconds}"
 SEND_INTERVAL_MS="${send_interval_ms}"
 K6_WS_SEND_STOP_AFTER_SECONDS="${k6_ws_send_stop_after_seconds}"
 K6_CHAT_ACK_P95_THRESHOLD_MS="${k6_chat_ack_p95_threshold_ms}"
+K6_VISIBLE_FRESHNESS_P95_THRESHOLD_MS="${k6_visible_freshness_p95_threshold_ms}"
 CONNECT_RAMP_SECONDS="${connect_ramp_seconds}"
 HOT_ROOMS="${hot_rooms}"
 VUS_PER_ROOM="${vus_per_room}"
@@ -640,6 +641,7 @@ for vus in $VUS_LIST; do
     -e CHAT_DURATION_SECONDS="$CHAT_DURATION_SECONDS" \
     -e K6_WS_SEND_STOP_AFTER_SECONDS="$K6_WS_SEND_STOP_AFTER_SECONDS" \
     -e K6_CHAT_ACK_P95_THRESHOLD_MS="$K6_CHAT_ACK_P95_THRESHOLD_MS" \
+    -e K6_VISIBLE_FRESHNESS_P95_THRESHOLD_MS="$K6_VISIBLE_FRESHNESS_P95_THRESHOLD_MS" \
     -e CONNECT_RAMP_SECONDS="$CONNECT_RAMP_SECONDS" \
     -e HOT_ROOMS="$worker_hot_rooms" \
     -e VUS_PER_ROOM="$VUS_PER_ROOM" \

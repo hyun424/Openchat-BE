@@ -148,6 +148,26 @@ function buildRoomSpecs() {
 const ROOM_SPECS = buildRoomSpecs();
 const CONFIGURED_VUS = ROOM_SPECS.reduce((sum, room) => sum + room.vusPerRoom, 0);
 const CHAT_ACK_P95_THRESHOLD_MS = Number(__ENV.K6_CHAT_ACK_P95_THRESHOLD_MS || '300');
+const VISIBLE_FRESHNESS_P95_THRESHOLD_MS = Number(__ENV.K6_VISIBLE_FRESHNESS_P95_THRESHOLD_MS || '500');
+
+function buildThresholds() {
+  const thresholds = {
+    http_error_rate: ['rate<0.01'],
+    ws_connect_success_rate: ['rate>0.99'],
+    ws_connect_failure_rate: ['rate<0.01'],
+    ws_connect_duration_ms: ['p(95)<5000', 'p(99)<10000'],
+    'chat_ack_roundtrip_ms{presenceMode:active,clientMode:sender}': [`p(95)<${CHAT_ACK_P95_THRESHOLD_MS}`],
+    'ws_passive_unexpected_messages_total{presenceMode:passive}': ['count<10'],
+    mixed_room_config_mismatch_total: ['count==0'],
+    ws_route_assignment_mismatch_total: ['count==0'],
+    ws_route_fallback_total: ['count==0'],
+    ws_route_failures_total: ['count==0'],
+  };
+  if (VISIBLE_FRESHNESS_P95_THRESHOLD_MS > 0) {
+    thresholds['ws_visible_freshness_ms{presenceMode:active,clientMode:observer}'] = [`p(95)<${VISIBLE_FRESHNESS_P95_THRESHOLD_MS}`];
+  }
+  return thresholds;
+}
 
 export const options = {
   summaryTrendStats: ['avg', 'min', 'med', 'p(90)', 'p(95)', 'p(99)', 'max'],
@@ -159,19 +179,7 @@ export const options = {
       maxDuration: `${CONNECT_RAMP_SECONDS + CHAT_DURATION_SECONDS + 120}s`,
     },
   },
-  thresholds: {
-    http_error_rate: ['rate<0.01'],
-    ws_connect_success_rate: ['rate>0.99'],
-    ws_connect_failure_rate: ['rate<0.01'],
-    ws_connect_duration_ms: ['p(95)<5000', 'p(99)<10000'],
-    'chat_ack_roundtrip_ms{presenceMode:active,clientMode:sender}': [`p(95)<${CHAT_ACK_P95_THRESHOLD_MS}`],
-    'ws_visible_freshness_ms{presenceMode:active,clientMode:observer}': ['p(95)<500'],
-    'ws_passive_unexpected_messages_total{presenceMode:passive}': ['count<10'],
-    mixed_room_config_mismatch_total: ['count==0'],
-    ws_route_assignment_mismatch_total: ['count==0'],
-    ws_route_fallback_total: ['count==0'],
-    ws_route_failures_total: ['count==0'],
-  },
+  thresholds: buildThresholds(),
   tags: {
     testType: 'mixed-room-workload-ramped',
     workerIndex: String(K6_WORKER_INDEX),

@@ -62,6 +62,12 @@ variable "k6_chat_ack_p95_threshold_ms" {
   default     = 300
 }
 
+variable "k6_visible_freshness_p95_threshold_ms" {
+  description = "k6 observer visible freshness p95 threshold in milliseconds. Set to 0 to collect the metric without failing the run."
+  type        = number
+  default     = 500
+}
+
 variable "connect_ramp_seconds" {
   description = "Seconds used by ramped k6 scenarios to spread login, room entry, and WebSocket connection attempts."
   type        = number
