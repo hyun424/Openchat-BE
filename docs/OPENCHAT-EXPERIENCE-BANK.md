@@ -341,6 +341,40 @@ Realtime pod의 기본 단위를 `4 vCPU / 8GB`로 두고, pod work budget을 `1
 
 ---
 
+## [EXP-OC-12]
+
+- 프로젝트: OpenChat
+- 유형: Dynamic Realtime Partition Ownership와 Node Drain 검증
+- 역할: node registry 기반 assignment 설계, node-aware routing, reconnect 기반 drain, GCP smoke 검증
+- 사용 문항: 시스템 설계 / 문제해결 / 확장성 / 운영 안정성 / 포트폴리오 설명
+- 키워드: `[WebSocket, dynamic ownership, node drain, reconnect, Redis Pub/Sub, GCP, k6]`
+
+### 상황
+
+OpenChat은 hot room fan-out을 partition으로 나누는 단계까지 발전했지만, partition을 여러 개로 나누는 것만으로는 충분하지 않았다. WebSocket 세션은 특정 realtime node 메모리에 있고, Redis subscriber도 node마다 다르기 때문에 `/ws-route` 결과, 실제 connected node, subscriber owner, fan-out 경로가 같은 기준을 따라야 했다.
+
+### 문제
+
+단순히 서버를 여러 대 띄우면 route는 분산된 것처럼 보여도 실제 연결 node나 Redis subscriber ownership이 맞지 않으면 메시지 누락, 중복 fan-out, drain 실패가 생길 수 있다. 또한 rolling deploy나 VM 종료를 고려하면 특정 realtime node를 안전하게 비우는 node drain 절차가 필요했다.
+
+### 행동
+
+`app.instance-id`를 node identity로 통일하고, Redis node registry를 routing/assignment의 source of truth로 두었다. active node 목록을 기준으로 partition owner를 deterministic하게 계산하고, `/ws-route` 응답에 `nodeId`, `assignmentVersion`, `wsUrl`을 optional로 추가했다. 이후 node drain command를 별도로 구현해 target node를 `draining=true`로 표시하고, replacement owner readiness 확인 후 기존 WebSocket sessions에 reconnect control을 보내도록 했다. drain 진행 상태는 registry heartbeat의 `openSessions`로 확인했다.
+
+### 결과
+
+GCP node drain smoke에서 WebSocket connect success `145/145`, route failure/fallback/mismatch `0/0/0`, node drain reconnect control `45`건, sent/ack/DB rows `22300/22300/22300` 일치를 확인했다. drain 대상 node `gcp-realtime-1`은 assignment owner에서 제외됐고, 최종 open session count가 `0`이 되었다. 이 결과로 "node를 안전하게 비운 뒤 종료 가능 상태로 만들 수 있다"는 앱 레벨 근거를 확보했다.
+
+후속 hardening에서는 운영자나 future orchestrator가 응답만 보고 다음 행동을 판단할 수 있도록 `GET /drain/status`, `retryable`, `nextAction`, `readinessReason` 계약을 추가했다. `20260508-node-drain-hardening-smoke`에서는 k6 exit code `0`, HTTP error `0.00%`, WebSocket connect `149/149`, route failure/fallback/mismatch `0/0/0`, node drain reconnect control `49`건, sent/ack/DB rows `22271/22271/22271`, drained node openSessions `0`을 확인했다. status snapshot은 `reconnect_published -> sessions_remaining -> complete`로 수렴했고, 마지막 상태는 `nextAction=none`, `readinessReason=ready`였다.
+
+### 배운 점
+
+실시간 시스템의 scale-out은 서버 수 증가가 아니라 ownership contract를 맞추는 문제다. route, 실제 연결, subscriber, reconnect, drain completion signal이 모두 같은 기준을 따라야 운영 가능한 구조가 된다. 또한 EKS나 MIG 자동 종료를 붙이기 전에, 애플리케이션이 먼저 "이 node는 안전하게 비워졌다"는 상태를 증명할 수 있어야 한다.
+
+상세 문서: [Dynamic Realtime Partition Ownership와 Node Drain STAR 기록](./2026-05-08-dynamic-realtime-partition-ownership-star.md)
+
+---
+
 ## 활용 가이드
 
 ### 자소서에서 강하게 쓰기 좋은 경험
@@ -349,7 +383,7 @@ Realtime pod의 기본 단위를 `4 vCPU / 8GB`로 두고, pod work budget을 `1
 2. `EXP-OC-02` Durability-first 메시지 유실 방지
 3. `EXP-OC-09` 부하 생성기 병목 분리와 측정 신뢰도 개선
 4. `EXP-OC-10` Active Room Fan-out과 브라우저 E2E 검증
-5. `EXP-OC-11` pod budget 기준 room work sharding 설계
+5. `EXP-OC-12` Dynamic Realtime Partition Ownership와 Node Drain 검증
 
 ### 면접에서 기술적으로 풀기 좋은 경험
 
@@ -357,7 +391,7 @@ Realtime pod의 기본 단위를 `4 vCPU / 8GB`로 두고, pod work budget을 `1
 2. `EXP-OC-04` 중복 메시지 방지와 idempotency
 3. `EXP-OC-07` 부하 테스트 기반 병목 분석과 성능 개선
 4. `EXP-OC-10` Active Room Fan-out과 브라우저 E2E 검증
-5. `EXP-OC-11` pod budget 기준 room work sharding 설계
+5. `EXP-OC-12` Dynamic Realtime Partition Ownership와 Node Drain 검증
 
 ### 협업/서비스 이해 관점으로 풀기 좋은 경험
 

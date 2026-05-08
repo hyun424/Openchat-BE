@@ -198,6 +198,14 @@ public class RoomSessionRegistry {
         return stateTracker.openSessionIds(roomId, partitionId, sessionStore.sessions(roomId));
     }
 
+    public int openSessionCountForPartition(Integer partitionId) {
+        return stateTracker.openSessionCountForPartition(partitionId, sessionStore.allSessions());
+    }
+
+    public List<SessionStateTracker.OpenSessionInfo> openSessions() {
+        return stateTracker.openSessions(sessionStore.allSessions());
+    }
+
     public int totalBroadcastQueueDepth() {
         return laneExecutor.totalQueueDepth();
     }

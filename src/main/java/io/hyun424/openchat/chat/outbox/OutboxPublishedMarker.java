@@ -109,8 +109,11 @@ public class OutboxPublishedMarker {
         chatPipelineMetrics.recordDistribution("openchat_outbox_published_marker_batch_size", "ids", drained.size());
         chatPipelineMetrics.recordDistribution("openchat_outbox_published_marker_updated", "rows", safeUpdated);
         if (safeUpdated < drained.size()) {
+            int mismatchRows = drained.size() - safeUpdated;
             chatPipelineMetrics.incrementCounter("outbox.published_marker.state_mismatch");
-            log.warn("[OUTBOX PUBLISHED MARKER MISMATCH] requested={} updated={}", drained.size(), safeUpdated);
+            chatPipelineMetrics.incrementCounter("outbox.published_marker.state_mismatch.rows", mismatchRows);
+            log.warn("[OUTBOX PUBLISHED MARKER MISMATCH] requested={} updated={} mismatchRows={}",
+                    drained.size(), safeUpdated, mismatchRows);
         }
         chatPipelineMetrics.incrementCounter("outbox.published_marker.flush.success");
         return safeUpdated;

@@ -9,7 +9,8 @@ import {
   wsMessageHandlerDuration, wsJsonParseDuration, wsBatchMessagesPerFrame,
   wsObserverVisibleSamples, wsControlMessagesSent, wsActiveHeartbeatSent,
   wsPassiveUnexpectedMessages, wsReconnectControlsReceived, wsRoutePartitionCount,
-  wsRoutePartitionId,
+  wsRoutePartitionId, wsRouteNodeTotal, wsConnectedNodeTotal, wsRouteFallbackTotal,
+  wsRouteAssignmentMismatchTotal, wsRouteFailuresTotal,
 } from './metrics.js';
 
 const WS_BASE_URL = __ENV.WS_BASE_URL || 'ws://localhost:8080';
@@ -79,6 +80,24 @@ function countUnexpectedFullPayloadMessages(data) {
   return 0;
 }
 
+function websocketUrl(routeWsUrl, roomId, partitionId, routeVersion, token, nodeId, assignmentVersion) {
+  if (routeWsUrl) {
+    const base = String(routeWsUrl).startsWith('/')
+      ? `${WS_BASE_URL.replace(/\/$/, '')}${routeWsUrl}`
+      : String(routeWsUrl);
+    return `${base}${base.includes('?') ? '&' : '?'}token=${token}`;
+  }
+  const partitionQuery = partitionId === null || partitionId === undefined || String(partitionId) === ''
+    ? ''
+    : `&partitionId=${partitionId}`;
+  const routeVersionQuery = routeVersion === null || routeVersion === undefined
+    ? ''
+    : `&routeVersion=${routeVersion}`;
+  const nodeQuery = nodeId ? `&nodeId=${nodeId}` : '';
+  const assignmentQuery = assignmentVersion ? `&assignmentVersion=${assignmentVersion}` : '';
+  return `${WS_BASE_URL}/ws/chat?roomId=${roomId}${partitionQuery}${routeVersionQuery}${nodeQuery}${assignmentQuery}&token=${token}`;
+}
+
 /**
  * WebSocket 연결 후 메시지 송수신 수행
  *
@@ -117,11 +136,19 @@ export function connectAndChat(opts) {
     onMessage,
     routeResolver = null,
     routeVersion = null,
+    wsUrl = null,
+    nodeId = null,
+    assignmentVersion = null,
+    fallbackReason = null,
     tags = {},
   } = opts;
 
   let currentPartitionId = partitionId;
   let currentRouteVersion = routeVersion;
+  let currentWsUrl = wsUrl;
+  let currentRouteNodeId = nodeId;
+  let currentAssignmentVersion = assignmentVersion;
+  let currentFallbackReason = fallbackReason;
   let remainingDuration = duration;
   let lastResponse = null;
   const reconnectDeadline = Date.now() + duration * 1000;
@@ -129,10 +156,15 @@ export function connectAndChat(opts) {
 
   while (remainingDuration > 0) {
   let reconnectControl = null;
-  const partitionQuery = currentPartitionId === null || currentPartitionId === undefined || String(currentPartitionId) === ''
-    ? ''
-    : `&partitionId=${currentPartitionId}`;
-  const url = `${WS_BASE_URL}/ws/chat?roomId=${roomId}${partitionQuery}&token=${token}`;
+  const url = websocketUrl(
+    currentWsUrl,
+    roomId,
+    currentPartitionId,
+    currentRouteVersion,
+    token,
+    currentRouteNodeId,
+    currentAssignmentVersion
+  );
   const connectStart = Date.now();
   const resolvedPresenceMode = resolvePresenceMode(presenceMode);
   const resolvedClientMode = resolveClientMode(clientMode);
@@ -142,6 +174,16 @@ export function connectAndChat(opts) {
     && (resolvedClientMode === 'observer' || resolvedClientMode === 'validator');
   const shouldRecordVisible = shouldParseBroadcast;
   const shouldRunDetailCallback = resolvedPresenceMode === 'active' && resolvedClientMode === 'validator';
+  if (currentRouteNodeId) {
+    wsRouteNodeTotal.add(1, {
+      ...metricTags,
+      nodeId: String(currentRouteNodeId),
+      partitionId: String(currentPartitionId ?? 'none'),
+    });
+  }
+  if (currentFallbackReason) {
+    wsRouteFallbackTotal.add(1, { ...metricTags, reason: String(currentFallbackReason) });
+  }
 
   // 전송 메시지의 clientMessageId → 전송 시각 맵 (라운드트립 측정용)
   const pendingMessages = {};
@@ -225,12 +267,34 @@ export function connectAndChat(opts) {
         }
 
         const text = String(data);
-        if (!shouldParseBroadcast && !text.includes('"type":"chat.ack"') && !text.includes('"type":"room.reconnect"')) {
+        if (!shouldParseBroadcast && !text.includes('"type":"chat.ack"') && !text.includes('"type":"room.reconnect"') && !text.includes('"type":"node.connected"')) {
           recordBatchEnvelopeFromText(data, counters, metricTags, false);
           return;
         }
 
         const msg = parseJsonWithMetric(data, metricTags);
+        if (msg && msg.type === 'node.connected') {
+          const connectedNodeId = String(msg.nodeId || 'unknown');
+          wsConnectedNodeTotal.add(1, {
+            ...metricTags,
+            nodeId: connectedNodeId,
+            routeNodeId: String(currentRouteNodeId || msg.routeNodeId || 'unknown'),
+            partitionId: String(msg.partitionId ?? currentPartitionId ?? 'none'),
+          });
+          if (currentRouteNodeId && connectedNodeId !== String(currentRouteNodeId)) {
+            wsRouteAssignmentMismatchTotal.add(1, {
+              ...metricTags,
+              routeNodeId: String(currentRouteNodeId),
+              connectedNodeId,
+            });
+            console.error(`WS route/connected node mismatch roomId=${roomId} routeNodeId=${currentRouteNodeId} connectedNodeId=${connectedNodeId}`);
+          }
+          if (onMessage) {
+            onMessage(msg);
+          }
+          return;
+        }
+
         if (msg && msg.type === 'room.reconnect') {
           reconnectControl = msg;
           sendingEnabled = false;
@@ -384,17 +448,22 @@ export function connectAndChat(opts) {
     previousRouteVersion: currentRouteVersion,
   });
   if (!nextRoute) {
+    wsRouteFailuresTotal.add(1, { ...metricTags, phase: 'reconnect', reason: 'route_resolver_null' });
     return res;
   }
   currentPartitionId = nextRoute.partitionId;
   currentRouteVersion = nextRoute.routeVersion;
+  currentWsUrl = nextRoute.wsUrl || null;
+  currentRouteNodeId = nextRoute.nodeId || null;
+  currentAssignmentVersion = nextRoute.assignmentVersion || null;
+  currentFallbackReason = nextRoute.fallbackReason || null;
   if (nextRoute.partitionCount !== undefined && nextRoute.partitionCount !== null) {
     wsRoutePartitionCount.add(Number(nextRoute.partitionCount), metricTags);
   }
   if (nextRoute.partitionId !== undefined && nextRoute.partitionId !== null) {
     wsRoutePartitionId.add(Number(nextRoute.partitionId), metricTags);
   }
-  console.log(`WS reconnect route roomId=${roomId} partitionCount=${nextRoute.partitionCount} partitionId=${nextRoute.partitionId} routeVersion=${nextRoute.routeVersion}`);
+  console.log(`WS reconnect route roomId=${roomId} partitionCount=${nextRoute.partitionCount} partitionId=${nextRoute.partitionId} routeVersion=${nextRoute.routeVersion} nodeId=${nextRoute.nodeId || ''} fallbackReason=${nextRoute.fallbackReason || ''}`);
   remainingDuration = Math.floor((reconnectDeadline - Date.now()) / 1000);
   }
 

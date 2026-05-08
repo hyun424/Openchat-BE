@@ -8,8 +8,12 @@ APP_ROLE="${app_role}"
 APP_INDEX="${app_index}"
 MYSQL_IP="${mysql_ip}"
 REDIS_IP="${redis_ip}"
+SPRING_JPA_HIBERNATE_DDL_AUTO="${spring_jpa_hibernate_ddl_auto}"
+SCHEMA_INITIALIZER="${schema_initializer}"
+SCHEMA_READY_OBJECT="${schema_ready_object}"
 WORKDIR="/opt/openchat"
 LOG_DIR="/var/log/openchat-loadtest"
+APP_INTERNAL_IP="$(hostname -I | awk '{print $1}')"
 
 mkdir -p "$LOG_DIR"
 exec > >(tee -a "$LOG_DIR/app-startup.log") 2>&1
@@ -113,8 +117,23 @@ cd "$WORKDIR"
 echo "[app] building backend image"
 DOCKER_BUILDKIT=1 docker build -t "openchat-loadtest-app:$RUN_ID" . 2>&1 | tee "$LOG_DIR/docker-build.log"
 
+if [ "$SCHEMA_INITIALIZER" != "true" ]; then
+  echo "[app] waiting for schema ready marker gs://$BUCKET_NAME/$SCHEMA_READY_OBJECT"
+  for attempt in $(seq 1 180); do
+    if gcloud storage ls "gs://$BUCKET_NAME/$SCHEMA_READY_OBJECT" >/dev/null 2>&1; then
+      echo "[app] schema ready marker found"
+      break
+    fi
+    if [ "$attempt" -eq 180 ]; then
+      echo "[app] schema ready marker did not appear" >&2
+      exit 1
+    fi
+    sleep 2
+  done
+fi
+
 docker rm -f openchat-app >/dev/null 2>&1 || true
-echo "[app] starting backend container"
+echo "[app] starting backend container ddl_auto=$SPRING_JPA_HIBERNATE_DDL_AUTO schema_initializer=$SCHEMA_INITIALIZER"
 docker run -d \
   --name openchat-app \
   --restart unless-stopped \
@@ -129,6 +148,7 @@ docker run -d \
   -e SPRING_DATASOURCE_URL="jdbc:mysql://$MYSQL_IP:3306/openchat?useSSL=false&serverTimezone=Asia/Seoul&allowPublicKeyRetrieval=true" \
   -e SPRING_DATASOURCE_USERNAME=openchat \
   -e SPRING_DATASOURCE_PASSWORD=openchat \
+  -e SPRING_JPA_HIBERNATE_DDL_AUTO="$SPRING_JPA_HIBERNATE_DDL_AUTO" \
   -e REDIS_HOST="$REDIS_IP" \
   -e REDIS_PORT=6379 \
   -e SPRING_DATA_REDIS_HOST="$REDIS_IP" \
@@ -156,7 +176,7 @@ docker run -d \
   -e WEBSOCKET_ENABLED="$WEBSOCKET_ENABLED" \
   -e REDIS_SUBSCRIBER_ENABLED="$REDIS_SUBSCRIBER_ENABLED" \
   -e LIVE_PUBLISH_ENABLED="$LIVE_PUBLISH_ENABLED" \
-  -e LIVE_PUBLISH_THREADS=8 \
+  -e LIVE_PUBLISH_THREADS="${live_publish_threads}" \
   -e LIVE_PUBLISH_QUEUE_CAPACITY=100000 \
   -e OUTBOX_PUBLISHED_MARKER_ENABLED="$OUTBOX_PUBLISHED_MARKER_ENABLED" \
   -e OUTBOX_PUBLISHED_MARKER_QUEUE_CAPACITY=200000 \
@@ -180,6 +200,11 @@ docker run -d \
   -e ROOM_PARTITION_HOT_TIER_THRESHOLD="${room_partition_hot_tier_threshold}" \
   -e ROOM_PARTITION_MAX_PARTITIONS_PER_ROOM="${room_partition_max_partitions_per_room}" \
   -e ROOM_PARTITION_ADMIN_API_ENABLED="${room_partition_admin_api_enabled}" \
+  -e ROOM_PARTITION_ASSIGNMENT_ENABLED="${room_partition_assignment_enabled}" \
+  -e ROOM_PARTITION_ASSIGNMENT_DYNAMIC_SUBSCRIBE_ENABLED="${room_partition_assignment_dynamic_subscribe_enabled}" \
+  -e ROOM_PARTITION_ASSIGNMENT_WS_URL="ws://$APP_INTERNAL_IP:8080" \
+  -e ROOM_PARTITION_ASSIGNMENT_NODE_DRAIN_ENABLED="${room_partition_assignment_node_drain_enabled}" \
+  -e ROOM_PARTITION_ASSIGNMENT_NODE_DRAIN_READINESS_TIMEOUT_MS="${room_partition_assignment_node_drain_readiness_timeout_ms}" \
   -e ROOM_PARTITION_LIFECYCLE_ENABLED="${room_partition_lifecycle_enabled}" \
   -e ROOM_PARTITION_LIFECYCLE_INTERVAL_MS="${room_partition_lifecycle_interval_ms}" \
   -e ROOM_PARTITION_LIFECYCLE_SCALE_UP_STABLE_WINDOW_MS="${room_partition_lifecycle_scale_up_stable_window_ms}" \
@@ -210,6 +235,11 @@ for attempt in $(seq 1 180); do
   if curl --max-time 2 -sf http://127.0.0.1:8080/actuator/health >/dev/null; then
     echo "[app] healthy"
     collect_socket_snapshot "app-socket-after-startup"
+    if [ "$SCHEMA_INITIALIZER" = "true" ]; then
+      echo "run_id=$RUN_ID role=$APP_ROLE app_index=$APP_INDEX timestamp=$(date -Iseconds)" > /tmp/openchat-schema.ready
+      gcloud storage cp /tmp/openchat-schema.ready "gs://$BUCKET_NAME/$SCHEMA_READY_OBJECT"
+      echo "[app] schema ready marker uploaded"
+    fi
     exit 0
   fi
   if [ "$attempt" -eq 180 ]; then

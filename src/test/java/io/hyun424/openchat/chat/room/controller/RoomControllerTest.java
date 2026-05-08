@@ -6,6 +6,7 @@ import io.hyun424.openchat.chat.member.service.RoomMemberService;
 import io.hyun424.openchat.chat.room.domain.Room;
 import io.hyun424.openchat.chat.room.dto.RoomListResponse;
 import io.hyun424.openchat.chat.room.partition.dto.RoomPartitionRoute;
+import io.hyun424.openchat.chat.room.partition.service.RoomPartitionRouteUnavailableException;
 import io.hyun424.openchat.chat.room.partition.service.RoomPartitionRoutingService;
 import io.hyun424.openchat.chat.room.service.RoomService;
 import io.hyun424.openchat.global.exception.ApiException;
@@ -128,6 +129,60 @@ class RoomControllerTest {
                 .andExpect(jsonPath("$.partitioned").value(true))
                 .andExpect(jsonPath("$.partitionId").value(1))
                 .andExpect(jsonPath("$.partitionCount").value(2));
+    }
+
+    @Test
+    @DisplayName("GET /api/rooms/{roomId}/ws-route - partition owner 준비 전 503")
+    void getWebSocketRoute_ownerNotReady() throws Exception {
+        Room room = Room.builder()
+                .id(1L).name("Test Room").ownerId("user1")
+                .maxMembers(10).requiresApproval(false).build();
+        when(roomService.getActiveRoomOrThrow(1L)).thenReturn(room);
+        when(roomPartitionRoutingService.route(1L, "user1"))
+                .thenThrow(new RoomPartitionRouteUnavailableException("owner_not_ready"));
+
+        mockMvc.perform(get("/api/rooms/1/ws-route")
+                        .principal(authUser("user1")))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(header().string("Retry-After", "1"))
+                .andExpect(jsonPath("$.reason").value("owner_not_ready"))
+                .andExpect(jsonPath("$.retryAfterMs").value(500));
+    }
+
+    @Test
+    @DisplayName("GET /api/rooms/{roomId}/ws-route - assignment unavailable 503")
+    void getWebSocketRoute_assignmentUnavailable() throws Exception {
+        Room room = Room.builder()
+                .id(1L).name("Test Room").ownerId("user1")
+                .maxMembers(10).requiresApproval(false).build();
+        when(roomService.getActiveRoomOrThrow(1L)).thenReturn(room);
+        when(roomPartitionRoutingService.route(1L, "user1"))
+                .thenThrow(new RoomPartitionRouteUnavailableException("assignment_unavailable"));
+
+        mockMvc.perform(get("/api/rooms/1/ws-route")
+                        .principal(authUser("user1")))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(header().string("Retry-After", "1"))
+                .andExpect(jsonPath("$.reason").value("assignment_unavailable"))
+                .andExpect(jsonPath("$.retryAfterMs").value(500));
+    }
+
+    @Test
+    @DisplayName("GET /api/rooms/{roomId}/ws-route - assignment error 503")
+    void getWebSocketRoute_assignmentError() throws Exception {
+        Room room = Room.builder()
+                .id(1L).name("Test Room").ownerId("user1")
+                .maxMembers(10).requiresApproval(false).build();
+        when(roomService.getActiveRoomOrThrow(1L)).thenReturn(room);
+        when(roomPartitionRoutingService.route(1L, "user1"))
+                .thenThrow(new RoomPartitionRouteUnavailableException("assignment_error", new RuntimeException("redis")));
+
+        mockMvc.perform(get("/api/rooms/1/ws-route")
+                        .principal(authUser("user1")))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(header().string("Retry-After", "1"))
+                .andExpect(jsonPath("$.reason").value("assignment_error"))
+                .andExpect(jsonPath("$.retryAfterMs").value(500));
     }
 
     @Test

@@ -345,6 +345,7 @@ public class WebSocketBroadcaster {
 
     private void removeDeadSessions(Long roomId, Set<WebSocketSession> deadSessions) {
         for (WebSocketSession dead : deadSessions) {
+            store.closeSession(dead, CloseStatus.SESSION_NOT_RELIABLE, "[WS DEAD SESSION CLOSE FAIL]");
             RoomSessionStore.RemoveResult result = store.remove(roomId, dead);
             stateTracker.remove(result.sessionId());
             roomTrafficMonitor.recordLeave(roomId, result.remainingRoomCount());

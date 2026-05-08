@@ -62,6 +62,25 @@ class OutboxPublishedMarkerTest {
         marker.shutdown();
     }
 
+    @Test
+    @DisplayName("published marker mismatch는 batch 수와 누락 row 수를 구분해 기록한다")
+    void flushOnce_recordsMismatchRows() {
+        OutboxPublishedMarker marker = marker(10, 500, 60_000);
+        when(outboxEventRepository.markPublishedByIds(anyList(), eq(OutboxEventStatus.PENDING), eq(OutboxEventStatus.PUBLISHED), anyLong()))
+                .thenReturn(1);
+
+        marker.enqueue(1L);
+        marker.enqueue(2L);
+        marker.enqueue(3L);
+
+        int updated = marker.flushOnce();
+
+        assertEquals(1, updated);
+        verify(chatPipelineMetrics).incrementCounter("outbox.published_marker.state_mismatch");
+        verify(chatPipelineMetrics).incrementCounter("outbox.published_marker.state_mismatch.rows", 2);
+        marker.shutdown();
+    }
+
     private OutboxPublishedMarker marker(int queueCapacity, int batchSize, long flushIntervalMs) {
         return new OutboxPublishedMarker(
                 outboxEventRepository,

@@ -38,6 +38,19 @@ public class RoomPartitionControlSubscriber {
         }
 
         String type = command.type() == null ? "unknown" : command.type();
+        if (command.isNodeReconnect()) {
+            if (!command.isValidNodeReconnect()) {
+                metrics.recordControlReceived(type, "ignored");
+                metrics.recordControlIgnored("invalid_node_reconnect");
+                return;
+            }
+            RoomPartitionControlHandler.NodeReconnectResult result = controlHandler.handleNodeReconnect(command);
+            metrics.recordControlReceived(type, "success");
+            log.info("[ROOM PARTITION CONTROL NODE RECONNECT] nodeId={} openSessionsBefore={} sent={} remainingOpenSessions={} reason={}",
+                    command.nodeId(), result.openSessionsBefore(), result.sent(), result.remainingOpenSessions(), command.reason());
+            return;
+        }
+
         if (!command.isReconnect()) {
             metrics.recordControlReceived(type, "ignored");
             metrics.recordControlIgnored("unknown_type");

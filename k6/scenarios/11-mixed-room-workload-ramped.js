@@ -15,7 +15,7 @@ import { login, authHeaders, BASE_URL } from '../lib/auth.js';
 import { enterRoom } from '../lib/http-helpers.js';
 import { makeNickname, makeChatMessage } from '../lib/data-factory.js';
 import { connectAndChat } from '../lib/ws.js';
-import { restCreateRoom, restWsRoute, httpErrorRate, wsPresenceAssigned } from '../lib/metrics.js';
+import { restCreateRoom, restWsRoute, httpErrorRate, wsPresenceAssigned, wsRouteFailuresTotal } from '../lib/metrics.js';
 
 const TARGET_VUS = Number(__ENV.TARGET_VUS || '100');
 const CONNECT_RAMP_SECONDS = Number(__ENV.CONNECT_RAMP_SECONDS || '30');
@@ -25,6 +25,13 @@ const MESSAGE_TEXT = __ENV.MESSAGE_TEXT || makeChatMessage(8);
 const VU_INDEX_OFFSET = Number(__ENV.VU_INDEX_OFFSET || '0');
 const K6_WORKER_INDEX = Number(__ENV.K6_WORKER_INDEX || '1');
 const K6_WORKER_COUNT = Number(__ENV.K6_WORKER_COUNT || '1');
+const WS_ROUTE_MAX_RETRIES = Number(__ENV.WS_ROUTE_MAX_RETRIES || '20');
+const WS_ROUTE_RETRY_AFTER_MS = Number(__ENV.WS_ROUTE_RETRY_AFTER_MS || '500');
+const ASSIGNMENT_PREFLIGHT_ENABLED = String(__ENV.K6_ASSIGNMENT_PREFLIGHT_ENABLED || 'false').toLowerCase() === 'true';
+const ASSIGNMENT_PREFLIGHT_PARTITION_COUNT = Number(__ENV.K6_ASSIGNMENT_PREFLIGHT_PARTITION_COUNT || '1');
+const ASSIGNMENT_PREFLIGHT_EXPECTED_NODES = Number(__ENV.K6_ASSIGNMENT_PREFLIGHT_EXPECTED_NODES || '0');
+const ASSIGNMENT_PREFLIGHT_TIMEOUT_SECONDS = Number(__ENV.K6_ASSIGNMENT_PREFLIGHT_TIMEOUT_SECONDS || '60');
+const ASSIGNMENT_PREFLIGHT_POLL_MS = Number(__ENV.K6_ASSIGNMENT_PREFLIGHT_POLL_MS || '1000');
 
 const HOT_ROOM_COUNT = Number(__ENV.MIXED_HOT_ROOM_COUNT || '1');
 const HOT_ROOM_VUS = Number(__ENV.MIXED_HOT_ROOM_VUS || '40');
@@ -55,6 +62,7 @@ const PASSIVE_SETTLE_MS = Number(__ENV.PASSIVE_SETTLE_MS || '2000');
 
 export const mixedRoomAssignedUsers = new Counter('mixed_room_assigned_users_total');
 export const mixedRoomConfigMismatch = new Counter('mixed_room_config_mismatch_total');
+export const assignmentPreflightFailuresTotal = new Counter('assignment_preflight_failures_total');
 
 function normalizedRatio(value, fallback) {
   if (!Number.isFinite(value)) {
@@ -146,6 +154,122 @@ function buildRoomSpecs() {
 const ROOM_SPECS = buildRoomSpecs();
 const CONFIGURED_VUS = ROOM_SPECS.reduce((sum, room) => sum + room.vusPerRoom, 0);
 const CHAT_ACK_P95_THRESHOLD_MS = Number(__ENV.K6_CHAT_ACK_P95_THRESHOLD_MS || '300');
+const VISIBLE_FRESHNESS_P95_THRESHOLD_MS = Number(__ENV.K6_VISIBLE_FRESHNESS_P95_THRESHOLD_MS || '500');
+
+function buildThresholds() {
+  const thresholds = {
+    http_error_rate: ['rate<0.01'],
+    ws_connect_success_rate: ['rate>0.99'],
+    ws_connect_failure_rate: ['rate<0.01'],
+    ws_connect_duration_ms: ['p(95)<5000', 'p(99)<10000'],
+    'chat_ack_roundtrip_ms{presenceMode:active,clientMode:sender}': [`p(95)<${CHAT_ACK_P95_THRESHOLD_MS}`],
+    'ws_passive_unexpected_messages_total{presenceMode:passive}': ['count<10'],
+    mixed_room_config_mismatch_total: ['count==0'],
+    ws_route_assignment_mismatch_total: ['count==0'],
+    ws_route_fallback_total: ['count==0'],
+    ws_route_failures_total: ['count==0'],
+    assignment_preflight_failures_total: ['count==0'],
+  };
+  if (VISIBLE_FRESHNESS_P95_THRESHOLD_MS > 0) {
+    thresholds['ws_visible_freshness_ms{presenceMode:active,clientMode:observer}'] = [`p(95)<${VISIBLE_FRESHNESS_P95_THRESHOLD_MS}`];
+  }
+  return thresholds;
+}
+
+function assignmentList(assignments) {
+  if (!assignments || typeof assignments !== 'object') {
+    return [];
+  }
+  return Object.keys(assignments).map((key) => assignments[key]);
+}
+
+function assignmentReadiness(nodesBody, assignmentsBody) {
+  const activeNodes = Array.isArray(nodesBody.activeNodes) ? nodesBody.activeNodes : [];
+  const assignments = assignmentList(assignmentsBody.assignments);
+  const readyAssignments = assignments.filter((assignment) => assignment && assignment.ready === true);
+  const distinctOwners = new Set(readyAssignments.map((assignment) => assignment.nodeId).filter(Boolean));
+  const expectedNodes = Math.max(0, ASSIGNMENT_PREFLIGHT_EXPECTED_NODES);
+  const expectedPartitions = Math.max(1, ASSIGNMENT_PREFLIGHT_PARTITION_COUNT);
+  const expectedDistinctOwners = expectedNodes > 0 ? Math.min(expectedNodes, expectedPartitions) : 1;
+
+  return {
+    ready:
+      activeNodes.length >= expectedNodes &&
+      assignments.length >= expectedPartitions &&
+      readyAssignments.length >= expectedPartitions &&
+      distinctOwners.size >= expectedDistinctOwners,
+    activeNodeCount: activeNodes.length,
+    assignmentCount: assignments.length,
+    readyAssignmentCount: readyAssignments.length,
+    distinctOwnerCount: distinctOwners.size,
+    expectedNodes,
+    expectedPartitions,
+    expectedDistinctOwners,
+  };
+}
+
+function getJsonOrNull(url, token, name) {
+  const res = http.get(url, {
+    headers: authHeaders(token),
+    tags: { name },
+  });
+  if (res.status < 200 || res.status >= 300) {
+    return { status: res.status, body: null };
+  }
+  try {
+    return { status: res.status, body: JSON.parse(res.body || '{}') };
+  } catch (e) {
+    return { status: res.status, body: null };
+  }
+}
+
+function waitForAssignmentPreflight(token) {
+  if (!ASSIGNMENT_PREFLIGHT_ENABLED) {
+    return true;
+  }
+
+  const timeoutAt = Date.now() + Math.max(1, ASSIGNMENT_PREFLIGHT_TIMEOUT_SECONDS) * 1000;
+  const pollSeconds = Math.max(0.1, ASSIGNMENT_PREFLIGHT_POLL_MS / 1000);
+  let attempt = 0;
+  let last = null;
+
+  while (Date.now() < timeoutAt) {
+    attempt += 1;
+    const nodes = getJsonOrNull(`${BASE_URL}/api/internal/room-partition/nodes`, token, 'assignment_preflight_nodes');
+    const assignments = getJsonOrNull(
+      `${BASE_URL}/api/internal/room-partition/assignments?partitionCount=${Math.max(1, ASSIGNMENT_PREFLIGHT_PARTITION_COUNT)}`,
+      token,
+      'assignment_preflight_assignments'
+    );
+
+    if (nodes.body && assignments.body) {
+      last = assignmentReadiness(nodes.body, assignments.body);
+      if (last.ready) {
+        console.log(
+          `Assignment preflight ready activeNodes=${last.activeNodeCount}/${last.expectedNodes} ` +
+          `readyAssignments=${last.readyAssignmentCount}/${last.expectedPartitions} ` +
+          `distinctOwners=${last.distinctOwnerCount}/${last.expectedDistinctOwners} attempt=${attempt}`
+        );
+        return true;
+      }
+    } else {
+      last = {
+        ready: false,
+        nodesStatus: nodes.status,
+        assignmentsStatus: assignments.status,
+      };
+    }
+
+    if (attempt === 1 || attempt % 5 === 0) {
+      console.log(`Assignment preflight waiting attempt=${attempt} state=${JSON.stringify(last)}`);
+    }
+    sleep(pollSeconds);
+  }
+
+  assignmentPreflightFailuresTotal.add(1);
+  console.error(`Assignment preflight timeout state=${JSON.stringify(last)}`);
+  return false;
+}
 
 export const options = {
   summaryTrendStats: ['avg', 'min', 'med', 'p(90)', 'p(95)', 'p(99)', 'max'],
@@ -157,16 +281,7 @@ export const options = {
       maxDuration: `${CONNECT_RAMP_SECONDS + CHAT_DURATION_SECONDS + 120}s`,
     },
   },
-  thresholds: {
-    http_error_rate: ['rate<0.01'],
-    ws_connect_success_rate: ['rate>0.99'],
-    ws_connect_failure_rate: ['rate<0.01'],
-    ws_connect_duration_ms: ['p(95)<5000', 'p(99)<10000'],
-    'chat_ack_roundtrip_ms{presenceMode:active,clientMode:sender}': [`p(95)<${CHAT_ACK_P95_THRESHOLD_MS}`],
-    'ws_visible_freshness_ms{presenceMode:active,clientMode:observer}': ['p(95)<500'],
-    'ws_passive_unexpected_messages_total{presenceMode:passive}': ['count<10'],
-    mixed_room_config_mismatch_total: ['count==0'],
-  },
+  thresholds: buildThresholds(),
   tags: {
     testType: 'mixed-room-workload-ramped',
     workerIndex: String(K6_WORKER_INDEX),
@@ -216,13 +331,28 @@ function createLoadtestRoom(token, roomSpec) {
   }
 }
 
-function getWebSocketRoute(token, roomId, roomType) {
-  const res = http.get(`${BASE_URL}/api/rooms/${roomId}/ws-route`, {
-    headers: authHeaders(token),
-    tags: { name: 'get_ws_route', roomType },
-  });
+function getWebSocketRoute(token, roomId, roomType, phase = 'initial') {
+  let res = null;
+  for (let attempt = 1; attempt <= WS_ROUTE_MAX_RETRIES; attempt += 1) {
+    res = http.get(`${BASE_URL}/api/rooms/${roomId}/ws-route`, {
+      headers: authHeaders(token),
+      tags: { name: 'get_ws_route', roomType },
+    });
+    restWsRoute.add(res.timings.duration, { roomType });
+    if (res.status !== 503) {
+      break;
+    }
+    let retryAfterMs = WS_ROUTE_RETRY_AFTER_MS;
+    try {
+      const body = JSON.parse(res.body || '{}');
+      retryAfterMs = Number(body.retryAfterMs || retryAfterMs);
+      console.log(`getWsRoute retry roomId=${roomId} roomType=${roomType} reason=${body.reason || 'unavailable'} attempt=${attempt}`);
+    } catch (e) {
+      console.log(`getWsRoute retry roomId=${roomId} roomType=${roomType} status=503 attempt=${attempt}`);
+    }
+    sleep(Math.max(0.05, retryAfterMs / 1000));
+  }
 
-  restWsRoute.add(res.timings.duration, { roomType });
   httpErrorRate.add(res.status >= 400, { roomType });
 
   check(res, {
@@ -239,7 +369,8 @@ function getWebSocketRoute(token, roomId, roomType) {
 
   if (res.status < 200 || res.status >= 300) {
     console.error(`getWsRoute failed roomId=${roomId} status=${res.status} body=${res.body}`);
-    return { partitionId: null, partitioned: false, partitionCount: 1 };
+    wsRouteFailuresTotal.add(1, { roomType, phase, reason: `status_${res.status}` });
+    return null;
   }
 
   try {
@@ -249,10 +380,15 @@ function getWebSocketRoute(token, roomId, roomType) {
       partitioned: Boolean(body.partitioned),
       partitionCount: Number(body.partitionCount || 1),
       routeVersion: Number(body.version || body.routeVersion || 0),
+      wsUrl: body.wsUrl || null,
+      nodeId: body.nodeId || null,
+      assignmentVersion: body.assignmentVersion || null,
+      fallbackReason: body.fallbackReason || null,
     };
   } catch (e) {
     console.error(`getWsRoute parse failed roomId=${roomId}`);
-    return { partitionId: null, partitioned: false, partitionCount: 1 };
+    wsRouteFailuresTotal.add(1, { roomType, phase, reason: 'parse_failed' });
+    return null;
   }
 }
 
@@ -266,19 +402,18 @@ function findAssignedRoom(rooms, vuId) {
 }
 
 function enterAndResolveRoute(token, roomId, roomType) {
-  let lastRoute = { partitionId: null, partitioned: false, partitionCount: 1 };
   for (let attempt = 1; attempt <= 8; attempt++) {
     enterRoom(token, roomId);
     sleep(0.25 * attempt);
 
-    lastRoute = getWebSocketRoute(token, roomId, roomType);
-    if (lastRoute.partitionId !== null && lastRoute.partitionId !== undefined) {
-      return lastRoute;
+    const route = getWebSocketRoute(token, roomId, roomType, 'initial');
+    if (route && route.partitionId !== null && route.partitionId !== undefined) {
+      return route;
     }
   }
 
-  console.error(`enterAndResolveRoute failed roomId=${roomId} roomType=${roomType}; using legacy partition fallback`);
-  return lastRoute;
+  console.error(`enterAndResolveRoute failed roomId=${roomId} roomType=${roomType}`);
+  return null;
 }
 
 export function setup() {
@@ -292,6 +427,9 @@ export function setup() {
   if (!token) {
     console.error('Setup: admin login failed');
     return { rooms: [] };
+  }
+  if (!waitForAssignmentPreflight(token)) {
+    throw new Error('assignment preflight failed');
   }
 
   const rooms = [];
@@ -353,13 +491,20 @@ export default function (data) {
   }
 
   const wsRoute = enterAndResolveRoute(token, room.roomId, room.type);
+  if (!wsRoute) {
+    return;
+  }
 
   connectAndChat({
     token,
     roomId: room.roomId,
     partitionId: wsRoute.partitionId,
     routeVersion: wsRoute.routeVersion,
-    routeResolver: () => getWebSocketRoute(token, room.roomId, room.type),
+    wsUrl: wsRoute.wsUrl,
+    nodeId: wsRoute.nodeId,
+    assignmentVersion: wsRoute.assignmentVersion,
+    fallbackReason: wsRoute.fallbackReason,
+    routeResolver: () => getWebSocketRoute(token, room.roomId, room.type, 'reconnect'),
     duration: CHAT_DURATION_SECONDS,
     sendInterval: sendIntervalForMode(room, presenceMode, clientMode),
     messageText: MESSAGE_TEXT,

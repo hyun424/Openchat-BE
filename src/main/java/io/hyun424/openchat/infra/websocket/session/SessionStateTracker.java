@@ -56,6 +56,33 @@ public class SessionStateTracker {
         return sessionIds;
     }
 
+    public int openSessionCountForPartition(Integer partitionId, Collection<WebSocketSession> sessions) {
+        if (partitionId == null || sessions.isEmpty()) {
+            return 0;
+        }
+        int count = 0;
+        for (WebSocketSession session : sessions) {
+            if (session.isOpen() && matchesPartition(session, partitionId)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    public List<OpenSessionInfo> openSessions(Collection<WebSocketSession> sessions) {
+        if (sessions.isEmpty()) {
+            return List.of();
+        }
+        List<OpenSessionInfo> openSessions = new ArrayList<>(sessions.size());
+        for (WebSocketSession session : sessions) {
+            RoomSessionState state = sessionStatesById.get(session.getId());
+            if (session.isOpen() && state != null) {
+                openSessions.add(new OpenSessionInfo(session.getId(), state.roomId(), state.partitionId()));
+            }
+        }
+        return openSessions;
+    }
+
     public boolean matchesPartition(WebSocketSession session, Integer partitionId) {
         if (partitionId == null) {
             return true;
@@ -110,5 +137,12 @@ public class SessionStateTracker {
 
     private long nowMillis() {
         return System.currentTimeMillis();
+    }
+
+    public record OpenSessionInfo(
+            String sessionId,
+            Long roomId,
+            Integer partitionId
+    ) {
     }
 }

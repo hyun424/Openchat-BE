@@ -50,7 +50,8 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
                                 PostCommitLivePublishService postCommitLivePublishService,
                                 RoomMetadataUpdateBuffer roomMetadataUpdateBuffer,
                                 RoomPartitionRoutingService roomPartitionRoutingService,
-                                RoomPartitionMetrics roomPartitionMetrics) {
+                                RoomPartitionMetrics roomPartitionMetrics,
+                                @Value("${app.instance-id:local}") String nodeId) {
         WebSocketRouteQueryParser routeQueryParser = new WebSocketRouteQueryParser();
         ChatWebSocketMessageParser messageParser = new ChatWebSocketMessageParser(objectMapper);
         WebSocketErrorSender errorSender = new WebSocketErrorSender(objectMapper);
@@ -68,7 +69,9 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
                 chatPipelineMetrics,
                 roomPartitionRoutingService,
                 roomPartitionMetrics,
-                routeQueryParser
+                routeQueryParser,
+                objectMapper,
+                nodeId
         );
         this.inboundMessageService = new WebSocketInboundMessageService(
                 roomSessionRegistry,

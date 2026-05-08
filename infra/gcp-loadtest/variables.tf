@@ -62,6 +62,64 @@ variable "k6_chat_ack_p95_threshold_ms" {
   default     = 300
 }
 
+variable "k6_visible_freshness_p95_threshold_ms" {
+  description = "k6 observer visible freshness p95 threshold in milliseconds. Set to 0 to collect the metric without failing the run."
+  type        = number
+  default     = 500
+}
+
+variable "k6_assignment_preflight_enabled" {
+  description = "Wait for realtime node assignment readiness before k6 VUs start."
+  type        = bool
+  default     = false
+}
+
+variable "k6_assignment_preflight_expected_nodes" {
+  description = "Minimum active realtime nodes expected by k6 assignment preflight. Zero disables the node count check."
+  type        = number
+  default     = 0
+
+  validation {
+    condition     = var.k6_assignment_preflight_expected_nodes >= 0
+    error_message = "k6_assignment_preflight_expected_nodes must be zero or greater."
+  }
+}
+
+variable "k6_assignment_preflight_timeout_seconds" {
+  description = "Maximum seconds k6 setup waits for assignment readiness."
+  type        = number
+  default     = 60
+
+  validation {
+    condition     = var.k6_assignment_preflight_timeout_seconds >= 1
+    error_message = "k6_assignment_preflight_timeout_seconds must be at least 1."
+  }
+}
+
+variable "k6_node_drain_enabled" {
+  description = "Trigger a realtime node drain during k6 validation."
+  type        = bool
+  default     = false
+}
+
+variable "k6_node_drain_after_seconds" {
+  description = "Seconds after k6 starts before the coordinator triggers node drain."
+  type        = number
+  default     = 30
+}
+
+variable "k6_node_drain_limit" {
+  description = "Maximum sessions to target per node drain reconnect command."
+  type        = number
+  default     = 1000
+}
+
+variable "k6_node_drain_retry_after_ms" {
+  description = "Retry delay included in node drain reconnect controls."
+  type        = number
+  default     = 500
+}
+
 variable "connect_ramp_seconds" {
   description = "Seconds used by ramped k6 scenarios to spread login, room entry, and WebSocket connection attempts."
   type        = number
@@ -98,6 +156,17 @@ variable "websocket_broadcast_lanes" {
   validation {
     condition     = var.websocket_broadcast_lanes >= 1
     error_message = "websocket_broadcast_lanes must be at least 1."
+  }
+}
+
+variable "live_publish_threads" {
+  description = "Number of post-commit live publish worker threads per app VM."
+  type        = number
+  default     = 8
+
+  validation {
+    condition     = var.live_publish_threads >= 1
+    error_message = "live_publish_threads must be at least 1."
   }
 }
 
@@ -420,6 +489,30 @@ variable "room_partition_admin_api_enabled" {
   description = "Enable internal room partition operation API for smoke/operation tooling."
   type        = bool
   default     = false
+}
+
+variable "room_partition_assignment_enabled" {
+  description = "Enable realtime node registry and deterministic room partition assignment."
+  type        = bool
+  default     = false
+}
+
+variable "room_partition_assignment_dynamic_subscribe_enabled" {
+  description = "Enable runtime Redis subscribe/unsubscribe based on partition assignment."
+  type        = bool
+  default     = false
+}
+
+variable "room_partition_assignment_node_drain_enabled" {
+  description = "Enable node-drain commands for realtime partition assignment smoke tests."
+  type        = bool
+  default     = false
+}
+
+variable "room_partition_assignment_node_drain_readiness_timeout_ms" {
+  description = "Maximum milliseconds node drain waits for replacement owners to become ready before reconnect."
+  type        = number
+  default     = 15000
 }
 
 variable "room_partition_lifecycle_enabled" {

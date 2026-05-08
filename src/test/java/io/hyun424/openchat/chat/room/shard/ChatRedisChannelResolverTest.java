@@ -2,6 +2,7 @@ package io.hyun424.openchat.chat.room.shard;
 
 import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
 import io.hyun424.openchat.chat.room.hot.RoomScaleTier;
+import io.hyun424.openchat.chat.room.partition.assignment.RoomPartitionAssignmentProperties;
 import io.hyun424.openchat.chat.room.partition.config.RoomPartitionProperties;
 import io.hyun424.openchat.chat.room.partition.service.RoomPartitionRoutingService;
 import org.junit.jupiter.api.Test;
@@ -72,7 +73,8 @@ class ChatRedisChannelResolverTest {
                 shardProperties,
                 mock(RoomShardResolver.class),
                 partitionProperties(true, 2, Set.of(0, 1)),
-                partitionRoutingService);
+                partitionRoutingService,
+                new RoomPartitionAssignmentProperties());
 
         java.util.List<ChatRedisChannelResolver.ResolvedChannel> channels = resolver.publishChannels(message(12L));
 
@@ -102,7 +104,8 @@ class ChatRedisChannelResolverTest {
                 properties,
                 shardResolver,
                 partitionProperties,
-                mock(RoomPartitionRoutingService.class)
+                mock(RoomPartitionRoutingService.class),
+                new RoomPartitionAssignmentProperties()
         );
     }
 

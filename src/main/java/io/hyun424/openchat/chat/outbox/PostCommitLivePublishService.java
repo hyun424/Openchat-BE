@@ -59,7 +59,8 @@ public class PostCommitLivePublishService {
             return;
         }
         try {
-            executor.execute(() -> publishLive(message, outboxEventId));
+            long enqueueNanos = System.nanoTime();
+            executor.execute(() -> publishLive(message, outboxEventId, enqueueNanos));
             chatPipelineMetrics.recordDistribution(
                     "openchat_live_publish_queue_size",
                     "pending",
@@ -72,8 +73,10 @@ public class PostCommitLivePublishService {
         }
     }
 
-    private void publishLive(ChatMessageDto message, Long outboxEventId) {
+    private void publishLive(ChatMessageDto message, Long outboxEventId, long enqueueNanos) {
         long totalStartNanos = System.nanoTime();
+        chatPipelineMetrics.recordStageNanos("live_publish.queue_wait", totalStartNanos - enqueueNanos);
+        chatPipelineMetrics.recordSinceCreated("live_publish.start.since_created", message);
         try {
             long publishStartNanos = System.nanoTime();
             awaitPublish(message);
