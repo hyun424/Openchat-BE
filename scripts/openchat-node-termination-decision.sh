@@ -231,6 +231,8 @@ build_decision() {
           sourceReadinessReason: ($source.lastReadinessReason // null),
           sourceLastCommandId: ($source.lastCommandId // null),
           sourceReconnectCommandIds: ($source.reconnectCommandIds // []),
+          sourceAttemptedReconnectCommandIds: ($source.attemptedReconnectCommandIds // []),
+          sourceLastReconnectCommandId: ($source.lastReconnectCommandId // null),
           remainingSessions: $source.remainingSessions,
           reason: (
             if $ready then "all termination guards passed"

@@ -58,6 +58,38 @@ class RedisRoomPartitionControlPublisherTest {
         assertEquals(100, payload.limit());
         assertEquals(500L, payload.retryAfterMs());
         assertEquals(4L, payload.routeVersion());
+        assertEquals(null, payload.commandId());
+    }
+
+    @Test
+    @DisplayName("command trace가 켜져 있을 때만 Redis payload에 commandId를 포함한다")
+    void publish_includesCommandIdWhenTraceEnabled() throws Exception {
+        StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
+        RedisRoomPartitionControlPublisher publisher = new RedisRoomPartitionControlPublisher(
+                redisTemplate,
+                objectMapper,
+                new RoomPartitionControlChannelResolver(),
+                new RoomPartitionMetrics(new SimpleMeterRegistry()),
+                true
+        );
+        when(redisTemplate.convertAndSend(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn(1L);
+
+        RoomPartitionControlCommand command = RoomPartitionControlCommand.reconnect(
+                10L,
+                2,
+                "scale_down",
+                100,
+                500,
+                4
+        );
+        boolean published = publisher.publish(command);
+
+        assertTrue(published);
+        ArgumentCaptor<String> payloadCaptor = forClass(String.class);
+        verify(redisTemplate).convertAndSend(org.mockito.ArgumentMatchers.anyString(), payloadCaptor.capture());
+        RoomPartitionControlCommand payload =
+                objectMapper.readValue(payloadCaptor.getValue(), RoomPartitionControlCommand.class);
         assertEquals(command.commandId(), payload.commandId());
         assertFalse(payload.commandId().isBlank());
     }

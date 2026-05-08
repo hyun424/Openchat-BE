@@ -169,11 +169,29 @@ test_reconnect_max_retry_exceeded() {
   assert_eq "sessions_remaining" "$(jq -r '.lastStatus' "$CASE_DIR/result.json")" "lastStatus"
 }
 
+test_publish_failed_command_id_is_attempted_not_published() {
+  run_case "publish-failed-command-id"
+  write_response last '{"nodeId":"node-a","operationId":"node_drain:node-a","draining":true,"status":"publish_failed","reconnectPublished":false,"targetedSessions":12,"remainingSessions":12,"reason":"node_drain","retryable":true,"nextAction":"investigate_publish","readinessReason":"ready","commandId":"reconnect-failed"}'
+
+  set +e
+  "$SCRIPT" --base-url http://openchat.internal --node-id node-a --token test-token \
+    --timeout-seconds 5 --poll-interval-ms 0 --max-reconnect-attempts 1 \
+    --output "$CASE_DIR/result.json" > "$CASE_DIR/stdout.json"
+  exit_code=$?
+  set -e
+
+  assert_eq "4" "$exit_code" "exit code"
+  assert_eq "max_retry_exceeded" "$(jq -r '.result' "$CASE_DIR/result.json")" "result"
+  assert_eq "0" "$(jq -r '.reconnectCommandIds | length' "$CASE_DIR/result.json")" "published reconnect ids"
+  assert_eq "reconnect-failed" "$(jq -r '.attemptedReconnectCommandIds | join(",")' "$CASE_DIR/result.json")" "attempted reconnect ids"
+}
+
 test_reconnect_retry_then_complete
 test_blocked_last_active_node
 test_invalid_response_shape
 test_unknown_node_timeout
 test_sleep_crossing_deadline_times_out_without_extra_poll
 test_reconnect_max_retry_exceeded
+test_publish_failed_command_id_is_attempted_not_published
 
 echo "openchat node drain orchestrator tests passed"

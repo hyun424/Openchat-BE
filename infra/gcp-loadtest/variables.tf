@@ -568,6 +568,12 @@ variable "room_partition_assignment_dynamic_subscribe_enabled" {
   default     = false
 }
 
+variable "room_partition_control_command_trace_enabled" {
+  description = "Include reconnect command trace ids in Redis control payloads. Keep disabled by default for mixed-version rolling deploy compatibility."
+  type        = bool
+  default     = false
+}
+
 variable "room_partition_assignment_node_drain_enabled" {
   description = "Enable node-drain commands for realtime partition assignment smoke tests."
   type        = bool

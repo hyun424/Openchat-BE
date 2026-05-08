@@ -1,10 +1,13 @@
 package io.hyun424.openchat.chat.room.partition.infra;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.hyun424.openchat.chat.room.partition.dto.RoomPartitionControlCommand;
 import io.hyun424.openchat.chat.room.partition.metrics.RoomPartitionMetrics;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Primary;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
@@ -18,17 +21,30 @@ public class RedisRoomPartitionControlPublisher implements RoomPartitionControlP
     private final ObjectMapper redisObjectMapper;
     private final RoomPartitionControlChannelResolver channelResolver;
     private final RoomPartitionMetrics metrics;
+    private final boolean commandTraceEnabled;
 
+    @Autowired
     public RedisRoomPartitionControlPublisher(
             StringRedisTemplate redisTemplate,
             @Qualifier("redisObjectMapper") ObjectMapper redisObjectMapper,
             RoomPartitionControlChannelResolver channelResolver,
-            RoomPartitionMetrics metrics
+            RoomPartitionMetrics metrics,
+            @Value("${app.room-partition.control.command-trace-enabled:false}") boolean commandTraceEnabled
     ) {
         this.redisTemplate = redisTemplate;
         this.redisObjectMapper = redisObjectMapper;
         this.channelResolver = channelResolver;
         this.metrics = metrics;
+        this.commandTraceEnabled = commandTraceEnabled;
+    }
+
+    RedisRoomPartitionControlPublisher(
+            StringRedisTemplate redisTemplate,
+            ObjectMapper redisObjectMapper,
+            RoomPartitionControlChannelResolver channelResolver,
+            RoomPartitionMetrics metrics
+    ) {
+        this(redisTemplate, redisObjectMapper, channelResolver, metrics, false);
     }
 
     @Override
@@ -39,7 +55,7 @@ public class RedisRoomPartitionControlPublisher implements RoomPartitionControlP
                 metrics.recordControlPublish(type, "invalid");
                 return false;
             }
-            String payload = redisObjectMapper.writeValueAsString(command);
+            String payload = serialize(command);
             String channel = command.nodeId() == null
                     ? channelResolver.channel(command.roomId())
                     : channelResolver.nodeChannel(command.nodeId());
@@ -62,5 +78,14 @@ public class RedisRoomPartitionControlPublisher implements RoomPartitionControlP
                     e);
             return false;
         }
+    }
+
+    private String serialize(RoomPartitionControlCommand command) throws com.fasterxml.jackson.core.JsonProcessingException {
+        if (commandTraceEnabled) {
+            return redisObjectMapper.writeValueAsString(command);
+        }
+        ObjectNode node = redisObjectMapper.valueToTree(command);
+        node.remove("commandId");
+        return redisObjectMapper.writeValueAsString(node);
     }
 }

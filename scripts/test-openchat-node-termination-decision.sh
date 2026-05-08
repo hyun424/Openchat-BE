@@ -48,6 +48,8 @@ ready_json() {
   "lastReadinessReason": "ready",
   "lastCommandId": null,
   "reconnectCommandIds": ["reconnect-a", "reconnect-b"],
+  "attemptedReconnectCommandIds": ["reconnect-a", "reconnect-b"],
+  "lastReconnectCommandId": "reconnect-b",
   "remainingSessions": 0,
   "completedAt": "__COMPLETED_AT__"
 }
@@ -65,6 +67,7 @@ test_ready_allows_termination() {
   assert_eq "true" "$(jq -r '.terminationAllowed' "$CASE_DIR/result.json")" "terminationAllowed"
   assert_eq "terminate_node" "$(jq -r '.recommendedAction' "$CASE_DIR/result.json")" "recommendedAction"
   assert_eq "reconnect-a,reconnect-b" "$(jq -r '.sourceReconnectCommandIds | join(",")' "$CASE_DIR/result.json")" "sourceReconnectCommandIds"
+  assert_eq "reconnect-a,reconnect-b" "$(jq -r '.sourceAttemptedReconnectCommandIds | join(",")' "$CASE_DIR/result.json")" "sourceAttemptedReconnectCommandIds"
   assert_eq "0" "$(jq -r '.guards | map(select(.passed == false)) | length' "$CASE_DIR/result.json")" "failed guard count"
   assert_eq "ready" "$(jq -r '.result' "$CASE_DIR/stdout.json")" "stdout result"
 }

@@ -426,6 +426,7 @@ resource "google_compute_instance" "api" {
       room_partition_admin_api_enabled                           = var.room_partition_admin_api_enabled ? "true" : "false"
       room_partition_assignment_enabled                          = var.room_partition_assignment_enabled ? "true" : "false"
       room_partition_assignment_dynamic_subscribe_enabled        = var.room_partition_assignment_dynamic_subscribe_enabled ? "true" : "false"
+      room_partition_control_command_trace_enabled               = var.room_partition_control_command_trace_enabled ? "true" : "false"
       room_partition_assignment_node_drain_enabled               = var.room_partition_assignment_node_drain_enabled ? "true" : "false"
       room_partition_assignment_node_drain_readiness_timeout_ms  = var.room_partition_assignment_node_drain_readiness_timeout_ms
       room_partition_lifecycle_enabled                           = var.room_partition_lifecycle_enabled ? "true" : "false"
@@ -515,6 +516,7 @@ resource "google_compute_instance" "realtime" {
       room_partition_admin_api_enabled                           = var.room_partition_admin_api_enabled ? "true" : "false"
       room_partition_assignment_enabled                          = var.room_partition_assignment_enabled ? "true" : "false"
       room_partition_assignment_dynamic_subscribe_enabled        = var.room_partition_assignment_dynamic_subscribe_enabled ? "true" : "false"
+      room_partition_control_command_trace_enabled               = var.room_partition_control_command_trace_enabled ? "true" : "false"
       room_partition_assignment_node_drain_enabled               = var.room_partition_assignment_node_drain_enabled ? "true" : "false"
       room_partition_assignment_node_drain_readiness_timeout_ms  = var.room_partition_assignment_node_drain_readiness_timeout_ms
       room_partition_lifecycle_enabled                           = var.room_partition_lifecycle_enabled ? "true" : "false"

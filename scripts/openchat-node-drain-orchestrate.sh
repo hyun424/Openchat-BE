@@ -194,9 +194,21 @@ write_result() {
       history: $history[0],
       reconnectCommandIds: (
         $history[0]
+        | map(select(.reconnectPublished == true) | .commandId // empty)
+        | map(select(. != ""))
+        | unique
+      ),
+      attemptedReconnectCommandIds: (
+        $history[0]
         | map(.commandId // empty)
         | map(select(. != ""))
         | unique
+      ),
+      lastReconnectCommandId: (
+        $history[0]
+        | map(select(.reconnectPublished == true) | .commandId // empty)
+        | map(select(. != ""))
+        | last // null
       )
     }')"
 
