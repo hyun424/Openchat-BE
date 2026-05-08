@@ -422,6 +422,24 @@ variable "room_partition_admin_api_enabled" {
   default     = false
 }
 
+variable "room_partition_assignment_enabled" {
+  description = "Enable realtime node registry and deterministic room partition assignment."
+  type        = bool
+  default     = false
+}
+
+variable "room_partition_assignment_dynamic_subscribe_enabled" {
+  description = "Enable runtime Redis subscribe/unsubscribe based on partition assignment."
+  type        = bool
+  default     = false
+}
+
+variable "room_partition_assignment_node_drain_enabled" {
+  description = "Enable node-drain commands for realtime partition assignment smoke tests."
+  type        = bool
+  default     = false
+}
+
 variable "room_partition_lifecycle_enabled" {
   description = "Enable automatic room partition lifecycle scaling."
   type        = bool

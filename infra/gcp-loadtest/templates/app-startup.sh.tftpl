@@ -10,6 +10,7 @@ MYSQL_IP="${mysql_ip}"
 REDIS_IP="${redis_ip}"
 WORKDIR="/opt/openchat"
 LOG_DIR="/var/log/openchat-loadtest"
+APP_INTERNAL_IP="$(hostname -I | awk '{print $1}')"
 
 mkdir -p "$LOG_DIR"
 exec > >(tee -a "$LOG_DIR/app-startup.log") 2>&1
@@ -180,6 +181,10 @@ docker run -d \
   -e ROOM_PARTITION_HOT_TIER_THRESHOLD="${room_partition_hot_tier_threshold}" \
   -e ROOM_PARTITION_MAX_PARTITIONS_PER_ROOM="${room_partition_max_partitions_per_room}" \
   -e ROOM_PARTITION_ADMIN_API_ENABLED="${room_partition_admin_api_enabled}" \
+  -e ROOM_PARTITION_ASSIGNMENT_ENABLED="${room_partition_assignment_enabled}" \
+  -e ROOM_PARTITION_ASSIGNMENT_DYNAMIC_SUBSCRIBE_ENABLED="${room_partition_assignment_dynamic_subscribe_enabled}" \
+  -e ROOM_PARTITION_ASSIGNMENT_WS_URL="ws://$APP_INTERNAL_IP:8080" \
+  -e ROOM_PARTITION_ASSIGNMENT_NODE_DRAIN_ENABLED="${room_partition_assignment_node_drain_enabled}" \
   -e ROOM_PARTITION_LIFECYCLE_ENABLED="${room_partition_lifecycle_enabled}" \
   -e ROOM_PARTITION_LIFECYCLE_INTERVAL_MS="${room_partition_lifecycle_interval_ms}" \
   -e ROOM_PARTITION_LIFECYCLE_SCALE_UP_STABLE_WINDOW_MS="${room_partition_lifecycle_scale_up_stable_window_ms}" \

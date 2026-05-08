@@ -37,6 +37,32 @@ public class RoomPartitionControlHandler {
         return sent;
     }
 
+    public int handleNodeReconnect(RoomPartitionControlCommand command) {
+        List<io.hyun424.openchat.infra.websocket.session.SessionStateTracker.OpenSessionInfo> sessions =
+                roomSessionRegistry.openSessions();
+        int limit = Math.min(command.limit(), sessions.size());
+        int sent = 0;
+        for (int i = 0; i < limit; i++) {
+            io.hyun424.openchat.infra.websocket.session.SessionStateTracker.OpenSessionInfo session = sessions.get(i);
+            boolean success = roomSessionRegistry.sendControlToSession(
+                    session.sessionId(),
+                    RoomReconnectControlPayload.of(
+                            session.roomId(),
+                            command.reason(),
+                            command.retryAfterMs(),
+                            command.routeVersion()
+                    ),
+                    PAYLOAD_TYPE
+            );
+            metrics.recordReconnectControlSent(command.reason(), success ? "success" : "failed");
+            if (success) {
+                sent++;
+            }
+        }
+        metrics.recordReconnectTargeted(command.reason(), sent);
+        return sent;
+    }
+
     private boolean sendReconnect(String sessionId, RoomPartitionControlCommand command) {
         return roomSessionRegistry.sendControlToSession(
                 sessionId,

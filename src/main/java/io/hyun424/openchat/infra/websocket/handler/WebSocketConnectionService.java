@@ -1,5 +1,6 @@
 package io.hyun424.openchat.infra.websocket.handler;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.hyun424.openchat.chat.member.service.RoomMemberService;
 import io.hyun424.openchat.chat.metrics.ChatPipelineMetrics;
 import io.hyun424.openchat.chat.room.domain.Room;
@@ -9,6 +10,7 @@ import io.hyun424.openchat.chat.room.service.RoomService;
 import io.hyun424.openchat.infra.websocket.session.RoomSessionRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.socket.CloseStatus;
+import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
 @Slf4j
@@ -22,6 +24,8 @@ class WebSocketConnectionService {
     private final RoomPartitionRoutingService roomPartitionRoutingService;
     private final RoomPartitionMetrics roomPartitionMetrics;
     private final WebSocketRouteQueryParser routeQueryParser;
+    private final ObjectMapper objectMapper;
+    private final String nodeId;
 
     WebSocketConnectionService(RoomMemberService roomMemberService,
                                RoomSessionRegistry roomSessionRegistry,
@@ -30,7 +34,9 @@ class WebSocketConnectionService {
                                ChatPipelineMetrics chatPipelineMetrics,
                                RoomPartitionRoutingService roomPartitionRoutingService,
                                RoomPartitionMetrics roomPartitionMetrics,
-                               WebSocketRouteQueryParser routeQueryParser) {
+                               WebSocketRouteQueryParser routeQueryParser,
+                               ObjectMapper objectMapper,
+                               String nodeId) {
         this.roomMemberService = roomMemberService;
         this.roomSessionRegistry = roomSessionRegistry;
         this.roomService = roomService;
@@ -39,6 +45,8 @@ class WebSocketConnectionService {
         this.roomPartitionRoutingService = roomPartitionRoutingService;
         this.roomPartitionMetrics = roomPartitionMetrics;
         this.routeQueryParser = routeQueryParser;
+        this.objectMapper = objectMapper;
+        this.nodeId = nodeId;
     }
 
     void afterConnectionEstablished(WebSocketSession session) throws Exception {
@@ -68,11 +76,12 @@ class WebSocketConnectionService {
                     roomId, userId, session.getId());
         }
         roomSessionRegistry.add(roomId, partitionId, session);
+        sendConnectedNodeFrame(session, roomId, partitionId);
         chatPipelineMetrics.recordStage("ws.connect.registry_add", registryStartNanos);
         chatPipelineMetrics.recordStage("ws.connect.total", totalStartNanos);
 
-        log.debug("[WS CONNECT] roomId={} userId={} session={}",
-                roomId, userId, session.getId());
+        log.debug("[WS CONNECT] roomId={} userId={} session={} nodeId={} routeNodeId={}",
+                roomId, userId, session.getId(), nodeId, routeQueryParser.routeNodeId(session));
     }
 
     void afterConnectionClosed(WebSocketSession session) {
@@ -94,5 +103,31 @@ class WebSocketConnectionService {
             return false;
         }
         return true;
+    }
+
+    private void sendConnectedNodeFrame(WebSocketSession session, Long roomId, Integer partitionId) {
+        try {
+            ConnectedNodePayload payload = new ConnectedNodePayload(
+                    "node.connected",
+                    nodeId,
+                    routeQueryParser.routeNodeId(session),
+                    roomId,
+                    partitionId,
+                    routeQueryParser.assignmentVersion(session)
+            );
+            session.sendMessage(new TextMessage(objectMapper.writeValueAsString(payload)));
+        } catch (Exception e) {
+            log.warn("failed to send connected node control frame session={} nodeId={}", session.getId(), nodeId, e);
+        }
+    }
+
+    private record ConnectedNodePayload(
+            String type,
+            String nodeId,
+            String routeNodeId,
+            Long roomId,
+            Integer partitionId,
+            String assignmentVersion
+    ) {
     }
 }

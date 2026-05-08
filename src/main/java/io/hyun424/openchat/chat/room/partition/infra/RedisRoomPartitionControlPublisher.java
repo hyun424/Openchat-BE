@@ -35,18 +35,24 @@ public class RedisRoomPartitionControlPublisher implements RoomPartitionControlP
     public boolean publish(RoomPartitionControlCommand command) {
         String type = command == null ? "unknown" : command.type();
         try {
-            if (command == null || command.roomId() == null) {
+            if (command == null || (command.roomId() == null && command.nodeId() == null)) {
                 metrics.recordControlPublish(type, "invalid");
                 return false;
             }
             String payload = redisObjectMapper.writeValueAsString(command);
-            redisTemplate.convertAndSend(channelResolver.channel(command.roomId()), payload);
+            String channel = command.nodeId() == null
+                    ? channelResolver.channel(command.roomId())
+                    : channelResolver.nodeChannel(command.nodeId());
+            redisTemplate.convertAndSend(channel, payload);
             metrics.recordControlPublish(type, "success");
             return true;
         } catch (Exception e) {
             metrics.recordControlPublish(type, "publish_failed");
-            log.warn("[ROOM PARTITION CONTROL PUB FAIL] type={} roomId={}",
-                    type, command != null ? command.roomId() : null, e);
+            log.warn("[ROOM PARTITION CONTROL PUB FAIL] type={} roomId={} nodeId={}",
+                    type,
+                    command != null ? command.roomId() : null,
+                    command != null ? command.nodeId() : null,
+                    e);
             return false;
         }
     }

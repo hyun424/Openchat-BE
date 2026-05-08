@@ -1,6 +1,7 @@
 package io.hyun424.openchat.chat.room.shard;
 
 import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
+import io.hyun424.openchat.chat.room.partition.assignment.RoomPartitionAssignmentProperties;
 import io.hyun424.openchat.chat.room.partition.config.RoomPartitionProperties;
 import io.hyun424.openchat.chat.room.partition.service.RoomPartitionRoutingService;
 import org.springframework.stereotype.Component;
@@ -24,15 +25,18 @@ public class ChatRedisChannelResolver {
     private final RoomShardResolver roomShardResolver;
     private final RoomPartitionProperties partitionProperties;
     private final RoomPartitionRoutingService partitionRoutingService;
+    private final RoomPartitionAssignmentProperties assignmentProperties;
 
     public ChatRedisChannelResolver(RoomShardProperties properties,
                                     RoomShardResolver roomShardResolver,
                                     RoomPartitionProperties partitionProperties,
-                                    RoomPartitionRoutingService partitionRoutingService) {
+                                    RoomPartitionRoutingService partitionRoutingService,
+                                    RoomPartitionAssignmentProperties assignmentProperties) {
         this.properties = properties;
         this.roomShardResolver = roomShardResolver;
         this.partitionProperties = partitionProperties;
         this.partitionRoutingService = partitionRoutingService;
+        this.assignmentProperties = assignmentProperties;
     }
 
     public ResolvedChannel publishChannel(ChatMessageDto message) {
@@ -60,7 +64,7 @@ public class ChatRedisChannelResolver {
             patterns.add(LEGACY_PREFIX + "*");
             return patterns;
         }
-        if (partitionProperties.enabled()) {
+        if (partitionProperties.enabled() && !assignmentProperties.dynamicSubscribeEnabled()) {
             for (Integer partitionId : partitionProperties.ownedPartitions()) {
                 patterns.add(partitionPattern(partitionId));
             }

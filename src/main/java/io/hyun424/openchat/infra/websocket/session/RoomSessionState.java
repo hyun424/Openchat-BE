@@ -24,6 +24,10 @@ final class RoomSessionState {
         return roomId;
     }
 
+    Integer partitionId() {
+        return partitionId;
+    }
+
     void mark(boolean active, Long lastSeenSequence, long now) {
         this.activeDeclared = active;
         this.lastSeenSequence = lastSeenSequence;

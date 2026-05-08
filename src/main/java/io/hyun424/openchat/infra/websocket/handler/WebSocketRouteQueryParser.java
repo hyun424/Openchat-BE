@@ -33,6 +33,22 @@ class WebSocketRouteQueryParser {
         }
     }
 
+    String assignmentVersion(WebSocketSession session) {
+        String query = query(session);
+        if (query == null) {
+            return null;
+        }
+        return findQueryValue(query, "assignmentVersion");
+    }
+
+    String routeNodeId(WebSocketSession session) {
+        String query = query(session);
+        if (query == null) {
+            return null;
+        }
+        return findQueryValue(query, "nodeId");
+    }
+
     private String query(WebSocketSession session) {
         return session.getUri() != null ? session.getUri().getQuery() : null;
     }

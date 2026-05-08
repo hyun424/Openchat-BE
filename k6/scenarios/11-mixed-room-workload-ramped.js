@@ -249,6 +249,10 @@ function getWebSocketRoute(token, roomId, roomType) {
       partitioned: Boolean(body.partitioned),
       partitionCount: Number(body.partitionCount || 1),
       routeVersion: Number(body.version || body.routeVersion || 0),
+      wsUrl: body.wsUrl || null,
+      nodeId: body.nodeId || null,
+      assignmentVersion: body.assignmentVersion || null,
+      fallbackReason: body.fallbackReason || null,
     };
   } catch (e) {
     console.error(`getWsRoute parse failed roomId=${roomId}`);
@@ -359,6 +363,10 @@ export default function (data) {
     roomId: room.roomId,
     partitionId: wsRoute.partitionId,
     routeVersion: wsRoute.routeVersion,
+    wsUrl: wsRoute.wsUrl,
+    nodeId: wsRoute.nodeId,
+    assignmentVersion: wsRoute.assignmentVersion,
+    fallbackReason: wsRoute.fallbackReason,
     routeResolver: () => getWebSocketRoute(token, room.roomId, room.type),
     duration: CHAT_DURATION_SECONDS,
     sendInterval: sendIntervalForMode(room, presenceMode, clientMode),

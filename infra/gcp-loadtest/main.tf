@@ -420,6 +420,9 @@ resource "google_compute_instance" "api" {
       room_partition_hot_tier_threshold                          = var.room_partition_hot_tier_threshold
       room_partition_max_partitions_per_room                     = var.room_partition_max_partitions_per_room
       room_partition_admin_api_enabled                           = var.room_partition_admin_api_enabled ? "true" : "false"
+      room_partition_assignment_enabled                          = var.room_partition_assignment_enabled ? "true" : "false"
+      room_partition_assignment_dynamic_subscribe_enabled        = var.room_partition_assignment_dynamic_subscribe_enabled ? "true" : "false"
+      room_partition_assignment_node_drain_enabled               = var.room_partition_assignment_node_drain_enabled ? "true" : "false"
       room_partition_lifecycle_enabled                           = var.room_partition_lifecycle_enabled ? "true" : "false"
       room_partition_lifecycle_interval_ms                       = var.room_partition_lifecycle_interval_ms
       room_partition_lifecycle_scale_up_stable_window_ms         = var.room_partition_lifecycle_scale_up_stable_window_ms
@@ -501,6 +504,9 @@ resource "google_compute_instance" "realtime" {
       room_partition_hot_tier_threshold                          = var.room_partition_hot_tier_threshold
       room_partition_max_partitions_per_room                     = var.room_partition_max_partitions_per_room
       room_partition_admin_api_enabled                           = var.room_partition_admin_api_enabled ? "true" : "false"
+      room_partition_assignment_enabled                          = var.room_partition_assignment_enabled ? "true" : "false"
+      room_partition_assignment_dynamic_subscribe_enabled        = var.room_partition_assignment_dynamic_subscribe_enabled ? "true" : "false"
+      room_partition_assignment_node_drain_enabled               = var.room_partition_assignment_node_drain_enabled ? "true" : "false"
       room_partition_lifecycle_enabled                           = var.room_partition_lifecycle_enabled ? "true" : "false"
       room_partition_lifecycle_interval_ms                       = var.room_partition_lifecycle_interval_ms
       room_partition_lifecycle_scale_up_stable_window_ms         = var.room_partition_lifecycle_scale_up_stable_window_ms
