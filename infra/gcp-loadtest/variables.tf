@@ -120,6 +120,30 @@ variable "k6_node_drain_retry_after_ms" {
   default     = 500
 }
 
+variable "k6_node_drain_orchestrator_enabled" {
+  description = "Use the external node drain orchestrator command instead of the legacy inline curl loop."
+  type        = bool
+  default     = false
+}
+
+variable "k6_node_drain_orchestrator_timeout_seconds" {
+  description = "Maximum seconds the node drain orchestrator waits for completion."
+  type        = number
+  default     = 180
+}
+
+variable "k6_node_drain_orchestrator_poll_interval_ms" {
+  description = "Milliseconds between node drain orchestrator status polls."
+  type        = number
+  default     = 2000
+}
+
+variable "k6_node_drain_orchestrator_max_reconnect_attempts" {
+  description = "Maximum reconnect retries the node drain orchestrator can issue."
+  type        = number
+  default     = 5
+}
+
 variable "connect_ramp_seconds" {
   description = "Seconds used by ramped k6 scenarios to spread login, room entry, and WebSocket connection attempts."
   type        = number

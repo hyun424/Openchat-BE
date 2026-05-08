@@ -37,6 +37,10 @@ K6_NODE_DRAIN_ENABLED="${k6_node_drain_enabled}"
 K6_NODE_DRAIN_AFTER_SECONDS="${k6_node_drain_after_seconds}"
 K6_NODE_DRAIN_LIMIT="${k6_node_drain_limit}"
 K6_NODE_DRAIN_RETRY_AFTER_MS="${k6_node_drain_retry_after_ms}"
+K6_NODE_DRAIN_ORCHESTRATOR_ENABLED="${k6_node_drain_orchestrator_enabled}"
+K6_NODE_DRAIN_ORCHESTRATOR_TIMEOUT_SECONDS="${k6_node_drain_orchestrator_timeout_seconds}"
+K6_NODE_DRAIN_ORCHESTRATOR_POLL_INTERVAL_MS="${k6_node_drain_orchestrator_poll_interval_ms}"
+K6_NODE_DRAIN_ORCHESTRATOR_MAX_RECONNECT_ATTEMPTS="${k6_node_drain_orchestrator_max_reconnect_attempts}"
 REALTIME_WORKLOAD_SUMMARY_ENABLED="${realtime_workload_summary_enabled}"
 CONNECT_RAMP_SECONDS="${connect_ramp_seconds}"
 HOT_ROOMS="${hot_rooms}"
@@ -272,6 +276,49 @@ trigger_node_drain_during_run() {
   if [ -z "$target_node" ] || [ "$target_node" = "null" ]; then
     echo "{\"status\":\"skipped\",\"reason\":\"no active target node\"}" > "$output_file"
     return 1
+  fi
+
+  if [ "$K6_NODE_DRAIN_ORCHESTRATOR_ENABLED" = "true" ]; then
+    echo "[k6] triggering node drain orchestrator target_node=$target_node label=$label"
+    local orchestrator_output="$RESULT_ROOT/metrics/node-drain-orchestrator-$label.json"
+    local orchestrator_stdout="$RESULT_ROOT/metrics/node-drain-orchestrator-stdout-$label.json"
+    chmod +x "$WORKDIR/scripts/openchat-node-drain-orchestrate.sh" || true
+
+    set +e
+    "$WORKDIR/scripts/openchat-node-drain-orchestrate.sh" \
+      --base-url "$BASE_URL" \
+      --node-id "$target_node" \
+      --token "$token" \
+      --timeout-seconds "$K6_NODE_DRAIN_ORCHESTRATOR_TIMEOUT_SECONDS" \
+      --poll-interval-ms "$K6_NODE_DRAIN_ORCHESTRATOR_POLL_INTERVAL_MS" \
+      --reconnect-limit "$K6_NODE_DRAIN_LIMIT" \
+      --reconnect-retry-after-ms "$K6_NODE_DRAIN_RETRY_AFTER_MS" \
+      --max-reconnect-attempts "$K6_NODE_DRAIN_ORCHESTRATOR_MAX_RECONNECT_ATTEMPTS" \
+      --output "$orchestrator_output" \
+      > "$orchestrator_stdout"
+    local orchestrator_status=$?
+    set -e
+
+    collect_assignment_snapshot "node-drain-after-orchestrator-$label"
+    collect_node_drain_status_snapshot "$target_node" "node-drain-after-orchestrator-$label" "$token"
+
+    if jq -e . "$orchestrator_output" >/dev/null 2>&1; then
+      jq -nc \
+        --arg targetNode "$target_node" \
+        --argjson orchestrator "$(cat "$orchestrator_output")" \
+        '{
+          targetNode: $targetNode,
+          complete: ($orchestrator.terminationAllowed == true),
+          status: $orchestrator.result,
+          lastDrainStatus: $orchestrator.lastStatus,
+          lastNextAction: $orchestrator.lastNextAction,
+          terminationAllowed: $orchestrator.terminationAllowed,
+          orchestrator: $orchestrator
+        }' > "$output_file" 2>/dev/null || cp "$orchestrator_output" "$output_file"
+    else
+      echo "{\"targetNode\":\"$target_node\",\"complete\":false,\"status\":\"orchestrator_output_missing\",\"exitCode\":$orchestrator_status}" > "$output_file"
+    fi
+    return "$orchestrator_status"
   fi
 
   echo "[k6] triggering node drain target_node=$target_node label=$label"
