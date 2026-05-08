@@ -727,6 +727,7 @@ resource "google_compute_instance" "k6" {
       k6_node_drain_orchestrator_timeout_seconds        = var.k6_node_drain_orchestrator_timeout_seconds
       k6_node_drain_orchestrator_poll_interval_ms       = var.k6_node_drain_orchestrator_poll_interval_ms
       k6_node_drain_orchestrator_max_reconnect_attempts = var.k6_node_drain_orchestrator_max_reconnect_attempts
+      k6_node_termination_decision_enabled              = var.k6_node_termination_decision_enabled ? "true" : "false"
       realtime_workload_summary_enabled                 = var.realtime_workload_summary_enabled ? "true" : "false"
       connect_ramp_seconds                              = var.connect_ramp_seconds
       hot_rooms                                         = var.hot_rooms

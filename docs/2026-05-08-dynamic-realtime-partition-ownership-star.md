@@ -352,3 +352,52 @@ hardening 단계가 "앱이 다음 행동을 알려준다"였다면, orchestrato
 - orchestrator가 `complete`를 반환한 뒤 VM stop/delete 또는 MIG scale-in을 호출하는 별도 infra hook을 설계한다.
 - EKS로 옮길 경우 readiness 제외, preStop, pod eviction과의 연결 방식을 정의한다.
 - reconnect command durability와 repeated drain retry의 장기 안정성은 load/soak에서 확인한다.
+
+### Follow-up Result: Generic Node Termination Contract v1 Smoke
+
+`20260508-node-termination-contract-smoke`로 provider-neutral node termination decision contract v1을 검증했다. 이 실행은 실제 VM stop/delete를 수행하지 않고, node drain orchestrator 결과 JSON을 `scripts/openchat-node-termination-decision.sh`가 소비해 `ready`와 `recommendedAction=terminate_node`를 출력하는지 확인했다.
+
+#### Result
+
+| 항목 | 결과 |
+|---|---:|
+| k6 exit code | `0` |
+| orchestrator exitCode | `0` |
+| orchestrator terminationAllowed | `true` |
+| termination decision result | `ready` |
+| recommendedAction | `terminate_node` |
+| WebSocket connect success | `151/151` |
+| route failure/fallback/mismatch | `0/0/0` |
+| sent/ack/DB rows | `22,266 / 22,266 / 22,266` |
+| observer visible freshness p95 | `114.95ms` |
+| target node | `gcp-realtime-2` |
+| drained node openSessions | `0` |
+| cleanup | RUN_ID GCE VM 잔여 없음 |
+
+#### Decision Evidence
+
+termination decision result JSON은 `metrics/node-termination-decision-100vu.json`로 수집됐다. 모든 guard가 `passed=true`였고, 결과는 `result=ready`, `recommendedAction=terminate_node`였다.
+
+v1 decision guard는 다음 조건을 모두 요구한다.
+
+1. `nodeId`가 요청 node와 일치한다.
+2. orchestrator `exitCode=0`이다.
+3. orchestrator `result=complete`이다.
+4. orchestrator `terminationAllowed=true`이다.
+5. `lastStatus=complete`, `lastNextAction=none`이다.
+6. `remainingSessions=0`이다.
+7. `completedAt`이 stale 또는 future timestamp가 아니다.
+
+#### Interpretation
+
+이 단계는 실제 provider 실행이 아니라 provider adapter 앞의 safety gate다. GCP VM 하나를 바로 종료하는 것만 보면 중간 단계처럼 보일 수 있지만, 목적은 GCP/EKS/MIG adapter가 같은 app-level drain 결과를 소비하도록 종료 가능 판정과 실제 종료 실행을 분리하는 것이다.
+
+포트폴리오에서는 다음처럼 설명한다.
+
+> Node drain orchestrator가 만든 `terminationAllowed=true` 결과를 바로 GCP VM 종료에 연결하지 않고, provider-neutral termination decision contract로 한 번 더 검증했다. 이 command는 `exitCode`, `nodeId`, `remainingSessions`, freshness guard를 모두 통과한 경우에만 `ready`와 `terminate_node`를 출력한다. GCP smoke에서 route mismatch `0`, sent/ack/DB rows `22,266`건 일치, drained node openSessions `0`, decision guard 전부 통과를 확인해 실제 GCP/MIG/EKS adapter가 붙기 전의 안전 게이트를 검증했다.
+
+#### Remaining Work
+
+- GCP VM termination adapter를 추가해 decision `ready` 이후 run-scoped VM만 dry-run/stop/delete 가능하게 만든다.
+- 실제 VM stop/delete 이후 남은 realtime node의 route/fanout/ack/DB 정합성을 GCP smoke로 확인한다.
+- MIG/EKS adapter는 GCP adapter 결과 이후 별도 설계로 분리한다.

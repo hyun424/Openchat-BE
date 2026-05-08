@@ -33,6 +33,7 @@ k6_node_drain_orchestrator_enabled     = true
 k6_node_drain_orchestrator_timeout_seconds = 180
 k6_node_drain_orchestrator_poll_interval_ms = 2000
 k6_node_drain_orchestrator_max_reconnect_attempts = 5
+k6_node_termination_decision_enabled = true
 
 hot_rooms                 = 1
 scenario                  = "k6/scenarios/11-mixed-room-workload-ramped.js"
