@@ -14,6 +14,8 @@ docs/*
 !docs/mixed-room-service-workload-20260507.md
 !docs/OPENCHAT-EXPERIENCE-BANK.md
 !docs/hot-room-loadtest-summary-for-portfolio.md
+!docs/2026-05-08-dynamic-realtime-partition-ownership-star.md
+!docs/OPENCHAT-BRANCH-DECISION-LOG.md
 data/
 k6/results/
 infra/gcp-loadtest/.terraform/
