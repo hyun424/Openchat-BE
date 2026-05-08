@@ -133,6 +133,23 @@ test_unknown_node_timeout() {
   assert_eq "unknown_node" "$(jq -r '.lastStatus' "$CASE_DIR/result.json")" "lastStatus"
 }
 
+test_sleep_crossing_deadline_times_out_without_extra_poll() {
+  run_case "deadline"
+  write_response 1 '{"nodeId":"node-a","operationId":"node_drain:node-a","draining":true,"status":"reconnect_published","reconnectPublished":true,"targetedSessions":10,"remainingSessions":10,"reason":"node_drain","retryable":true,"nextAction":"poll_status","readinessReason":"ready"}'
+  write_response 2 '{"nodeId":"node-a","operationId":"node_drain:node-a","draining":true,"status":"complete","reconnectPublished":false,"targetedSessions":0,"remainingSessions":0,"reason":"node_drain","retryable":false,"nextAction":"none","readinessReason":"ready"}'
+
+  set +e
+  "$SCRIPT" --base-url http://openchat.internal --node-id node-a --token test-token \
+    --timeout-seconds 1 --poll-interval-ms 1100 --output "$CASE_DIR/result.json" > "$CASE_DIR/stdout.json"
+  exit_code=$?
+  set -e
+
+  assert_eq "3" "$exit_code" "exit code"
+  assert_eq "timeout" "$(jq -r '.result' "$CASE_DIR/result.json")" "result"
+  assert_eq "reconnect_published" "$(jq -r '.lastStatus' "$CASE_DIR/result.json")" "lastStatus"
+  assert_eq "1" "$(wc -l < "$FAKE_CURL_CALLS" | tr -d ' ')" "curl call count"
+}
+
 test_reconnect_max_retry_exceeded() {
   run_case "max-retry"
   write_response last '{"nodeId":"node-a","operationId":"node_drain:node-a","draining":true,"status":"sessions_remaining","reconnectPublished":false,"targetedSessions":0,"remainingSessions":12,"reason":"node_drain","retryable":true,"nextAction":"retry_reconnect","readinessReason":"ready"}'
@@ -153,6 +170,7 @@ test_reconnect_retry_then_complete
 test_blocked_last_active_node
 test_invalid_response_shape
 test_unknown_node_timeout
+test_sleep_crossing_deadline_times_out_without_extra_poll
 test_reconnect_max_retry_exceeded
 
 echo "openchat node drain orchestrator tests passed"

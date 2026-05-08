@@ -253,7 +253,22 @@ api_request() {
   local method="$1"
   local path="$2"
   local url="${BASE_URL%/}$path"
-  local args=(--max-time 30 -sS -f -H "Authorization: Bearer $TOKEN")
+  local max_time=30
+  if [ "${START_EPOCH:-0}" -gt 0 ]; then
+    local now
+    now="$(date +%s)"
+    local remaining=$((START_EPOCH + TIMEOUT_SECONDS - now))
+    if [ "$remaining" -le 0 ] && [ "$ATTEMPTS" -gt 0 ]; then
+      fail_with_result "timeout" 3 "$method $path skipped because timeout elapsed"
+    fi
+    if [ "$remaining" -gt 0 ] && [ "$remaining" -lt "$max_time" ]; then
+      max_time="$remaining"
+    fi
+  fi
+  if [ "$max_time" -lt 1 ]; then
+    max_time=1
+  fi
+  local args=(--max-time "$max_time" -sS -f -H "Authorization: Bearer $TOKEN")
   if [ "$method" = "POST" ]; then
     args+=(-X POST)
   fi
@@ -297,6 +312,9 @@ wait_then_status() {
     fail_with_result "timeout" 3 "timeout before next status poll"
   fi
   sleep_interval
+  if deadline_reached; then
+    fail_with_result "timeout" 3 "timeout before next status poll"
+  fi
   get_status
 }
 
