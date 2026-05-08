@@ -127,13 +127,13 @@ public class RealtimeNodeDrainService {
         if (!currentTarget.draining()) {
             return NodeDrainResult.notDraining(nodeId, operationId, currentTarget.openSessions());
         }
-        if (currentTarget.openSessions() <= 0) {
-            return NodeDrainResult.complete(nodeId, operationId, "ready");
-        }
 
         Readiness readiness = replacementReady(nodeId);
         if (!readiness.ready()) {
             return NodeDrainResult.waitingForReadiness(nodeId, operationId, readiness.reason(), currentTarget.openSessions());
+        }
+        if (currentTarget.openSessions() <= 0) {
+            return NodeDrainResult.complete(nodeId, operationId, readiness.reason());
         }
         return NodeDrainResult.sessionsRemaining(nodeId, operationId, currentTarget.openSessions(), readiness.reason());
     }

@@ -219,6 +219,25 @@ class RealtimeNodeDrainServiceTest {
     }
 
     @Test
+    void drainStatus_doesNotCompleteWhenSessionsAreZeroButAssignmentUnavailable() {
+        RoomPartitionAssignmentService assignmentService = mock(RoomPartitionAssignmentService.class);
+        when(assignmentService.assignments(anyInt())).thenReturn(Map.of());
+        Fixture fixture = new Fixture(List.of(
+                node("node-a", false, Set.of(0, 2), 0),
+                node("node-b", false, Set.of(0, 1, 2, 3), 0)
+        ), true, assignmentService);
+        fixture.registry.markDraining("node-a", true);
+
+        RealtimeNodeDrainService.NodeDrainResult result = fixture.service.drainStatus("node-a");
+
+        assertEquals("assignment_unavailable", result.status());
+        assertTrue(result.retryable());
+        assertEquals("wait_assignment", result.nextAction());
+        assertEquals(0, result.remainingSessions());
+        verify(fixture.publisher, never()).publish(any());
+    }
+
+    @Test
     void drainStatus_reportsSessionsRemainingWhenReplacementReady() {
         Fixture fixture = new Fixture(List.of(
                 node("node-a", false, Set.of(0, 2), 12),
