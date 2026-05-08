@@ -243,3 +243,21 @@ v1에서는 안전성을 우선했다. 세션이 남아 있는데 강제로 unsu
 - rendezvous hashing 또는 weighted assignment 검토
 - node drain과 rolling deploy/MIG scale-in 연계
 - 장시간 soak에서 reconnect 반복과 observer visibility 누적 확인
+
+### Follow-up: Node Drain Status-only Hardening
+
+기존 node drain smoke는 "draining node의 세션이 0이 된다"는 결과를 증명했지만, 운영자나 future orchestrator가 응답만 보고 다음 행동을 판단하기에는 정보가 부족했다.
+
+이번 hardening의 방향은 force 종료나 background orchestrator가 아니라, drain 판단 계약을 명확히 하는 것이다.
+
+- `POST /nodes/{nodeId}/drain`은 action endpoint로 유지한다.
+- `GET /nodes/{nodeId}/drain/status`를 추가해 publish 없이 상태를 조회한다.
+- 응답에 `retryable`, `nextAction`, `readinessReason`을 추가한다.
+- `complete`, `reconnect_published`, `sessions_remaining`, `assignment_unavailable`, `drained_node_still_owner`, `owner_not_ready`, `publish_failed`의 의미를 고정한다.
+- 세션이 0이어도 replacement assignment가 준비되지 않았으면 `complete`로 보지 않는다.
+
+중요한 경계도 남겼다.
+
+- status endpoint는 reconnect publish나 `markDraining`을 수행하지 않는다.
+- Redis registry의 `nodes()` 조회는 기존 구현상 stale node/draining flag cleanup을 할 수 있으므로, "완전 무부작용 GET"이 아니라 "drain command를 실행하지 않는 observation endpoint"로 해석한다.
+- Redis Pub/Sub command durability, ack/retry log, force-drain, EKS/MIG lifecycle hook은 후속 작업으로 둔다.

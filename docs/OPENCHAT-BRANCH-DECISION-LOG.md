@@ -502,6 +502,32 @@ Drain 대상 node `gcp-realtime-1`은 active assignment에서 제외됐고, afte
 
 > WebSocket scale-out을 단순 서버 증설이 아니라 ownership contract 문제로 보고, node registry 기반 assignment를 `/ws-route`, 실제 connected node, subscriber readiness, reconnect, drain completion에 일관되게 적용했다. GCP node drain smoke에서 route mismatch `0`, reconnect control `45`건, ack/DB `22,300`건 일치, drained node openSessions `0`을 확인해 realtime node 종료 가능 상태를 앱 레벨에서 증명했다.
 
+### Update: Node Drain Status-only Hardening
+
+node drain smoke 이후 남은 문제는 "drain이 된다"가 아니라, 운영자나 future orchestrator가 응답만 보고 다음 행동을 판단할 수 있는지였다.
+
+검토한 선택지는 다음과 같았다.
+
+- A. status만 명확히 하고 재시도/대기는 외부 runner가 판단한다.
+- B. drain API가 내부에서 polling과 reconnect retry를 반복한다.
+- C. background orchestrator를 만들고 operation state를 저장한다.
+- D. grace timeout 이후 force close한다.
+
+이번에는 A를 선택했다. HTTP 요청 안에서 긴 orchestration을 수행하거나 force close를 도입하기보다, EKS/MIG가 나중에 붙을 수 있는 앱 레벨 판단 계약을 먼저 고정하는 것이 안전하다고 봤다.
+
+추가된 계약은 다음이다.
+
+- `GET /api/internal/room-partition/nodes/{nodeId}/drain/status`
+- `retryable`
+- `nextAction`
+- `readinessReason`
+- `sessions_remaining`
+- `not_draining`
+
+또한 세션이 0이어도 replacement assignment가 준비되지 않았으면 `complete`로 보지 않도록 보강했다. 이로써 `complete`는 단순히 "현재 node 세션이 0"이 아니라 "replacement owner 상태까지 확인된 종료 가능 상태"에 가까워졌다.
+
+trade-off는 남아 있다. 이 작업은 durable command log, background orchestrator, force-drain, EKS/MIG hook을 구현하지 않는다. 대신 현재 단계에서는 운영 판단을 명확하게 만들고, 후속 자동화가 붙을 수 있는 응답 계약을 준비하는 데 집중한다.
+
 ---
 
 ## 포트폴리오에서 사용할 최종 서사
