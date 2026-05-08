@@ -42,14 +42,15 @@ class RoomPartitionControlSubscriberTest {
         registry.add(1L, 0, partition0);
         registry.add(1L, 1, partition1);
 
-        subscriber.onMessage(objectMapper.writeValueAsString(RoomPartitionControlCommand.reconnect(
+        RoomPartitionControlCommand command = RoomPartitionControlCommand.reconnect(
                 1L,
                 1,
                 "scale_down",
                 100,
                 500,
                 8
-        )), "openchat:room-partition-control:1");
+        );
+        subscriber.onMessage(objectMapper.writeValueAsString(command), "openchat:room-partition-control:1");
 
         verify(partition0, never()).sendMessage(any(TextMessage.class));
         ArgumentCaptor<TextMessage> captor = forClass(TextMessage.class);
@@ -60,6 +61,7 @@ class RoomPartitionControlSubscriberTest {
         assertEquals("scale_down", payload.get("reason").asText());
         assertEquals(500L, payload.get("retryAfterMs").asLong());
         assertEquals(8L, payload.get("routeVersion").asLong());
+        assertEquals(command.commandId(), payload.get("commandId").asText());
         registry.shutdownExecutor();
     }
 

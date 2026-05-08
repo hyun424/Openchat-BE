@@ -20,6 +20,7 @@ LAST_NEXT_ACTION=""
 LAST_READINESS_REASON=""
 LAST_REMAINING_SESSIONS=""
 LAST_OPERATION_ID=""
+LAST_COMMAND_ID=""
 STARTED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 HISTORY_FILE="$(mktemp "${TMPDIR:-/tmp}/openchat-node-drain-history.XXXXXX")"
 printf '[]' > "$HISTORY_FILE"
@@ -166,6 +167,7 @@ write_result() {
     --arg lastStatus "$LAST_STATUS" \
     --arg lastNextAction "$LAST_NEXT_ACTION" \
     --arg lastReadinessReason "$LAST_READINESS_REASON" \
+    --arg lastCommandId "$LAST_COMMAND_ID" \
     --arg reason "$reason" \
     --argjson terminationAllowed "$termination_json" \
     --argjson exitCode "$exit_code" \
@@ -186,9 +188,16 @@ write_result() {
       lastStatus: (if $lastStatus == "" then null else $lastStatus end),
       lastNextAction: (if $lastNextAction == "" then null else $lastNextAction end),
       lastReadinessReason: (if $lastReadinessReason == "" then null else $lastReadinessReason end),
+      lastCommandId: (if $lastCommandId == "" then null else $lastCommandId end),
       remainingSessions: $remainingSessions,
       reason: (if $reason == "" then null else $reason end),
-      history: $history[0]
+      history: $history[0],
+      reconnectCommandIds: (
+        $history[0]
+        | map(.commandId // empty)
+        | map(select(. != ""))
+        | unique
+      )
     }')"
 
   if [ -n "$OUTPUT" ]; then
@@ -232,7 +241,8 @@ append_history() {
       readinessReason: ($item.readinessReason // null),
       remainingSessions: ($item.remainingSessions // null),
       reconnectPublished: ($item.reconnectPublished // null),
-      targetedSessions: ($item.targetedSessions // null)
+      targetedSessions: ($item.targetedSessions // null),
+      commandId: ($item.commandId // null)
     }]' "$HISTORY_FILE" > "$tmp_history"
   mv "$tmp_history" "$HISTORY_FILE"
 }
@@ -246,6 +256,7 @@ capture_response() {
   LAST_READINESS_REASON="$(printf '%s' "$response" | jq -r '.readinessReason // empty')"
   LAST_REMAINING_SESSIONS="$(printf '%s' "$response" | jq -r '.remainingSessions')"
   LAST_OPERATION_ID="$(printf '%s' "$response" | jq -r '.operationId // empty')"
+  LAST_COMMAND_ID="$(printf '%s' "$response" | jq -r '.commandId // empty')"
   append_history "$response"
 }
 

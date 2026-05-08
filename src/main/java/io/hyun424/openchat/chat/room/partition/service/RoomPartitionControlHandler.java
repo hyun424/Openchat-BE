@@ -50,7 +50,8 @@ public class RoomPartitionControlHandler {
                             session.roomId(),
                             command.reason(),
                             command.retryAfterMs(),
-                            command.routeVersion()
+                            command.routeVersion(),
+                            command.commandId()
                     ),
                     PAYLOAD_TYPE
             );
@@ -71,7 +72,8 @@ public class RoomPartitionControlHandler {
                         command.roomId(),
                         command.reason(),
                         command.retryAfterMs(),
-                        command.routeVersion()
+                        command.routeVersion(),
+                        command.commandId()
                 ),
                 PAYLOAD_TYPE
         );

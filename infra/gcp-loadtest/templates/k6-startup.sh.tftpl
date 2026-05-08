@@ -436,6 +436,8 @@ trigger_node_drain_during_run() {
           status: $orchestrator.result,
           lastDrainStatus: $orchestrator.lastStatus,
           lastNextAction: $orchestrator.lastNextAction,
+          lastCommandId: $orchestrator.lastCommandId,
+          reconnectCommandIds: ($orchestrator.reconnectCommandIds // []),
           terminationAllowed: $orchestrator.terminationAllowed,
           orchestrator: $orchestrator
         }' > "$output_file" 2>/dev/null || cp "$orchestrator_output" "$output_file"

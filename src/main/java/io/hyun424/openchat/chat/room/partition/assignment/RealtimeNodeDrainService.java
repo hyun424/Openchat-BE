@@ -102,10 +102,10 @@ public class RealtimeNodeDrainService {
         int targetedSessions = Math.min(currentTarget.openSessions(), command.limit());
         boolean published = controlPublisher.publish(command);
         NodeDrainResult result = published
-                ? NodeDrainResult.reconnectPublished(nodeId, operationId, targetedSessions, currentTarget.openSessions(), readiness.reason())
-                : NodeDrainResult.publishFailed(nodeId, operationId, targetedSessions, currentTarget.openSessions(), readiness.reason());
-        log.info("realtime node drain requested nodeId={} operationId={} status={} nextAction={} remainingSessions={} readinessReason={} reconnectPublished={} limit={} retryAfterMs={}",
-                nodeId, operationId, result.status(), result.nextAction(), result.remainingSessions(), result.readinessReason(),
+                ? NodeDrainResult.reconnectPublished(nodeId, operationId, command.commandId(), targetedSessions, currentTarget.openSessions(), readiness.reason())
+                : NodeDrainResult.publishFailed(nodeId, operationId, command.commandId(), targetedSessions, currentTarget.openSessions(), readiness.reason());
+        log.info("realtime node drain requested nodeId={} operationId={} commandId={} status={} nextAction={} remainingSessions={} readinessReason={} reconnectPublished={} limit={} retryAfterMs={}",
+                nodeId, operationId, command.commandId(), result.status(), result.nextAction(), result.remainingSessions(), result.readinessReason(),
                 published, command.limit(), command.retryAfterMs());
         return result;
     }
@@ -152,6 +152,7 @@ public class RealtimeNodeDrainService {
                 REASON,
                 false,
                 ACTION_NONE,
+                null,
                 null
         );
     }
@@ -233,7 +234,8 @@ public class RealtimeNodeDrainService {
             String reason,
             boolean retryable,
             String nextAction,
-            String readinessReason
+            String readinessReason,
+            String commandId
     ) {
         static NodeDrainResult disabled(String nodeId, String operationId) {
             return skipped(nodeId, operationId, "disabled", 0, false, ACTION_ENABLE_NODE_DRAIN, null);
@@ -275,7 +277,8 @@ public class RealtimeNodeDrainService {
                     REASON,
                     retryable,
                     nextAction,
-                    readinessReason
+                    readinessReason,
+                    null
             );
         }
 
@@ -291,7 +294,8 @@ public class RealtimeNodeDrainService {
                     REASON,
                     true,
                     actionForReadiness(status),
-                    status
+                    status,
+                    null
             );
         }
 
@@ -307,13 +311,15 @@ public class RealtimeNodeDrainService {
                     REASON,
                     false,
                     ACTION_NONE,
-                    readinessReason
+                    readinessReason,
+                    null
             );
         }
 
         static NodeDrainResult reconnectPublished(
                 String nodeId,
                 String operationId,
+                String commandId,
                 int targetedSessions,
                 int remainingSessions,
                 String readinessReason
@@ -329,13 +335,15 @@ public class RealtimeNodeDrainService {
                     REASON,
                     true,
                     ACTION_POLL_STATUS,
-                    readinessReason
+                    readinessReason,
+                    commandId
             );
         }
 
         static NodeDrainResult publishFailed(
                 String nodeId,
                 String operationId,
+                String commandId,
                 int targetedSessions,
                 int remainingSessions,
                 String readinessReason
@@ -351,7 +359,8 @@ public class RealtimeNodeDrainService {
                     REASON,
                     true,
                     ACTION_INVESTIGATE_PUBLISH,
-                    readinessReason
+                    readinessReason,
+                    commandId
             );
         }
 
@@ -372,7 +381,8 @@ public class RealtimeNodeDrainService {
                     REASON,
                     true,
                     ACTION_RETRY_RECONNECT,
-                    readinessReason
+                    readinessReason,
+                    null
             );
         }
 

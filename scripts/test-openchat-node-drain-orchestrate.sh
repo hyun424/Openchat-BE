@@ -71,9 +71,9 @@ write_response() {
 
 test_reconnect_retry_then_complete() {
   run_case "retry-complete"
-  write_response 1 '{"nodeId":"node-a","operationId":"node_drain:node-a","draining":true,"status":"reconnect_published","reconnectPublished":true,"targetedSessions":47,"remainingSessions":47,"reason":"node_drain","retryable":true,"nextAction":"poll_status","readinessReason":"ready"}'
+  write_response 1 '{"nodeId":"node-a","operationId":"node_drain:node-a","draining":true,"status":"reconnect_published","reconnectPublished":true,"targetedSessions":47,"remainingSessions":47,"reason":"node_drain","retryable":true,"nextAction":"poll_status","readinessReason":"ready","commandId":"reconnect-a"}'
   write_response 2 '{"nodeId":"node-a","operationId":"node_drain:node-a","draining":true,"status":"sessions_remaining","reconnectPublished":false,"targetedSessions":0,"remainingSessions":47,"reason":"node_drain","retryable":true,"nextAction":"retry_reconnect","readinessReason":"ready"}'
-  write_response 3 '{"nodeId":"node-a","operationId":"node_drain:node-a","draining":true,"status":"reconnect_published","reconnectPublished":true,"targetedSessions":47,"remainingSessions":47,"reason":"node_drain","retryable":true,"nextAction":"poll_status","readinessReason":"ready"}'
+  write_response 3 '{"nodeId":"node-a","operationId":"node_drain:node-a","draining":true,"status":"reconnect_published","reconnectPublished":true,"targetedSessions":47,"remainingSessions":47,"reason":"node_drain","retryable":true,"nextAction":"poll_status","readinessReason":"ready","commandId":"reconnect-b"}'
   write_response 4 '{"nodeId":"node-a","operationId":"node_drain:node-a","draining":true,"status":"complete","reconnectPublished":false,"targetedSessions":0,"remainingSessions":0,"reason":"node_drain","retryable":false,"nextAction":"none","readinessReason":"ready"}'
 
   "$SCRIPT" --base-url http://openchat.internal --node-id node-a --token test-token \
@@ -85,6 +85,8 @@ test_reconnect_retry_then_complete() {
   assert_eq "complete" "$(jq -r '.lastStatus' "$CASE_DIR/result.json")" "lastStatus"
   assert_eq "1" "$(jq -r '.reconnectAttempts' "$CASE_DIR/result.json")" "reconnectAttempts"
   assert_eq "4" "$(jq -r '.history | length' "$CASE_DIR/result.json")" "history length"
+  assert_eq "2" "$(jq -r '.reconnectCommandIds | length' "$CASE_DIR/result.json")" "reconnectCommandIds length"
+  assert_eq "reconnect-a,reconnect-b" "$(jq -r '.reconnectCommandIds | join(",")' "$CASE_DIR/result.json")" "reconnectCommandIds"
 }
 
 test_blocked_last_active_node() {
@@ -135,7 +137,7 @@ test_unknown_node_timeout() {
 
 test_sleep_crossing_deadline_times_out_without_extra_poll() {
   run_case "deadline"
-  write_response 1 '{"nodeId":"node-a","operationId":"node_drain:node-a","draining":true,"status":"reconnect_published","reconnectPublished":true,"targetedSessions":10,"remainingSessions":10,"reason":"node_drain","retryable":true,"nextAction":"poll_status","readinessReason":"ready"}'
+  write_response 1 '{"nodeId":"node-a","operationId":"node_drain:node-a","draining":true,"status":"reconnect_published","reconnectPublished":true,"targetedSessions":10,"remainingSessions":10,"reason":"node_drain","retryable":true,"nextAction":"poll_status","readinessReason":"ready","commandId":"reconnect-deadline"}'
   write_response 2 '{"nodeId":"node-a","operationId":"node_drain:node-a","draining":true,"status":"complete","reconnectPublished":false,"targetedSessions":0,"remainingSessions":0,"reason":"node_drain","retryable":false,"nextAction":"none","readinessReason":"ready"}'
 
   set +e
@@ -147,6 +149,7 @@ test_sleep_crossing_deadline_times_out_without_extra_poll() {
   assert_eq "3" "$exit_code" "exit code"
   assert_eq "timeout" "$(jq -r '.result' "$CASE_DIR/result.json")" "result"
   assert_eq "reconnect_published" "$(jq -r '.lastStatus' "$CASE_DIR/result.json")" "lastStatus"
+  assert_eq "reconnect-deadline" "$(jq -r '.lastCommandId' "$CASE_DIR/result.json")" "lastCommandId"
   assert_eq "1" "$(wc -l < "$FAKE_CURL_CALLS" | tr -d ' ')" "curl call count"
 }
 

@@ -34,14 +34,15 @@ class RedisRoomPartitionControlPublisherTest {
         when(redisTemplate.convertAndSend(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString()))
                 .thenReturn(1L);
 
-        boolean published = publisher.publish(RoomPartitionControlCommand.reconnect(
+        RoomPartitionControlCommand command = RoomPartitionControlCommand.reconnect(
                 10L,
                 2,
                 "scale_down",
                 100,
                 500,
                 4
-        ));
+        );
+        boolean published = publisher.publish(command);
 
         assertTrue(published);
         ArgumentCaptor<String> channelCaptor = forClass(String.class);
@@ -57,6 +58,8 @@ class RedisRoomPartitionControlPublisherTest {
         assertEquals(100, payload.limit());
         assertEquals(500L, payload.retryAfterMs());
         assertEquals(4L, payload.routeVersion());
+        assertEquals(command.commandId(), payload.commandId());
+        assertFalse(payload.commandId().isBlank());
     }
 
     @Test

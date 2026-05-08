@@ -46,8 +46,8 @@ public class RoomPartitionControlSubscriber {
             }
             RoomPartitionControlHandler.NodeReconnectResult result = controlHandler.handleNodeReconnect(command);
             metrics.recordControlReceived(type, "success");
-            log.info("[ROOM PARTITION CONTROL NODE RECONNECT] nodeId={} openSessionsBefore={} sent={} remainingOpenSessions={} reason={}",
-                    command.nodeId(), result.openSessionsBefore(), result.sent(), result.remainingOpenSessions(), command.reason());
+            log.info("[ROOM PARTITION CONTROL NODE RECONNECT] nodeId={} commandId={} openSessionsBefore={} sent={} remainingOpenSessions={} reason={}",
+                    command.nodeId(), command.commandId(), result.openSessionsBefore(), result.sent(), result.remainingOpenSessions(), command.reason());
             return;
         }
 
@@ -64,7 +64,7 @@ public class RoomPartitionControlSubscriber {
 
         int targeted = controlHandler.handleReconnect(command);
         metrics.recordControlReceived(type, "success");
-        log.debug("[ROOM PARTITION CONTROL RECONNECT] roomId={} partitionId={} targeted={} reason={}",
-                command.roomId(), command.partitionId(), targeted, command.reason());
+        log.debug("[ROOM PARTITION CONTROL RECONNECT] roomId={} partitionId={} commandId={} targeted={} reason={}",
+                command.roomId(), command.partitionId(), command.commandId(), targeted, command.reason());
     }
 }

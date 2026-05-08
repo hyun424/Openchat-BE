@@ -229,6 +229,8 @@ build_decision() {
           sourceStatus: $source.lastStatus,
           sourceNextAction: $source.lastNextAction,
           sourceReadinessReason: ($source.lastReadinessReason // null),
+          sourceLastCommandId: ($source.lastCommandId // null),
+          sourceReconnectCommandIds: ($source.reconnectCommandIds // []),
           remainingSessions: $source.remainingSessions,
           reason: (
             if $ready then "all termination guards passed"

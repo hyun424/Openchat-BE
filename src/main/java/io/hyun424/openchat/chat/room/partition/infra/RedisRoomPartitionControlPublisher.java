@@ -46,18 +46,19 @@ public class RedisRoomPartitionControlPublisher implements RoomPartitionControlP
             Long receivers = redisTemplate.convertAndSend(channel, payload);
             if (command.nodeId() != null && (receivers == null || receivers <= 0)) {
                 metrics.recordControlPublish(type, "no_receivers");
-                log.warn("[ROOM PARTITION CONTROL PUB NO RECEIVERS] type={} nodeId={}",
-                        type, command.nodeId());
+                log.warn("[ROOM PARTITION CONTROL PUB NO RECEIVERS] type={} nodeId={} commandId={}",
+                        type, command.nodeId(), command.commandId());
                 return false;
             }
             metrics.recordControlPublish(type, "success");
             return true;
         } catch (Exception e) {
             metrics.recordControlPublish(type, "publish_failed");
-            log.warn("[ROOM PARTITION CONTROL PUB FAIL] type={} roomId={} nodeId={}",
+            log.warn("[ROOM PARTITION CONTROL PUB FAIL] type={} roomId={} nodeId={} commandId={}",
                     type,
                     command != null ? command.roomId() : null,
                     command != null ? command.nodeId() : null,
+                    command != null ? command.commandId() : null,
                     e);
             return false;
         }

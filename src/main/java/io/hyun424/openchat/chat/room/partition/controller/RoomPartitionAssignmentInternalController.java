@@ -95,7 +95,8 @@ public class RoomPartitionAssignmentInternalController {
             String reason,
             boolean retryable,
             String nextAction,
-            String readinessReason
+            String readinessReason,
+            String commandId
     ) {
         static NodeDrainResponse from(RealtimeNodeDrainService.NodeDrainResult result) {
             return new NodeDrainResponse(
@@ -109,7 +110,8 @@ public class RoomPartitionAssignmentInternalController {
                     result.reason(),
                     result.retryable(),
                     result.nextAction(),
-                    result.readinessReason()
+                    result.readinessReason(),
+                    result.commandId()
             );
         }
     }
