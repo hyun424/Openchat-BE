@@ -550,6 +550,31 @@ trade-off는 남아 있다. 이 작업은 durable command log, background orches
 
 이번 결과의 의미는 "인프라 종료 자동화 완성"이 아니라 "인프라 종료 자동화를 붙이기 전에 앱이 종료 가능 상태를 명확히 판단할 수 있게 됐다"는 것이다. 다음 단계는 이 응답 계약을 사용하는 drain orchestrator 또는 운영 스크립트를 만들고, 그 다음에 MIG/EKS scale-in hook과 연결하는 것이다.
 
+#### Update: Drain Orchestrator v1
+
+status-only hardening 다음 단계로 외부 ops command인 `scripts/openchat-node-drain-orchestrate.sh`를 추가했다. 앱 내부 scheduler를 만들지 않고 외부 command를 선택한 이유는 긴 polling loop와 인프라 종료 판단을 애플리케이션 생명주기 밖에 두는 편이 안전하고, MIG/EKS hook이나 수동 운영 스크립트가 그대로 감쌀 수 있기 때문이다.
+
+orchestrator는 `POST drain`과 `GET drain/status`를 반복 호출하면서 `nextAction`을 해석한다. `poll_status`, `retry_reconnect`, `wait_assignment`, `wait_replacement_ready`, `wait_node_heartbeat`는 poll/retry/wait로 처리하고, `add_replacement_node`, `fix_request`, `enable_node_drain`은 blocked/invalid로 종료한다. 최종적으로 `status=complete`, `nextAction=none`이면 `terminationAllowed=true`와 exit code `0`을 출력한다.
+
+리뷰 과정에서 중요한 보강도 했다. 초기 GCP startup script는 k6 또는 node drain background task 실패를 파일에는 기록하지만 프로세스 exit code로 전파하지 않을 수 있었다. 이를 수정해 worker 전체 `overall_status`를 누적하고 마지막에 `exit "$overall_status"`로 종료하게 했다. 또한 orchestrator timeout이 sleep 이후에도 강제되도록 보강하고, curl `--max-time`도 남은 deadline을 넘지 않게 줄였다.
+
+`20260508-node-drain-orchestrator-smoke` GCP smoke 결과는 다음이다.
+
+- k6 exit code `0`
+- orchestrator result JSON 존재
+- orchestrator exitCode `0`
+- orchestrator terminationAllowed `true`
+- final status `complete`
+- drained node `gcp-realtime-2` openSessions `0`
+- route failure/fallback/mismatch `0/0/0`
+- node drain reconnect controls `51`
+- sent/ack/DB rows `22,265 / 22,265 / 22,265`
+- observer visible freshness p95 `125.65ms`
+- orchestrator history `reconnect_published -> sessions_remaining -> reconnect_published -> sessions_remaining -> complete`
+- cleanup 후 RUN_ID GCE VM 잔여 없음
+
+이 결과로 "앱이 종료 가능 상태를 알려준다"에서 한 단계 더 나아가, 외부 runner가 그 응답 계약을 소비해 node drain completion까지 자동으로 도달할 수 있음을 확인했다. 여전히 VM stop/delete, MIG scale-in, EKS eviction은 후속 작업이다.
+
 ---
 
 ## 포트폴리오에서 사용할 최종 서사

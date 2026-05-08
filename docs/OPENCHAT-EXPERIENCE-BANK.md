@@ -367,6 +367,8 @@ GCP node drain smoke에서 WebSocket connect success `145/145`, route failure/fa
 
 후속 hardening에서는 운영자나 future orchestrator가 응답만 보고 다음 행동을 판단할 수 있도록 `GET /drain/status`, `retryable`, `nextAction`, `readinessReason` 계약을 추가했다. `20260508-node-drain-hardening-smoke`에서는 k6 exit code `0`, HTTP error `0.00%`, WebSocket connect `149/149`, route failure/fallback/mismatch `0/0/0`, node drain reconnect control `49`건, sent/ack/DB rows `22271/22271/22271`, drained node openSessions `0`을 확인했다. status snapshot은 `reconnect_published -> sessions_remaining -> complete`로 수렴했고, 마지막 상태는 `nextAction=none`, `readinessReason=ready`였다.
 
+이후 external drain orchestrator를 추가해 `nextAction`을 실제로 소비하는 운영 command를 만들었다. `20260508-node-drain-orchestrator-smoke`에서는 orchestrator exitCode `0`, `terminationAllowed=true`, final status `complete`, route failure/fallback/mismatch `0/0/0`, reconnect control `51`건, sent/ack/DB rows `22265/22265/22265`, drained node openSessions `0`을 확인했다. 이로써 앱이 상태를 알려주는 수준을 넘어, 외부 runner가 node 종료 가능 판정까지 자동으로 수행할 수 있음을 검증했다.
+
 ### 배운 점
 
 실시간 시스템의 scale-out은 서버 수 증가가 아니라 ownership contract를 맞추는 문제다. route, 실제 연결, subscriber, reconnect, drain completion signal이 모두 같은 기준을 따라야 운영 가능한 구조가 된다. 또한 EKS나 MIG 자동 종료를 붙이기 전에, 애플리케이션이 먼저 "이 node는 안전하게 비워졌다"는 상태를 증명할 수 있어야 한다.
