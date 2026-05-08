@@ -26,6 +26,8 @@ PROFILE="${profile}"
 VUS_LIST="${vus_list}"
 CHAT_DURATION_SECONDS="${chat_duration_seconds}"
 SEND_INTERVAL_MS="${send_interval_ms}"
+K6_WS_SEND_STOP_AFTER_SECONDS="${k6_ws_send_stop_after_seconds}"
+K6_CHAT_ACK_P95_THRESHOLD_MS="${k6_chat_ack_p95_threshold_ms}"
 CONNECT_RAMP_SECONDS="${connect_ramp_seconds}"
 HOT_ROOMS="${hot_rooms}"
 VUS_PER_ROOM="${vus_per_room}"
@@ -38,6 +40,22 @@ OBSERVER_SEND_INTERVAL_MS="${observer_send_interval_ms}"
 ACTIVE_USER_RATIO="${active_user_ratio}"
 ACTIVE_HEARTBEAT_INTERVAL_MS="${active_heartbeat_interval_ms}"
 PASSIVE_SETTLE_MS="${passive_settle_ms}"
+MIXED_HOT_ROOM_COUNT="${mixed_hot_room_count}"
+MIXED_HOT_ROOM_VUS="${mixed_hot_room_vus}"
+MIXED_HOT_ACTIVE_RATIO="${mixed_hot_active_ratio}"
+MIXED_HOT_SEND_INTERVAL_MS="${mixed_hot_send_interval_ms}"
+MIXED_LARGE_ROOM_COUNT="${mixed_large_room_count}"
+MIXED_LARGE_ROOM_VUS="${mixed_large_room_vus}"
+MIXED_LARGE_ACTIVE_RATIO="${mixed_large_active_ratio}"
+MIXED_LARGE_SEND_INTERVAL_MS="${mixed_large_send_interval_ms}"
+MIXED_MEDIUM_ROOM_COUNT="${mixed_medium_room_count}"
+MIXED_MEDIUM_ROOM_VUS="${mixed_medium_room_vus}"
+MIXED_MEDIUM_ACTIVE_RATIO="${mixed_medium_active_ratio}"
+MIXED_MEDIUM_SEND_INTERVAL_MS="${mixed_medium_send_interval_ms}"
+MIXED_SMALL_ROOM_COUNT="${mixed_small_room_count}"
+MIXED_SMALL_ROOM_VUS="${mixed_small_room_vus}"
+MIXED_SMALL_ACTIVE_RATIO="${mixed_small_active_ratio}"
+MIXED_SMALL_SEND_INTERVAL_MS="${mixed_small_send_interval_ms}"
 SHARED_ROOM_ID=""
 SHARED_TEST_LABEL=""
 
@@ -115,10 +133,75 @@ collect_db_message_count() {
 EOF
 }
 
+collect_room_partition_state_dump() {
+  local suffix="$1"
+  local output_file="$RESULT_ROOT/metrics/room-partition-state-$suffix.tsv"
+
+  if ! command -v mysql >/dev/null 2>&1; then
+    echo "mysql client not installed" > "$output_file"
+    return 0
+  fi
+
+  mysql \
+    --connect-timeout=5 \
+    -h "$MYSQL_INTERNAL_IP" \
+    -uopenchat \
+    -popenchat \
+    -D openchat \
+    -B \
+    -e "SELECT room_id, partition_count, version, status, draining_partitions, updated_at, updated_by FROM room_partition_state ORDER BY updated_at DESC, room_id;" \
+    > "$output_file" 2>"$RESULT_ROOT/metrics/room-partition-state-$suffix.err" || true
+}
+
+get_workload_summary_token() {
+  if [ -n "$${WORKLOAD_SUMMARY_TOKEN:-}" ]; then
+    printf '%s' "$WORKLOAD_SUMMARY_TOKEN"
+    return 0
+  fi
+  local login_body
+  local login_response
+  login_body=$(jq -nc \
+    --arg userId "workload-summary-$RUN_ID" \
+    --arg nickname "WorkloadSummary" \
+    '{userId: $userId, nickname: $nickname}')
+  login_response=$(curl --max-time 10 -sf \
+    -H "Content-Type: application/json" \
+    -d "$login_body" \
+    "$BASE_URL/api/auth/login" || true)
+  WORKLOAD_SUMMARY_TOKEN=$(printf '%s' "$login_response" | jq -r '.token // empty')
+  printf '%s' "$WORKLOAD_SUMMARY_TOKEN"
+}
+
+collect_realtime_workload_snapshot() {
+  local suffix="$1"
+  local workload_token
+  workload_token=$(get_workload_summary_token || true)
+  if [ -n "$workload_token" ]; then
+    curl --max-time 10 -sf -H "Authorization: Bearer $workload_token" "$BASE_URL/api/internal/realtime/workload/summary" > "$RESULT_ROOT/metrics/realtime-workload-summary-$suffix.json" || true
+    curl --max-time 10 -sf -H "Authorization: Bearer $workload_token" "$BASE_URL/api/internal/realtime/workload/recommendations" > "$RESULT_ROOT/metrics/realtime-workload-recommendations-$suffix.json" || true
+  fi
+  collect_room_partition_state_dump "$suffix"
+}
+
+collect_workload_snapshots_during_run() {
+  local label="$1"
+  local interval_seconds=15
+  local max_seconds=$((CONNECT_RAMP_SECONDS + CHAT_DURATION_SECONDS + 90))
+  local end_at=$((SECONDS + max_seconds))
+  local index=1
+
+  while [ "$SECONDS" -lt "$end_at" ]; do
+    sleep "$interval_seconds"
+    collect_realtime_workload_snapshot "during-$label-$index"
+    index=$((index + 1))
+  done
+}
+
 collect_app_snapshots() {
   local suffix="$1"
   curl --max-time 10 -sf "$BASE_URL/actuator/health" > "$RESULT_ROOT/metrics/lb-health-$suffix.json" || true
   curl --max-time 10 -sf "$BASE_URL/actuator/prometheus" > "$RESULT_ROOT/metrics/lb-prometheus-$suffix.txt" || true
+  collect_realtime_workload_snapshot "$suffix"
 
   app_index=1
   for app_ip in $APP_INTERNAL_IPS; do
@@ -536,6 +619,12 @@ for vus in $VUS_LIST; do
     influx_args=(--out "influxdb=http://$MONITORING_INTERNAL_IP:8086/k6")
   fi
 
+  workload_snapshot_pid=""
+  if [ "$K6_IS_COORDINATOR" = "true" ]; then
+    collect_workload_snapshots_during_run "$${worker_vus}vu" &
+    workload_snapshot_pid=$!
+  fi
+
   set +e
   K6_INFLUXDB_PAYLOAD_SIZE=5000000 \
   K6_INFLUXDB_CONCURRENT_WRITES=16 \
@@ -549,6 +638,8 @@ for vus in $VUS_LIST; do
     -e TEST_LABEL="$test_label" \
     -e SEND_INTERVAL_MS="$SEND_INTERVAL_MS" \
     -e CHAT_DURATION_SECONDS="$CHAT_DURATION_SECONDS" \
+    -e K6_WS_SEND_STOP_AFTER_SECONDS="$K6_WS_SEND_STOP_AFTER_SECONDS" \
+    -e K6_CHAT_ACK_P95_THRESHOLD_MS="$K6_CHAT_ACK_P95_THRESHOLD_MS" \
     -e CONNECT_RAMP_SECONDS="$CONNECT_RAMP_SECONDS" \
     -e HOT_ROOMS="$worker_hot_rooms" \
     -e VUS_PER_ROOM="$VUS_PER_ROOM" \
@@ -565,11 +656,32 @@ for vus in $VUS_LIST; do
     -e ACTIVE_USER_RATIO="$ACTIVE_USER_RATIO" \
     -e ACTIVE_HEARTBEAT_INTERVAL_MS="$ACTIVE_HEARTBEAT_INTERVAL_MS" \
     -e PASSIVE_SETTLE_MS="$PASSIVE_SETTLE_MS" \
+    -e MIXED_HOT_ROOM_COUNT="$MIXED_HOT_ROOM_COUNT" \
+    -e MIXED_HOT_ROOM_VUS="$MIXED_HOT_ROOM_VUS" \
+    -e MIXED_HOT_ACTIVE_RATIO="$MIXED_HOT_ACTIVE_RATIO" \
+    -e MIXED_HOT_SEND_INTERVAL_MS="$MIXED_HOT_SEND_INTERVAL_MS" \
+    -e MIXED_LARGE_ROOM_COUNT="$MIXED_LARGE_ROOM_COUNT" \
+    -e MIXED_LARGE_ROOM_VUS="$MIXED_LARGE_ROOM_VUS" \
+    -e MIXED_LARGE_ACTIVE_RATIO="$MIXED_LARGE_ACTIVE_RATIO" \
+    -e MIXED_LARGE_SEND_INTERVAL_MS="$MIXED_LARGE_SEND_INTERVAL_MS" \
+    -e MIXED_MEDIUM_ROOM_COUNT="$MIXED_MEDIUM_ROOM_COUNT" \
+    -e MIXED_MEDIUM_ROOM_VUS="$MIXED_MEDIUM_ROOM_VUS" \
+    -e MIXED_MEDIUM_ACTIVE_RATIO="$MIXED_MEDIUM_ACTIVE_RATIO" \
+    -e MIXED_MEDIUM_SEND_INTERVAL_MS="$MIXED_MEDIUM_SEND_INTERVAL_MS" \
+    -e MIXED_SMALL_ROOM_COUNT="$MIXED_SMALL_ROOM_COUNT" \
+    -e MIXED_SMALL_ROOM_VUS="$MIXED_SMALL_ROOM_VUS" \
+    -e MIXED_SMALL_ACTIVE_RATIO="$MIXED_SMALL_ACTIVE_RATIO" \
+    -e MIXED_SMALL_SEND_INTERVAL_MS="$MIXED_SMALL_SEND_INTERVAL_MS" \
     -e K6_COUNTER_FLUSH_INTERVAL_MS="5000" \
     -e K6_VISIBLE_FRESHNESS_SAMPLE_EVERY="100" \
     "$SCENARIO" 2>&1 | tee "$output_dir/$${worker_vus}vu.log"
   k6_status=$${PIPESTATUS[0]}
   set -e
+
+  if [ -n "$workload_snapshot_pid" ]; then
+    kill "$workload_snapshot_pid" 2>/dev/null || true
+    wait "$workload_snapshot_pid" 2>/dev/null || true
+  fi
 
   echo "$k6_status" > "$output_dir/$${worker_vus}vu-exit-code.txt"
   if [ "$ENABLE_MONITORING" = "true" ] && [ -n "$MONITORING_INTERNAL_IP" ]; then
@@ -611,6 +723,14 @@ cat > "$RESULT_ROOT/run-metadata-$WORKER_LABEL.json" <<EOF
   "activeUserRatio": "$ACTIVE_USER_RATIO",
   "activeHeartbeatIntervalMs": "$ACTIVE_HEARTBEAT_INTERVAL_MS",
   "passiveSettleMs": "$PASSIVE_SETTLE_MS",
+  "mixedHotRoomCount": "$MIXED_HOT_ROOM_COUNT",
+  "mixedHotRoomVus": "$MIXED_HOT_ROOM_VUS",
+  "mixedLargeRoomCount": "$MIXED_LARGE_ROOM_COUNT",
+  "mixedLargeRoomVus": "$MIXED_LARGE_ROOM_VUS",
+  "mixedMediumRoomCount": "$MIXED_MEDIUM_ROOM_COUNT",
+  "mixedMediumRoomVus": "$MIXED_MEDIUM_ROOM_VUS",
+  "mixedSmallRoomCount": "$MIXED_SMALL_ROOM_COUNT",
+  "mixedSmallRoomVus": "$MIXED_SMALL_ROOM_VUS",
   "baseUrl": "$BASE_URL",
   "wsBaseUrl": "$WS_BASE_URL",
   "lbVmName": "$LB_VM_NAME",

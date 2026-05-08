@@ -50,6 +50,18 @@ variable "send_interval_ms" {
   default     = 1000
 }
 
+variable "k6_ws_send_stop_after_seconds" {
+  description = "Seconds after which WebSocket clients stop sending but keep connections open. Zero uses the full chat duration."
+  type        = number
+  default     = 0
+}
+
+variable "k6_chat_ack_p95_threshold_ms" {
+  description = "k6 chat ack p95 threshold in milliseconds for mixed room workload scenarios."
+  type        = number
+  default     = 300
+}
+
 variable "connect_ramp_seconds" {
   description = "Seconds used by ramped k6 scenarios to spread login, room entry, and WebSocket connection attempts."
   type        = number
@@ -250,6 +262,103 @@ variable "passive_settle_ms" {
   }
 }
 
+
+variable "mixed_hot_room_count" {
+  description = "Number of hot rooms in the mixed-room workload scenario."
+  type        = number
+  default     = 1
+}
+
+variable "mixed_hot_room_vus" {
+  description = "VUs assigned to each hot room in the mixed-room workload scenario."
+  type        = number
+  default     = 40
+}
+
+variable "mixed_hot_active_ratio" {
+  description = "Active user ratio for hot rooms in the mixed-room workload scenario."
+  type        = number
+  default     = 0.30
+}
+
+variable "mixed_hot_send_interval_ms" {
+  description = "Sender interval for hot rooms in the mixed-room workload scenario."
+  type        = number
+  default     = 1000
+}
+
+variable "mixed_large_room_count" {
+  description = "Number of large rooms in the mixed-room workload scenario."
+  type        = number
+  default     = 0
+}
+
+variable "mixed_large_room_vus" {
+  description = "VUs assigned to each large room in the mixed-room workload scenario."
+  type        = number
+  default     = 120
+}
+
+variable "mixed_large_active_ratio" {
+  description = "Active user ratio for large rooms in the mixed-room workload scenario."
+  type        = number
+  default     = 0.35
+}
+
+variable "mixed_large_send_interval_ms" {
+  description = "Sender interval for large rooms in the mixed-room workload scenario."
+  type        = number
+  default     = 2000
+}
+
+variable "mixed_medium_room_count" {
+  description = "Number of medium rooms in the mixed-room workload scenario."
+  type        = number
+  default     = 3
+}
+
+variable "mixed_medium_room_vus" {
+  description = "VUs assigned to each medium room in the mixed-room workload scenario."
+  type        = number
+  default     = 15
+}
+
+variable "mixed_medium_active_ratio" {
+  description = "Active user ratio for medium rooms in the mixed-room workload scenario."
+  type        = number
+  default     = 0.30
+}
+
+variable "mixed_medium_send_interval_ms" {
+  description = "Sender interval for medium rooms in the mixed-room workload scenario."
+  type        = number
+  default     = 3000
+}
+
+variable "mixed_small_room_count" {
+  description = "Number of small rooms in the mixed-room workload scenario."
+  type        = number
+  default     = 5
+}
+
+variable "mixed_small_room_vus" {
+  description = "VUs assigned to each small room in the mixed-room workload scenario."
+  type        = number
+  default     = 3
+}
+
+variable "mixed_small_active_ratio" {
+  description = "Active user ratio for small rooms in the mixed-room workload scenario."
+  type        = number
+  default     = 0.30
+}
+
+variable "mixed_small_send_interval_ms" {
+  description = "Sender interval for small rooms in the mixed-room workload scenario."
+  type        = number
+  default     = 5000
+}
+
 variable "room_shard_enabled" {
   description = "Enable Redis room shard channels for app VMs."
   type        = bool
@@ -311,6 +420,78 @@ variable "room_partition_admin_api_enabled" {
   description = "Enable internal room partition operation API for smoke/operation tooling."
   type        = bool
   default     = false
+}
+
+variable "room_partition_lifecycle_enabled" {
+  description = "Enable automatic room partition lifecycle scaling."
+  type        = bool
+  default     = false
+}
+
+variable "room_partition_lifecycle_interval_ms" {
+  description = "Automatic room partition lifecycle scheduler interval."
+  type        = number
+  default     = 5000
+}
+
+variable "room_partition_lifecycle_scale_up_stable_window_ms" {
+  description = "Stable hot-room observation window before automatic scale-up."
+  type        = number
+  default     = 30000
+}
+
+variable "room_partition_lifecycle_scale_up_min_observations" {
+  description = "Minimum hot-room observations before automatic scale-up."
+  type        = number
+  default     = 2
+}
+
+variable "room_partition_lifecycle_scale_up_cooldown_ms" {
+  description = "Per-room automatic scale-up cooldown."
+  type        = number
+  default     = 300000
+}
+
+variable "room_partition_lifecycle_scale_down_stable_window_ms" {
+  description = "Stable low-work observation window before automatic scale-down."
+  type        = number
+  default     = 300000
+}
+
+variable "room_partition_lifecycle_scale_down_min_observations" {
+  description = "Minimum low-work observations before automatic scale-down."
+  type        = number
+  default     = 3
+}
+
+variable "room_partition_lifecycle_scale_down_cooldown_ms" {
+  description = "Per-room automatic scale-down cooldown."
+  type        = number
+  default     = 600000
+}
+
+variable "room_partition_lifecycle_scale_down_min_partition_age_ms" {
+  description = "Minimum age since the last partition state update before automatic scale-down."
+  type        = number
+  default     = 600000
+}
+
+variable "room_partition_lifecycle_drain_complete_empty_observations" {
+  description = "Consecutive empty drain observations required before completeDrain."
+  type        = number
+  default     = 2
+}
+
+variable "room_partition_lifecycle_drain_reconnect_retry_after_ms" {
+  description = "Drain reconnect retry-after and throttle interval."
+  type        = number
+  default     = 500
+}
+
+variable "room_scale_pod_work_budget_delivery_per_sec" {
+  description = "Room workload budget used by automatic lifecycle smoke recommendations."
+  type        = number
+  default     = 10000
 }
 
 variable "enable_monitoring" {
@@ -389,4 +570,49 @@ variable "ttl_hours" {
   description = "Informational TTL label for cleanup."
   type        = number
   default     = 2
+}
+
+variable "realtime_workload_publish_enabled" {
+  description = "Whether Realtime nodes publish workload snapshots to Redis."
+  type        = bool
+  default     = false
+}
+
+variable "realtime_workload_summary_enabled" {
+  description = "Whether API nodes expose read-only realtime workload summary endpoints."
+  type        = bool
+  default     = false
+}
+
+variable "realtime_workload_publish_interval_ms" {
+  description = "Realtime workload snapshot publish interval in milliseconds."
+  type        = number
+  default     = 5000
+
+  validation {
+    condition     = var.realtime_workload_publish_interval_ms >= 1000
+    error_message = "realtime_workload_publish_interval_ms must be at least 1000."
+  }
+}
+
+variable "realtime_workload_snapshot_ttl_ms" {
+  description = "Realtime workload snapshot TTL in milliseconds."
+  type        = number
+  default     = 30000
+
+  validation {
+    condition     = var.realtime_workload_snapshot_ttl_ms >= 2000
+    error_message = "realtime_workload_snapshot_ttl_ms must be at least 2000."
+  }
+}
+
+variable "realtime_workload_top_room_limit" {
+  description = "Maximum number of top room workload candidates included in each snapshot and summary."
+  type        = number
+  default     = 10
+
+  validation {
+    condition     = var.realtime_workload_top_room_limit >= 1
+    error_message = "realtime_workload_top_room_limit must be at least 1."
+  }
 }

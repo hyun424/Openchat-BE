@@ -1,0 +1,59 @@
+# Small GCP smoke for mixed-room workload observer/recommendation metrics.
+# It mixes hot, medium, and small rooms to verify actual/conceptual/decision
+# room work metrics without running another large load test.
+
+profile               = "mixed-room-workload-smoke"
+api_count             = 1
+realtime_count        = 2
+api_machine_type      = "e2-standard-2"
+realtime_machine_type = "e2-standard-4"
+app_machine_type      = "e2-standard-4"
+lb_machine_type       = "e2-standard-2"
+mysql_machine_type    = "e2-standard-2"
+redis_machine_type    = "e2-standard-2"
+k6_machine_type       = "e2-standard-4"
+k6_worker_count       = 1
+k6_cleanup_enabled    = true
+shared_room_mode      = false
+vus_list              = "100"
+chat_duration_seconds = 30
+send_interval_ms      = 1000
+connect_ramp_seconds  = 30
+hot_rooms             = 1
+scenario              = "k6/scenarios/11-mixed-room-workload-ramped.js"
+websocket_broadcast_lanes = 8
+
+active_user_ratio            = 0.30
+k6_sender_ratio              = 0.94
+k6_observer_ratio            = 0.05
+k6_validator_ratio           = 0.01
+observer_send_interval_ms    = 0
+active_heartbeat_interval_ms = 20000
+passive_settle_ms            = 2000
+
+room_shard_enabled                   = true
+room_shard_shard_count               = 4
+room_shard_legacy_subscribe_enabled  = false
+room_partition_enabled               = true
+room_partition_partition_count       = 4
+room_partition_hot_tier_threshold    = "SMALL"
+room_partition_max_partitions_per_room = 4
+room_partition_admin_api_enabled     = false
+
+app_disk_size_gb        = 20
+lb_disk_size_gb         = 10
+mysql_disk_size_gb      = 20
+redis_disk_size_gb      = 10
+k6_disk_size_gb         = 10
+monitoring_disk_size_gb = 15
+
+enable_monitoring       = false
+monitoring_machine_type = "e2-standard-2"
+grafana_source_ranges   = []
+
+# Cluster workload summary smoke
+realtime_workload_publish_enabled     = true
+realtime_workload_summary_enabled     = true
+realtime_workload_publish_interval_ms = 5000
+realtime_workload_snapshot_ttl_ms     = 30000
+realtime_workload_top_room_limit      = 10

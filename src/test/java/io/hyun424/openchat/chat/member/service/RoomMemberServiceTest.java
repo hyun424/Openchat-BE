@@ -57,7 +57,7 @@ class RoomMemberServiceTest {
     void join_success() {
         // given
         Room room = activeRoom(false, 10);
-        when(roomMemberRepository.acquireJoinLock(eq(ROOM_ID), eq(USER_ID), anyInt())).thenReturn(1);
+        when(roomMemberRepository.acquireJoinLock(anyString(), anyInt())).thenReturn(1);
         when(roomRepository.findById(ROOM_ID)).thenReturn(Optional.of(room));
         when(roomMemberRepository.findByRoomIdAndUserIdAndLeftAtIsNull(ROOM_ID, USER_ID))
                 .thenReturn(Optional.empty());
@@ -83,7 +83,7 @@ class RoomMemberServiceTest {
     void join_alreadyJoined_throws() {
         // given
         Room room = activeRoom(false, 10);
-        when(roomMemberRepository.acquireJoinLock(eq(ROOM_ID), eq(USER_ID), anyInt())).thenReturn(1);
+        when(roomMemberRepository.acquireJoinLock(anyString(), anyInt())).thenReturn(1);
         when(roomRepository.findById(ROOM_ID)).thenReturn(Optional.of(room));
 
         RoomMember existingMember = RoomMember.builder()
@@ -103,7 +103,7 @@ class RoomMemberServiceTest {
     void join_roomFull_throws() {
         // given
         Room room = activeRoom(false, 5);
-        when(roomMemberRepository.acquireJoinLock(eq(ROOM_ID), eq(USER_ID), anyInt())).thenReturn(1);
+        when(roomMemberRepository.acquireJoinLock(anyString(), anyInt())).thenReturn(1);
         when(roomRepository.findById(ROOM_ID)).thenReturn(Optional.of(room));
         when(roomMemberRepository.findByRoomIdAndUserIdAndLeftAtIsNull(ROOM_ID, USER_ID))
                 .thenReturn(Optional.empty());
@@ -121,7 +121,7 @@ class RoomMemberServiceTest {
     void join_requiresApproval_pendingStatus() {
         // given
         Room room = activeRoom(true, 10);
-        when(roomMemberRepository.acquireJoinLock(eq(ROOM_ID), eq(USER_ID), anyInt())).thenReturn(1);
+        when(roomMemberRepository.acquireJoinLock(anyString(), anyInt())).thenReturn(1);
         when(roomRepository.findById(ROOM_ID)).thenReturn(Optional.of(room));
         when(roomMemberRepository.findByRoomIdAndUserIdAndLeftAtIsNull(ROOM_ID, USER_ID))
                 .thenReturn(Optional.empty());
@@ -147,7 +147,7 @@ class RoomMemberServiceTest {
         // given
         Room room = activeRoom(false, 10);
         room.end(); // mark as ended
-        when(roomMemberRepository.acquireJoinLock(eq(ROOM_ID), eq(USER_ID), anyInt())).thenReturn(1);
+        when(roomMemberRepository.acquireJoinLock(anyString(), anyInt())).thenReturn(1);
         when(roomRepository.findById(ROOM_ID)).thenReturn(Optional.of(room));
 
         // when & then
@@ -160,7 +160,7 @@ class RoomMemberServiceTest {
     @DisplayName("advisory lock 획득 실패: INVALID_REQUEST 예외")
     void join_lockFailed_throws() {
         // given
-        when(roomMemberRepository.acquireJoinLock(eq(ROOM_ID), eq(USER_ID), anyInt())).thenReturn(0);
+        when(roomMemberRepository.acquireJoinLock(anyString(), anyInt())).thenReturn(0);
 
         // when & then
         ApiException ex = assertThrows(ApiException.class, () ->
@@ -172,7 +172,7 @@ class RoomMemberServiceTest {
     @DisplayName("room capacity lock 획득 실패 시 먼저 획득한 join lock 해제")
     void join_capacityLockFailed_releasesJoinLock() {
         // given
-        when(roomMemberRepository.acquireJoinLock(eq(ROOM_ID), eq(USER_ID), anyInt())).thenReturn(1);
+        when(roomMemberRepository.acquireJoinLock(anyString(), anyInt())).thenReturn(1);
         when(roomMemberRepository.acquireRoomCapacityLock(eq(ROOM_ID), anyInt())).thenReturn(0);
 
         // when & then
@@ -180,7 +180,7 @@ class RoomMemberServiceTest {
                 roomMemberService.join(ROOM_ID, USER_ID));
         assertEquals(ErrorCode.INVALID_REQUEST, ex.getErrorCode());
 
-        verify(roomMemberRepository).releaseJoinLock(ROOM_ID, USER_ID);
+        verify(roomMemberRepository).releaseJoinLock(anyString());
         verify(roomMemberRepository, never()).releaseRoomCapacityLock(ROOM_ID);
         verify(roomRepository, never()).findById(anyLong());
     }

@@ -180,6 +180,23 @@ docker run -d \
   -e ROOM_PARTITION_HOT_TIER_THRESHOLD="${room_partition_hot_tier_threshold}" \
   -e ROOM_PARTITION_MAX_PARTITIONS_PER_ROOM="${room_partition_max_partitions_per_room}" \
   -e ROOM_PARTITION_ADMIN_API_ENABLED="${room_partition_admin_api_enabled}" \
+  -e ROOM_PARTITION_LIFECYCLE_ENABLED="${room_partition_lifecycle_enabled}" \
+  -e ROOM_PARTITION_LIFECYCLE_INTERVAL_MS="${room_partition_lifecycle_interval_ms}" \
+  -e ROOM_PARTITION_LIFECYCLE_SCALE_UP_STABLE_WINDOW_MS="${room_partition_lifecycle_scale_up_stable_window_ms}" \
+  -e ROOM_PARTITION_LIFECYCLE_SCALE_UP_MIN_OBSERVATIONS="${room_partition_lifecycle_scale_up_min_observations}" \
+  -e ROOM_PARTITION_LIFECYCLE_SCALE_UP_COOLDOWN_MS="${room_partition_lifecycle_scale_up_cooldown_ms}" \
+  -e ROOM_PARTITION_LIFECYCLE_SCALE_DOWN_STABLE_WINDOW_MS="${room_partition_lifecycle_scale_down_stable_window_ms}" \
+  -e ROOM_PARTITION_LIFECYCLE_SCALE_DOWN_MIN_OBSERVATIONS="${room_partition_lifecycle_scale_down_min_observations}" \
+  -e ROOM_PARTITION_LIFECYCLE_SCALE_DOWN_COOLDOWN_MS="${room_partition_lifecycle_scale_down_cooldown_ms}" \
+  -e ROOM_PARTITION_LIFECYCLE_SCALE_DOWN_MIN_PARTITION_AGE_MS="${room_partition_lifecycle_scale_down_min_partition_age_ms}" \
+  -e ROOM_PARTITION_LIFECYCLE_DRAIN_COMPLETE_EMPTY_OBSERVATIONS="${room_partition_lifecycle_drain_complete_empty_observations}" \
+  -e ROOM_PARTITION_LIFECYCLE_DRAIN_RECONNECT_RETRY_AFTER_MS="${room_partition_lifecycle_drain_reconnect_retry_after_ms}" \
+  -e ROOM_SCALE_POD_WORK_BUDGET_DELIVERY_PER_SEC="${room_scale_pod_work_budget_delivery_per_sec}" \
+  -e REALTIME_WORKLOAD_PUBLISH_ENABLED="${realtime_workload_publish_enabled}" \
+  -e REALTIME_WORKLOAD_SUMMARY_ENABLED="${realtime_workload_summary_enabled}" \
+  -e REALTIME_WORKLOAD_PUBLISH_INTERVAL_MS="${realtime_workload_publish_interval_ms}" \
+  -e REALTIME_WORKLOAD_SNAPSHOT_TTL_MS="${realtime_workload_snapshot_ttl_ms}" \
+  -e REALTIME_WORKLOAD_TOP_ROOM_LIMIT="${realtime_workload_top_room_limit}" \
   -e WS_BROADCAST_LANES=${websocket_broadcast_lanes} \
   -e WS_BROADCAST_QUEUE_CAPACITY_PER_LANE=10000 \
   -e JAVA_OPTS="-XX:MaxRAMPercentage=70 -XX:+UseG1GC -Djava.security.egd=file:/dev/./urandom" \
