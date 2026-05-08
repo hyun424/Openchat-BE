@@ -49,6 +49,18 @@ class PostCommitLivePublishServiceTest {
     }
 
     @Test
+    @DisplayName("async live publish worker 시작 시 queue wait와 createdAt 기준 시작 지연을 기록한다")
+    void publishAsync_recordsQueueWaitBeforePublishing() {
+        ChatMessageDto message = message();
+        when(publisher.publish(message)).thenReturn(CompletableFuture.completedFuture(null));
+
+        service.publishAsync(message, 99L);
+
+        verify(chatPipelineMetrics, timeout(500)).recordStageNanos(eq("live_publish.queue_wait"), anyLong());
+        verify(chatPipelineMetrics, timeout(500)).recordSinceCreated("live_publish.start.since_created", message);
+    }
+
+    @Test
     @DisplayName("async live publish 실패 시 marker를 호출하지 않고 outbox worker retry에 맡긴다")
     void publishAsync_failureSkipsPublishedMarker() {
         ChatMessageDto message = message();

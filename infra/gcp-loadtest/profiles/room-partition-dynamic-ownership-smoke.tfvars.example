@@ -23,10 +23,14 @@ connect_ramp_seconds  = 15
 # This profile verifies routing/ownership. Freshness is still collected, but
 # fanout/live-publish performance gating belongs to a separate performance run.
 k6_visible_freshness_p95_threshold_ms = 0
+k6_assignment_preflight_enabled       = true
+k6_assignment_preflight_expected_nodes = 2
+k6_assignment_preflight_timeout_seconds = 90
 
 hot_rooms                 = 1
 scenario                  = "k6/scenarios/11-mixed-room-workload-ramped.js"
 websocket_broadcast_lanes = 8
+live_publish_threads      = 8
 
 active_user_ratio            = 1.0
 k6_sender_ratio              = 0.90

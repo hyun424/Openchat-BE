@@ -68,6 +68,34 @@ variable "k6_visible_freshness_p95_threshold_ms" {
   default     = 500
 }
 
+variable "k6_assignment_preflight_enabled" {
+  description = "Wait for realtime node assignment readiness before k6 VUs start."
+  type        = bool
+  default     = false
+}
+
+variable "k6_assignment_preflight_expected_nodes" {
+  description = "Minimum active realtime nodes expected by k6 assignment preflight. Zero disables the node count check."
+  type        = number
+  default     = 0
+
+  validation {
+    condition     = var.k6_assignment_preflight_expected_nodes >= 0
+    error_message = "k6_assignment_preflight_expected_nodes must be zero or greater."
+  }
+}
+
+variable "k6_assignment_preflight_timeout_seconds" {
+  description = "Maximum seconds k6 setup waits for assignment readiness."
+  type        = number
+  default     = 60
+
+  validation {
+    condition     = var.k6_assignment_preflight_timeout_seconds >= 1
+    error_message = "k6_assignment_preflight_timeout_seconds must be at least 1."
+  }
+}
+
 variable "connect_ramp_seconds" {
   description = "Seconds used by ramped k6 scenarios to spread login, room entry, and WebSocket connection attempts."
   type        = number
@@ -104,6 +132,17 @@ variable "websocket_broadcast_lanes" {
   validation {
     condition     = var.websocket_broadcast_lanes >= 1
     error_message = "websocket_broadcast_lanes must be at least 1."
+  }
+}
+
+variable "live_publish_threads" {
+  description = "Number of post-commit live publish worker threads per app VM."
+  type        = number
+  default     = 8
+
+  validation {
+    condition     = var.live_publish_threads >= 1
+    error_message = "live_publish_threads must be at least 1."
   }
 }
 

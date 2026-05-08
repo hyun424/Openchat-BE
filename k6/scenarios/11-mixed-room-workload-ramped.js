@@ -27,6 +27,11 @@ const K6_WORKER_INDEX = Number(__ENV.K6_WORKER_INDEX || '1');
 const K6_WORKER_COUNT = Number(__ENV.K6_WORKER_COUNT || '1');
 const WS_ROUTE_MAX_RETRIES = Number(__ENV.WS_ROUTE_MAX_RETRIES || '20');
 const WS_ROUTE_RETRY_AFTER_MS = Number(__ENV.WS_ROUTE_RETRY_AFTER_MS || '500');
+const ASSIGNMENT_PREFLIGHT_ENABLED = String(__ENV.K6_ASSIGNMENT_PREFLIGHT_ENABLED || 'false').toLowerCase() === 'true';
+const ASSIGNMENT_PREFLIGHT_PARTITION_COUNT = Number(__ENV.K6_ASSIGNMENT_PREFLIGHT_PARTITION_COUNT || '1');
+const ASSIGNMENT_PREFLIGHT_EXPECTED_NODES = Number(__ENV.K6_ASSIGNMENT_PREFLIGHT_EXPECTED_NODES || '0');
+const ASSIGNMENT_PREFLIGHT_TIMEOUT_SECONDS = Number(__ENV.K6_ASSIGNMENT_PREFLIGHT_TIMEOUT_SECONDS || '60');
+const ASSIGNMENT_PREFLIGHT_POLL_MS = Number(__ENV.K6_ASSIGNMENT_PREFLIGHT_POLL_MS || '1000');
 
 const HOT_ROOM_COUNT = Number(__ENV.MIXED_HOT_ROOM_COUNT || '1');
 const HOT_ROOM_VUS = Number(__ENV.MIXED_HOT_ROOM_VUS || '40');
@@ -57,6 +62,7 @@ const PASSIVE_SETTLE_MS = Number(__ENV.PASSIVE_SETTLE_MS || '2000');
 
 export const mixedRoomAssignedUsers = new Counter('mixed_room_assigned_users_total');
 export const mixedRoomConfigMismatch = new Counter('mixed_room_config_mismatch_total');
+export const assignmentPreflightFailuresTotal = new Counter('assignment_preflight_failures_total');
 
 function normalizedRatio(value, fallback) {
   if (!Number.isFinite(value)) {
@@ -162,11 +168,107 @@ function buildThresholds() {
     ws_route_assignment_mismatch_total: ['count==0'],
     ws_route_fallback_total: ['count==0'],
     ws_route_failures_total: ['count==0'],
+    assignment_preflight_failures_total: ['count==0'],
   };
   if (VISIBLE_FRESHNESS_P95_THRESHOLD_MS > 0) {
     thresholds['ws_visible_freshness_ms{presenceMode:active,clientMode:observer}'] = [`p(95)<${VISIBLE_FRESHNESS_P95_THRESHOLD_MS}`];
   }
   return thresholds;
+}
+
+function assignmentList(assignments) {
+  if (!assignments || typeof assignments !== 'object') {
+    return [];
+  }
+  return Object.keys(assignments).map((key) => assignments[key]);
+}
+
+function assignmentReadiness(nodesBody, assignmentsBody) {
+  const activeNodes = Array.isArray(nodesBody.activeNodes) ? nodesBody.activeNodes : [];
+  const assignments = assignmentList(assignmentsBody.assignments);
+  const readyAssignments = assignments.filter((assignment) => assignment && assignment.ready === true);
+  const distinctOwners = new Set(readyAssignments.map((assignment) => assignment.nodeId).filter(Boolean));
+  const expectedNodes = Math.max(0, ASSIGNMENT_PREFLIGHT_EXPECTED_NODES);
+  const expectedPartitions = Math.max(1, ASSIGNMENT_PREFLIGHT_PARTITION_COUNT);
+  const expectedDistinctOwners = expectedNodes > 0 ? Math.min(expectedNodes, expectedPartitions) : 1;
+
+  return {
+    ready:
+      activeNodes.length >= expectedNodes &&
+      assignments.length >= expectedPartitions &&
+      readyAssignments.length >= expectedPartitions &&
+      distinctOwners.size >= expectedDistinctOwners,
+    activeNodeCount: activeNodes.length,
+    assignmentCount: assignments.length,
+    readyAssignmentCount: readyAssignments.length,
+    distinctOwnerCount: distinctOwners.size,
+    expectedNodes,
+    expectedPartitions,
+    expectedDistinctOwners,
+  };
+}
+
+function getJsonOrNull(url, token, name) {
+  const res = http.get(url, {
+    headers: authHeaders(token),
+    tags: { name },
+  });
+  if (res.status < 200 || res.status >= 300) {
+    return { status: res.status, body: null };
+  }
+  try {
+    return { status: res.status, body: JSON.parse(res.body || '{}') };
+  } catch (e) {
+    return { status: res.status, body: null };
+  }
+}
+
+function waitForAssignmentPreflight(token) {
+  if (!ASSIGNMENT_PREFLIGHT_ENABLED) {
+    return true;
+  }
+
+  const timeoutAt = Date.now() + Math.max(1, ASSIGNMENT_PREFLIGHT_TIMEOUT_SECONDS) * 1000;
+  const pollSeconds = Math.max(0.1, ASSIGNMENT_PREFLIGHT_POLL_MS / 1000);
+  let attempt = 0;
+  let last = null;
+
+  while (Date.now() < timeoutAt) {
+    attempt += 1;
+    const nodes = getJsonOrNull(`${BASE_URL}/api/internal/room-partition/nodes`, token, 'assignment_preflight_nodes');
+    const assignments = getJsonOrNull(
+      `${BASE_URL}/api/internal/room-partition/assignments?partitionCount=${Math.max(1, ASSIGNMENT_PREFLIGHT_PARTITION_COUNT)}`,
+      token,
+      'assignment_preflight_assignments'
+    );
+
+    if (nodes.body && assignments.body) {
+      last = assignmentReadiness(nodes.body, assignments.body);
+      if (last.ready) {
+        console.log(
+          `Assignment preflight ready activeNodes=${last.activeNodeCount}/${last.expectedNodes} ` +
+          `readyAssignments=${last.readyAssignmentCount}/${last.expectedPartitions} ` +
+          `distinctOwners=${last.distinctOwnerCount}/${last.expectedDistinctOwners} attempt=${attempt}`
+        );
+        return true;
+      }
+    } else {
+      last = {
+        ready: false,
+        nodesStatus: nodes.status,
+        assignmentsStatus: assignments.status,
+      };
+    }
+
+    if (attempt === 1 || attempt % 5 === 0) {
+      console.log(`Assignment preflight waiting attempt=${attempt} state=${JSON.stringify(last)}`);
+    }
+    sleep(pollSeconds);
+  }
+
+  assignmentPreflightFailuresTotal.add(1);
+  console.error(`Assignment preflight timeout state=${JSON.stringify(last)}`);
+  return false;
 }
 
 export const options = {
@@ -325,6 +427,9 @@ export function setup() {
   if (!token) {
     console.error('Setup: admin login failed');
     return { rooms: [] };
+  }
+  if (!waitForAssignmentPreflight(token)) {
+    throw new Error('assignment preflight failed');
   }
 
   const rooms = [];
