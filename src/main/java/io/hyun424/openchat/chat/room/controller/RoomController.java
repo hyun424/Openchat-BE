@@ -9,6 +9,7 @@ import io.hyun424.openchat.chat.room.dto.RoomListResponse;
 import io.hyun424.openchat.chat.room.dto.RoomMapResponse;
 import io.hyun424.openchat.chat.room.dto.RoomResponse;
 import io.hyun424.openchat.chat.room.partition.dto.RoomPartitionRoute;
+import io.hyun424.openchat.chat.room.partition.service.RoomPartitionRouteUnavailableException;
 import io.hyun424.openchat.chat.room.partition.service.RoomPartitionRoutingService;
 import io.hyun424.openchat.chat.room.service.RoomService;
 import io.hyun424.openchat.global.exception.ApiException;
@@ -19,6 +20,7 @@ import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Positive;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.validation.annotation.Validated;
@@ -113,14 +115,27 @@ public class RoomController {
     }
 
     @GetMapping("/{roomId}/ws-route")
-    public ResponseEntity<RoomPartitionRoute> getWebSocketRoute(
+    public ResponseEntity<?> getWebSocketRoute(
             @PathVariable @Positive Long roomId,
             Authentication authentication
     ) {
         String userId = authenticatedUserId(authentication);
         roomService.getActiveRoomOrThrow(roomId);
         roomMemberService.getJoinedAtOrThrow(roomId, userId);
-        return ResponseEntity.ok(roomPartitionRoutingService.route(roomId, userId));
+        try {
+            return ResponseEntity.ok(roomPartitionRoutingService.route(roomId, userId));
+        } catch (RoomPartitionRouteUnavailableException e) {
+            long retryAfterSeconds = Math.max(1, (long) Math.ceil(e.retryAfterMs() / 1000.0));
+            return ResponseEntity.status(503)
+                    .header(HttpHeaders.RETRY_AFTER, String.valueOf(retryAfterSeconds))
+                    .body(new WebSocketRouteUnavailableResponse(e.reason(), e.retryAfterMs()));
+        }
+    }
+
+    public record WebSocketRouteUnavailableResponse(
+            String reason,
+            long retryAfterMs
+    ) {
     }
 
     public record RoomDetailResponse(

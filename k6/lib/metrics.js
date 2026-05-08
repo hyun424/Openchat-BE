@@ -29,6 +29,7 @@ export const wsRouteNodeTotal = new Counter('ws_route_node_total');
 export const wsConnectedNodeTotal = new Counter('ws_connected_node_total');
 export const wsRouteFallbackTotal = new Counter('ws_route_fallback_total');
 export const wsRouteAssignmentMismatchTotal = new Counter('ws_route_assignment_mismatch_total');
+export const wsRouteFailuresTotal = new Counter('ws_route_failures_total');
 
 // ── REST API Metrics (per endpoint) ──
 export const restLogin = new Trend('rest_login_duration_ms', true);

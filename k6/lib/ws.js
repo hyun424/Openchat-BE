@@ -10,7 +10,7 @@ import {
   wsObserverVisibleSamples, wsControlMessagesSent, wsActiveHeartbeatSent,
   wsPassiveUnexpectedMessages, wsReconnectControlsReceived, wsRoutePartitionCount,
   wsRoutePartitionId, wsRouteNodeTotal, wsConnectedNodeTotal, wsRouteFallbackTotal,
-  wsRouteAssignmentMismatchTotal,
+  wsRouteAssignmentMismatchTotal, wsRouteFailuresTotal,
 } from './metrics.js';
 
 const WS_BASE_URL = __ENV.WS_BASE_URL || 'ws://localhost:8080';
@@ -448,6 +448,7 @@ export function connectAndChat(opts) {
     previousRouteVersion: currentRouteVersion,
   });
   if (!nextRoute) {
+    wsRouteFailuresTotal.add(1, { ...metricTags, phase: 'reconnect', reason: 'route_resolver_null' });
     return res;
   }
   currentPartitionId = nextRoute.partitionId;

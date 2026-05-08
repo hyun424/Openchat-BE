@@ -49,11 +49,21 @@ public class RoomPartitionAssignmentService {
         Map<Integer, RoomPartitionAssignment> assignments = new LinkedHashMap<>();
         for (int partitionId = 0; partitionId < partitionCount; partitionId++) {
             RealtimeNode owner = nodes.get(Math.floorMod(partitionId, nodes.size()));
+            boolean ready = subscribes(owner, partitionId);
+            int resolvedPartitionId = partitionId;
+            List<String> alternateSubscribedNodeIds = nodes.stream()
+                    .filter(node -> !node.nodeId().equals(owner.nodeId()))
+                    .filter(node -> subscribes(node, resolvedPartitionId))
+                    .map(RealtimeNode::nodeId)
+                    .toList();
             assignments.put(partitionId, new RoomPartitionAssignment(
                     partitionId,
                     owner.nodeId(),
                     owner.wsUrl(),
-                    version
+                    version,
+                    ready,
+                    ready ? "ready" : "owner_not_ready",
+                    alternateSubscribedNodeIds
             ));
         }
         return Map.copyOf(assignments);
@@ -91,5 +101,9 @@ public class RoomPartitionAssignmentService {
         } catch (Exception e) {
             return Integer.toHexString(material.hashCode());
         }
+    }
+
+    private boolean subscribes(RealtimeNode node, int partitionId) {
+        return node.subscribedPartitions() != null && node.subscribedPartitions().contains(partitionId);
     }
 }

@@ -35,6 +35,7 @@ public class DynamicRoomPartitionSubscriber {
     private final RoomPartitionAssignmentProperties assignmentProperties;
     private final RoomSessionRegistry roomSessionRegistry;
     private final RealtimeNodeSubscriptionState subscriptionState;
+    private final RealtimeNodeHeartbeatService heartbeatService;
     private final String nodeId;
     private final Map<Integer, PatternTopic> subscribedTopics = new ConcurrentHashMap<>();
     private final Map<Integer, Instant> unsubscribeStartedAt = new ConcurrentHashMap<>();
@@ -48,6 +49,7 @@ public class DynamicRoomPartitionSubscriber {
             RoomPartitionAssignmentProperties assignmentProperties,
             RoomSessionRegistry roomSessionRegistry,
             RealtimeNodeSubscriptionState subscriptionState,
+            RealtimeNodeHeartbeatService heartbeatService,
             @Value("${app.instance-id:local}") String nodeId
     ) {
         this.container = container;
@@ -58,6 +60,7 @@ public class DynamicRoomPartitionSubscriber {
         this.assignmentProperties = assignmentProperties;
         this.roomSessionRegistry = roomSessionRegistry;
         this.subscriptionState = subscriptionState;
+        this.heartbeatService = heartbeatService;
         this.nodeId = nodeId;
     }
 
@@ -82,13 +85,15 @@ public class DynamicRoomPartitionSubscriber {
                 unsubscribeWhenSafe(partitionId);
             }
         }
-        subscriptionState.replace(Set.copyOf(subscribedTopics.keySet()));
+        replaceSubscriptionState();
     }
 
     private void subscribeIfNeeded(Integer partitionId) {
         subscribedTopics.computeIfAbsent(partitionId, key -> {
             PatternTopic topic = new PatternTopic(channelResolver.partitionPattern(key));
             container.addMessageListener(dispatcher.listener(), topic);
+            subscriptionState.add(key);
+            heartbeatService.publishHeartbeat();
             unsubscribeStartedAt.remove(key);
             log.info("dynamic partition subscribed nodeId={} partitionId={} topic={}", nodeId, key, topic.getTopic());
             return topic;
@@ -106,12 +111,35 @@ public class DynamicRoomPartitionSubscriber {
             }
             return;
         }
+        if (!replacementOwnerReady(partitionId)) {
+            Instant startedAt = unsubscribeStartedAt.computeIfAbsent(partitionId, ignored -> Instant.now());
+            long elapsedMs = java.time.Duration.between(startedAt, Instant.now()).toMillis();
+            if (elapsedMs >= assignmentProperties.unsubscribeGraceMs()) {
+                log.warn("dynamic partition unsubscribe skipped after grace because replacement owner is not ready nodeId={} partitionId={} elapsedMs={}",
+                        nodeId, partitionId, elapsedMs);
+            }
+            return;
+        }
         PatternTopic topic = subscribedTopics.remove(partitionId);
         if (topic == null) {
             return;
         }
         container.removeMessageListener(dispatcher.listener(), topic);
+        subscriptionState.remove(partitionId);
+        heartbeatService.publishHeartbeat();
         unsubscribeStartedAt.remove(partitionId);
         log.info("dynamic partition unsubscribed nodeId={} partitionId={} topic={}", nodeId, partitionId, topic.getTopic());
+    }
+
+    private boolean replacementOwnerReady(Integer partitionId) {
+        return assignmentService.assignmentFor(partitionId, partitionProperties.partitionCount())
+                .filter(assignment -> !nodeId.equals(assignment.nodeId()))
+                .map(RoomPartitionAssignment::ready)
+                .orElse(false);
+    }
+
+    private void replaceSubscriptionState() {
+        subscriptionState.replace(Set.copyOf(subscribedTopics.keySet()));
+        heartbeatService.publishHeartbeat();
     }
 }

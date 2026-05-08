@@ -12,7 +12,7 @@ import { login, authHeaders, BASE_URL } from '../lib/auth.js';
 import { enterRoom } from '../lib/http-helpers.js';
 import { makeUserId, makeNickname, makeChatMessage } from '../lib/data-factory.js';
 import { connectAndChat } from '../lib/ws.js';
-import { restCreateRoom, restWsRoute, httpErrorRate, wsPresenceAssigned } from '../lib/metrics.js';
+import { restCreateRoom, restWsRoute, httpErrorRate, wsPresenceAssigned, wsRouteFailuresTotal } from '../lib/metrics.js';
 
 const TARGET_VUS = Number(__ENV.TARGET_VUS || '500');
 const TOTAL_TARGET_VUS = Number(__ENV.TOTAL_TARGET_VUS || String(TARGET_VUS));
@@ -32,6 +32,8 @@ const K6_VALIDATOR_RATIO = Number(__ENV.K6_VALIDATOR_RATIO || '0.01');
 const OBSERVER_SEND_INTERVAL_MS = Number(__ENV.OBSERVER_SEND_INTERVAL_MS || '0');
 const ACTIVE_HEARTBEAT_INTERVAL_MS = Number(__ENV.ACTIVE_HEARTBEAT_INTERVAL_MS || '20000');
 const PASSIVE_SETTLE_MS = Number(__ENV.PASSIVE_SETTLE_MS || '2000');
+const WS_ROUTE_MAX_RETRIES = Number(__ENV.WS_ROUTE_MAX_RETRIES || '20');
+const WS_ROUTE_RETRY_AFTER_MS = Number(__ENV.WS_ROUTE_RETRY_AFTER_MS || '500');
 
 function normalizedRatio(value, fallback) {
   if (!Number.isFinite(value)) {
@@ -119,6 +121,9 @@ export const options = {
     'ws_presence_assigned_total{presenceMode:passive}': ['count>0'],
     'ws_control_messages_sent_total{presenceMode:active}': ['count>0'],
     'ws_control_messages_sent_total{presenceMode:passive}': ['count>0'],
+    ws_route_assignment_mismatch_total: ['count==0'],
+    ws_route_fallback_total: ['count==0'],
+    ws_route_failures_total: ['count==0'],
   },
   tags: {
     workerIndex: String(K6_WORKER_INDEX),
@@ -168,13 +173,28 @@ function createUnlimitedHotRoom(token) {
   }
 }
 
-function getWebSocketRoute(token, roomId) {
-  const res = http.get(`${BASE_URL}/api/rooms/${roomId}/ws-route`, {
-    headers: authHeaders(token),
-    tags: { name: 'get_ws_route' },
-  });
+function getWebSocketRoute(token, roomId, phase = 'initial') {
+  let res = null;
+  for (let attempt = 1; attempt <= WS_ROUTE_MAX_RETRIES; attempt += 1) {
+    res = http.get(`${BASE_URL}/api/rooms/${roomId}/ws-route`, {
+      headers: authHeaders(token),
+      tags: { name: 'get_ws_route' },
+    });
+    restWsRoute.add(res.timings.duration);
+    if (res.status !== 503) {
+      break;
+    }
+    let retryAfterMs = WS_ROUTE_RETRY_AFTER_MS;
+    try {
+      const body = JSON.parse(res.body || '{}');
+      retryAfterMs = Number(body.retryAfterMs || retryAfterMs);
+      console.log(`getWsRoute retry roomId=${roomId} reason=${body.reason || 'unavailable'} attempt=${attempt}`);
+    } catch (e) {
+      console.log(`getWsRoute retry roomId=${roomId} status=503 attempt=${attempt}`);
+    }
+    sleep(Math.max(0.05, retryAfterMs / 1000));
+  }
 
-  restWsRoute.add(res.timings.duration);
   httpErrorRate.add(res.status >= 400);
 
   check(res, {
@@ -191,7 +211,8 @@ function getWebSocketRoute(token, roomId) {
 
   if (res.status < 200 || res.status >= 300) {
     console.error(`getWsRoute failed roomId=${roomId} status=${res.status} body=${res.body}`);
-    return { partitionId: null, partitioned: false, partitionCount: 1 };
+    wsRouteFailuresTotal.add(1, { phase, reason: `status_${res.status}` });
+    return null;
   }
 
   try {
@@ -208,7 +229,8 @@ function getWebSocketRoute(token, roomId) {
     };
   } catch (e) {
     console.error(`getWsRoute parse failed roomId=${roomId}`);
-    return { partitionId: null, partitioned: false, partitionCount: 1 };
+    wsRouteFailuresTotal.add(1, { phase, reason: 'parse_failed' });
+    return null;
   }
 }
 
@@ -267,6 +289,9 @@ export default function (data) {
   enterRoom(token, roomId);
   sleep(0.2);
   const wsRoute = getWebSocketRoute(token, roomId);
+  if (!wsRoute) {
+    return;
+  }
 
   connectAndChat({
     token,
@@ -277,6 +302,7 @@ export default function (data) {
     nodeId: wsRoute.nodeId,
     assignmentVersion: wsRoute.assignmentVersion,
     fallbackReason: wsRoute.fallbackReason,
+    routeResolver: () => getWebSocketRoute(token, roomId, 'reconnect'),
     duration: CHAT_DURATION_SECONDS,
     sendInterval: sendIntervalForMode(presenceMode, clientMode),
     messageText: MESSAGE_TEXT,

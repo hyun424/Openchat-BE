@@ -14,6 +14,18 @@ public class RealtimeNodeSubscriptionState {
         return Set.copyOf(subscribedPartitions);
     }
 
+    public void add(Integer partitionId) {
+        if (partitionId != null) {
+            subscribedPartitions.add(partitionId);
+        }
+    }
+
+    public void remove(Integer partitionId) {
+        if (partitionId != null) {
+            subscribedPartitions.remove(partitionId);
+        }
+    }
+
     public void replace(Set<Integer> partitions) {
         subscribedPartitions.clear();
         subscribedPartitions.addAll(partitions);

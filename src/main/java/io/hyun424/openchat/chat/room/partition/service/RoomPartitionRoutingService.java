@@ -58,10 +58,14 @@ public class RoomPartitionRoutingService {
         try {
             Optional<RoomPartitionAssignment> assignment = assignmentService.assignmentFor(partitionId, partitionCount);
             if (assignment.isEmpty()) {
-                metrics.recordRoute("partitioned_assignment_fallback");
-                return RoomPartitionRoute.fallback(roomId, partitionId, partitionCount, version, "assignment_unavailable");
+                metrics.recordRoute("partitioned_assignment_unavailable");
+                throw new RoomPartitionRouteUnavailableException("assignment_unavailable");
             }
             RoomPartitionAssignment owner = assignment.get();
+            if (!owner.ready()) {
+                metrics.recordRoute("partitioned_assignment_" + owner.readinessReason());
+                throw new RoomPartitionRouteUnavailableException(owner.readinessReason());
+            }
             metrics.recordRoute("partitioned_node_aware");
             return RoomPartitionRoute.nodeAware(
                     roomId,
@@ -72,10 +76,12 @@ public class RoomPartitionRoutingService {
                     owner.nodeId(),
                     owner.assignmentVersion()
             );
+        } catch (RoomPartitionRouteUnavailableException e) {
+            throw e;
         } catch (Exception e) {
             log.warn("room partition assignment route fallback roomId={} partitionId={}", roomId, partitionId, e);
-            metrics.recordRoute("partitioned_assignment_fallback");
-            return RoomPartitionRoute.fallback(roomId, partitionId, partitionCount, version, "assignment_error");
+            metrics.recordRoute("partitioned_assignment_error");
+            throw new RoomPartitionRouteUnavailableException("assignment_error", e);
         }
     }
 

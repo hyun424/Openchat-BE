@@ -16,8 +16,8 @@ class RoomPartitionAssignmentServiceTest {
     @Test
     void assignments_areDeterministicModuloOverSortedActiveNodes() {
         TestRegistry registry = new TestRegistry(List.of(
-                node("node-b", false, Instant.now().plusSeconds(30)),
-                node("node-a", false, Instant.now().plusSeconds(30))
+                node("node-b", false, Instant.now().plusSeconds(30), Set.of(1, 3)),
+                node("node-a", false, Instant.now().plusSeconds(30), Set.of(0, 2))
         ));
         RoomPartitionAssignmentService service = new RoomPartitionAssignmentService(registry);
 
@@ -27,6 +27,8 @@ class RoomPartitionAssignmentServiceTest {
         assertEquals("node-b", assignments.get(1).nodeId());
         assertEquals("node-a", assignments.get(2).nodeId());
         assertEquals("node-b", assignments.get(3).nodeId());
+        assertTrue(assignments.get(0).ready());
+        assertTrue(assignments.get(1).ready());
     }
 
     @Test
@@ -44,11 +46,11 @@ class RoomPartitionAssignmentServiceTest {
     @Test
     void assignmentVersion_changesWhenNodeSetOrPartitionCountChanges() {
         RoomPartitionAssignmentService twoNodes = new RoomPartitionAssignmentService(new TestRegistry(List.of(
-                node("node-a", false, Instant.now().plusSeconds(30)),
-                node("node-b", false, Instant.now().plusSeconds(30))
+                node("node-a", false, Instant.now().plusSeconds(30), Set.of(0, 2)),
+                node("node-b", false, Instant.now().plusSeconds(30), Set.of(1, 3))
         )));
         RoomPartitionAssignmentService oneNode = new RoomPartitionAssignmentService(new TestRegistry(List.of(
-                node("node-a", false, Instant.now().plusSeconds(30))
+                node("node-a", false, Instant.now().plusSeconds(30), Set.of(0, 1, 2, 3))
         )));
 
         String base = twoNodes.assignments(4).get(0).assignmentVersion();
@@ -57,6 +59,22 @@ class RoomPartitionAssignmentServiceTest {
 
         assertNotEquals(base, differentPartitionCount);
         assertNotEquals(base, differentNodeSet);
+    }
+
+    @Test
+    void readiness_isBasedOnDesiredOwnerSubscriptionWithoutReassigningToAlternateSubscriber() {
+        TestRegistry registry = new TestRegistry(List.of(
+                node("node-a", false, Instant.now().plusSeconds(30), Set.of()),
+                node("node-b", false, Instant.now().plusSeconds(30), Set.of(0, 1, 2, 3))
+        ));
+        RoomPartitionAssignmentService service = new RoomPartitionAssignmentService(registry);
+
+        var assignment = service.assignments(4).get(0);
+
+        assertEquals("node-a", assignment.nodeId());
+        assertEquals(false, assignment.ready());
+        assertEquals("owner_not_ready", assignment.readinessReason());
+        assertEquals(List.of("node-b"), assignment.alternateSubscribedNodeIds());
     }
 
     @Test
@@ -69,7 +87,11 @@ class RoomPartitionAssignmentServiceTest {
     }
 
     private static RealtimeNode node(String nodeId, boolean draining, Instant expiresAt) {
-        return new RealtimeNode(nodeId, "realtime", "ws://" + nodeId + ":8080", draining, Instant.now(), expiresAt, Set.of());
+        return node(nodeId, draining, expiresAt, Set.of());
+    }
+
+    private static RealtimeNode node(String nodeId, boolean draining, Instant expiresAt, Set<Integer> subscribedPartitions) {
+        return new RealtimeNode(nodeId, "realtime", "ws://" + nodeId + ":8080", draining, Instant.now(), expiresAt, subscribedPartitions);
     }
 
     private static class TestRegistry implements RealtimeNodeRegistry {
