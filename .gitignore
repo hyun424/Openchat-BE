@@ -17,6 +17,7 @@ docs/*
 !docs/2026-05-08-dynamic-realtime-partition-ownership-star.md
 !docs/OPENCHAT-BRANCH-DECISION-LOG.md
 !docs/LLM-WORKFLOW-RULES.md
+!docs/node-drain-orchestrator-plan.md
 data/
 k6/results/
 infra/gcp-loadtest/.terraform/

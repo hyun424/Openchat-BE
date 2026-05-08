@@ -305,3 +305,50 @@ node drain 응답과 status polling snapshot에서 다음 상태 전이가 확�
 - 반복 reconnect가 필요한 상황에서 command durability와 ack/retry log가 필요한지 검토한다.
 - MIG/EKS scale-in hook은 drain orchestrator가 `complete`를 확인한 뒤 연결한다.
 - smoke 이후 load/soak에서 반복 drain, observer visibility, ack/DB 정합성 누적을 확인한다.
+
+### Follow-up Result: Drain Orchestrator v1 Smoke
+
+`20260508-node-drain-orchestrator-smoke`로 external node drain orchestrator v1을 검증했다. 이 실행은 기존 `room-partition-node-drain-smoke` profile을 사용했고, GCP coordinator가 직접 curl loop를 수행하는 대신 `scripts/openchat-node-drain-orchestrate.sh`를 실행했다.
+
+#### Result
+
+| 항목 | 결과 |
+|---|---:|
+| k6 exit code | `0` |
+| orchestrator exitCode | `0` |
+| terminationAllowed | `true` |
+| final status | `complete` |
+| WebSocket connect success | `151/151` |
+| route failure/fallback/mismatch | `0/0/0` |
+| node drain reconnect controls | `51` |
+| sent/ack/DB rows | `22,265 / 22,265 / 22,265` |
+| observer visible freshness p95 | `125.65ms` |
+| target node | `gcp-realtime-2` |
+| drained node openSessions | `0` |
+| cleanup | RUN_ID GCE VM 잔여 없음 |
+
+#### Orchestrator Evidence
+
+orchestrator result JSON은 `metrics/node-drain-orchestrator-100vu.json`로 수집됐다. history는 다음 순서로 수렴했다.
+
+1. `reconnect_published`
+2. `sessions_remaining`
+3. `reconnect_published`
+4. `sessions_remaining`
+5. `complete`
+
+마지막 상태는 `lastNextAction=none`, `lastReadinessReason=ready`, `remainingSessions=0`이었다. 이 결과는 `nextAction` 기반 외부 runner가 단순 상태 관찰을 넘어 reconnect retry와 status polling을 자동 수행할 수 있음을 보여준다.
+
+#### Interpretation
+
+hardening 단계가 "앱이 다음 행동을 알려준다"였다면, orchestrator 단계는 "외부 운영 command가 그 계약을 실제로 실행한다"는 검증이다.
+
+포트폴리오에서는 다음처럼 설명한다.
+
+> Node drain status contract를 외부 ops command로 소비하도록 구현했다. command는 `nextAction`을 해석해 poll/retry/wait/blocked/complete를 자동 처리하고, 최종 `terminationAllowed=true`를 JSON과 exit code로 출력한다. GCP smoke에서 orchestrator exit `0`, route mismatch `0`, sent/ack/DB rows `22,265`건 일치, drained node openSessions `0`을 확인해 MIG/EKS 종료 hook이 붙기 전 앱 레벨 drain 절차를 자동화했다.
+
+#### Remaining Work
+
+- orchestrator가 `complete`를 반환한 뒤 VM stop/delete 또는 MIG scale-in을 호출하는 별도 infra hook을 설계한다.
+- EKS로 옮길 경우 readiness 제외, preStop, pod eviction과의 연결 방식을 정의한다.
+- reconnect command durability와 repeated drain retry의 장기 안정성은 load/soak에서 확인한다.
