@@ -96,6 +96,30 @@ variable "k6_assignment_preflight_timeout_seconds" {
   }
 }
 
+variable "k6_node_drain_enabled" {
+  description = "Trigger a realtime node drain during k6 validation."
+  type        = bool
+  default     = false
+}
+
+variable "k6_node_drain_after_seconds" {
+  description = "Seconds after k6 starts before the coordinator triggers node drain."
+  type        = number
+  default     = 30
+}
+
+variable "k6_node_drain_limit" {
+  description = "Maximum sessions to target per node drain reconnect command."
+  type        = number
+  default     = 1000
+}
+
+variable "k6_node_drain_retry_after_ms" {
+  description = "Retry delay included in node drain reconnect controls."
+  type        = number
+  default     = 500
+}
+
 variable "connect_ramp_seconds" {
   description = "Seconds used by ramped k6 scenarios to spread login, room entry, and WebSocket connection attempts."
   type        = number
@@ -483,6 +507,12 @@ variable "room_partition_assignment_node_drain_enabled" {
   description = "Enable node-drain commands for realtime partition assignment smoke tests."
   type        = bool
   default     = false
+}
+
+variable "room_partition_assignment_node_drain_readiness_timeout_ms" {
+  description = "Maximum milliseconds node drain waits for replacement owners to become ready before reconnect."
+  type        = number
+  default     = 15000
 }
 
 variable "room_partition_lifecycle_enabled" {

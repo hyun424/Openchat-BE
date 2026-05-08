@@ -33,6 +33,10 @@ K6_ASSIGNMENT_PREFLIGHT_ENABLED="${k6_assignment_preflight_enabled}"
 K6_ASSIGNMENT_PREFLIGHT_PARTITION_COUNT="${k6_assignment_preflight_partition_count}"
 K6_ASSIGNMENT_PREFLIGHT_EXPECTED_NODES="${k6_assignment_preflight_expected_nodes}"
 K6_ASSIGNMENT_PREFLIGHT_TIMEOUT_SECONDS="${k6_assignment_preflight_timeout_seconds}"
+K6_NODE_DRAIN_ENABLED="${k6_node_drain_enabled}"
+K6_NODE_DRAIN_AFTER_SECONDS="${k6_node_drain_after_seconds}"
+K6_NODE_DRAIN_LIMIT="${k6_node_drain_limit}"
+K6_NODE_DRAIN_RETRY_AFTER_MS="${k6_node_drain_retry_after_ms}"
 REALTIME_WORKLOAD_SUMMARY_ENABLED="${realtime_workload_summary_enabled}"
 CONNECT_RAMP_SECONDS="${connect_ramp_seconds}"
 HOT_ROOMS="${hot_rooms}"
@@ -194,6 +198,117 @@ collect_realtime_workload_snapshot() {
     curl --max-time 10 -sf -H "Authorization: Bearer $workload_token" "$BASE_URL/api/internal/realtime/workload/recommendations" > "$RESULT_ROOT/metrics/realtime-workload-recommendations-$suffix.json" || true
   fi
   collect_room_partition_state_dump "$suffix"
+}
+
+collect_assignment_snapshot() {
+  local suffix="$1"
+  local token
+  token=$(get_workload_summary_token || true)
+  if [ -z "$token" ]; then
+    echo "{\"error\":\"token unavailable\"}" > "$RESULT_ROOT/metrics/room-partition-nodes-$suffix.json"
+    echo "{\"error\":\"token unavailable\"}" > "$RESULT_ROOT/metrics/room-partition-assignments-$suffix.json"
+    return 0
+  fi
+
+  curl --max-time 10 -sf \
+    -H "Authorization: Bearer $token" \
+    "$BASE_URL/api/internal/room-partition/nodes" \
+    > "$RESULT_ROOT/metrics/room-partition-nodes-$suffix.json" || true
+  curl --max-time 10 -sf \
+    -H "Authorization: Bearer $token" \
+    "$BASE_URL/api/internal/room-partition/assignments?partitionCount=$K6_ASSIGNMENT_PREFLIGHT_PARTITION_COUNT" \
+    > "$RESULT_ROOT/metrics/room-partition-assignments-$suffix.json" || true
+}
+
+trigger_node_drain_during_run() {
+  local label="$1"
+  local output_file="$RESULT_ROOT/metrics/node-drain-$label.json"
+  if [ "$K6_NODE_DRAIN_ENABLED" != "true" ] || [ "$K6_IS_COORDINATOR" != "true" ]; then
+    return 0
+  fi
+
+  sleep "$K6_NODE_DRAIN_AFTER_SECONDS"
+  collect_assignment_snapshot "node-drain-before-$label"
+
+  local token
+  token=$(get_workload_summary_token || true)
+  if [ -z "$token" ]; then
+    echo "{\"status\":\"skipped\",\"reason\":\"token unavailable\"}" > "$output_file"
+    return 1
+  fi
+
+  local nodes_file="$RESULT_ROOT/metrics/room-partition-nodes-node-drain-before-$label.json"
+  local target_node
+  target_node=$(jq -r '
+    . as $root
+    | [($root.activeNodes // [])[] | select((.openSessions // 0) > 0)]
+    | sort_by(.openSessions // 0)
+    | reverse
+    | .[0].nodeId // (($root.activeNodes // [])[0].nodeId // "")
+  ' "$nodes_file" 2>/dev/null || true)
+
+  if [ -z "$target_node" ] || [ "$target_node" = "null" ]; then
+    echo "{\"status\":\"skipped\",\"reason\":\"no active target node\"}" > "$output_file"
+    return 1
+  fi
+
+  echo "[k6] triggering node drain target_node=$target_node label=$label"
+  local drain_response
+  drain_response=$(curl --max-time 30 -sS \
+    -X POST \
+    -H "Authorization: Bearer $token" \
+    "$BASE_URL/api/internal/room-partition/nodes/$target_node/drain?limit=$K6_NODE_DRAIN_LIMIT&retryAfterMs=$K6_NODE_DRAIN_RETRY_AFTER_MS" || true)
+  printf '%s' "$drain_response" > "$RESULT_ROOT/metrics/node-drain-response-$label.json"
+  local drain_status
+  drain_status=$(printf '%s' "$drain_response" | jq -r '.status // "missing_status"' 2>/dev/null || echo "parse_failed")
+  if [ "$drain_status" != "reconnect_published" ] && [ "$drain_status" != "complete" ]; then
+    echo "[k6] node drain request failed target_node=$target_node status=$drain_status response=$drain_response" >&2
+    echo "{\"targetNode\":\"$target_node\",\"complete\":false,\"status\":\"$drain_status\"}" > "$output_file"
+    return 1
+  fi
+  collect_assignment_snapshot "node-drain-after-request-$label"
+
+  local complete="false"
+  local last_sessions="unknown"
+  local last_still_owner="unknown"
+  local last_ready_count="unknown"
+  for attempt in $(seq 1 90); do
+    sleep 2
+    collect_assignment_snapshot "node-drain-progress-$label-$attempt"
+    local sessions
+    local still_owner
+    local ready_count
+    sessions=$(jq -r --arg node "$target_node" '[ (.nodes // [])[] | select(.nodeId == $node) | (.openSessions // 0) ] | max // 0' "$RESULT_ROOT/metrics/room-partition-nodes-node-drain-progress-$label-$attempt.json" 2>/dev/null || echo "0")
+    still_owner=$(jq -r --arg node "$target_node" '[ (.assignments // {})[] | select(.nodeId == $node) ] | length' "$RESULT_ROOT/metrics/room-partition-assignments-node-drain-progress-$label-$attempt.json" 2>/dev/null || echo "0")
+    ready_count=$(jq -r '[ (.assignments // {})[] | select(.ready == true) ] | length' "$RESULT_ROOT/metrics/room-partition-assignments-node-drain-progress-$label-$attempt.json" 2>/dev/null || echo "0")
+    last_sessions="$sessions"
+    last_still_owner="$still_owner"
+    last_ready_count="$ready_count"
+    if [ "$sessions" = "0" ] && [ "$still_owner" = "0" ] && [ "$ready_count" -ge "$K6_ASSIGNMENT_PREFLIGHT_PARTITION_COUNT" ]; then
+      complete="true"
+      break
+    fi
+  done
+
+  if [ "$complete" != "true" ]; then
+    echo "[k6] node drain did not complete target_node=$target_node label=$label" >&2
+    jq -nc \
+      --arg targetNode "$target_node" \
+      --arg status "timeout" \
+      --arg sessions "$last_sessions" \
+      --arg stillOwner "$last_still_owner" \
+      --arg readyCount "$last_ready_count" \
+      '{targetNode: $targetNode, complete: false, status: $status, lastSessions: $sessions, lastStillOwner: $stillOwner, lastReadyCount: $readyCount}' \
+      > "$output_file" 2>/dev/null || echo "{\"targetNode\":\"$target_node\",\"complete\":false,\"status\":\"timeout\"}" > "$output_file"
+    return 1
+  fi
+
+  jq -nc \
+    --arg targetNode "$target_node" \
+    --arg complete "$complete" \
+    --argjson response "$${drain_response:-null}" \
+    '{targetNode: $targetNode, complete: ($complete == "true"), response: $response}' \
+    > "$output_file" 2>/dev/null || echo "{\"targetNode\":\"$target_node\",\"complete\":$complete}" > "$output_file"
 }
 
 collect_workload_snapshots_during_run() {
@@ -637,6 +752,12 @@ for vus in $VUS_LIST; do
     collect_workload_snapshots_during_run "$${worker_vus}vu" &
     workload_snapshot_pid=$!
   fi
+  node_drain_pid=""
+  node_drain_status=0
+  if [ "$K6_IS_COORDINATOR" = "true" ] && [ "$K6_NODE_DRAIN_ENABLED" = "true" ]; then
+    trigger_node_drain_during_run "$${worker_vus}vu" &
+    node_drain_pid=$!
+  fi
 
   set +e
   K6_INFLUXDB_PAYLOAD_SIZE=5000000 \
@@ -700,7 +821,13 @@ for vus in $VUS_LIST; do
     kill "$workload_snapshot_pid" 2>/dev/null || true
     wait "$workload_snapshot_pid" 2>/dev/null || true
   fi
+  if [ -n "$node_drain_pid" ]; then
+    wait "$node_drain_pid" 2>/dev/null || node_drain_status=$?
+  fi
 
+  if [ "$node_drain_status" -ne 0 ] && [ "$k6_status" -eq 0 ]; then
+    k6_status="$node_drain_status"
+  fi
   echo "$k6_status" > "$output_dir/$${worker_vus}vu-exit-code.txt"
   if [ "$ENABLE_MONITORING" = "true" ] && [ -n "$MONITORING_INTERNAL_IP" ]; then
     sleep 10

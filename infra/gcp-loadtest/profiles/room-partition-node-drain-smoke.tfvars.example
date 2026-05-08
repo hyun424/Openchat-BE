@@ -1,0 +1,85 @@
+# GCP smoke for Dynamic Realtime Node Drain.
+# It verifies that a draining realtime node is removed from routing, existing
+# clients receive node_drain reconnect controls, and the drained node reaches
+# zero open WebSocket sessions.
+
+profile               = "room-partition-node-drain-smoke"
+api_count             = 1
+realtime_count        = 2
+api_machine_type      = "e2-standard-2"
+realtime_machine_type = "e2-standard-2"
+app_machine_type      = "e2-standard-4"
+lb_machine_type       = "e2-standard-2"
+mysql_machine_type    = "e2-standard-2"
+redis_machine_type    = "e2-standard-2"
+k6_machine_type       = "e2-standard-2"
+k6_worker_count       = 1
+k6_cleanup_enabled    = true
+shared_room_mode      = false
+vus_list              = "100"
+chat_duration_seconds = 120
+send_interval_ms      = 500
+connect_ramp_seconds  = 15
+
+k6_visible_freshness_p95_threshold_ms = 0
+k6_assignment_preflight_enabled       = true
+k6_assignment_preflight_expected_nodes = 2
+k6_assignment_preflight_timeout_seconds = 90
+k6_node_drain_enabled                  = true
+k6_node_drain_after_seconds            = 45
+k6_node_drain_limit                    = 1000
+k6_node_drain_retry_after_ms           = 500
+
+hot_rooms                 = 1
+scenario                  = "k6/scenarios/11-mixed-room-workload-ramped.js"
+websocket_broadcast_lanes = 8
+live_publish_threads      = 8
+
+active_user_ratio            = 1.0
+k6_sender_ratio              = 0.90
+k6_observer_ratio            = 0.08
+k6_validator_ratio           = 0.02
+observer_send_interval_ms    = 0
+active_heartbeat_interval_ms = 20000
+passive_settle_ms            = 2000
+
+mixed_hot_room_count       = 1
+mixed_hot_room_vus         = 100
+mixed_hot_active_ratio     = 1.0
+mixed_hot_send_interval_ms = 500
+mixed_large_room_count     = 0
+mixed_medium_room_count    = 0
+mixed_small_room_count     = 0
+
+room_shard_enabled                  = true
+room_shard_shard_count              = 4
+room_shard_legacy_subscribe_enabled = false
+
+room_partition_enabled                              = true
+room_partition_partition_count                      = 4
+room_partition_hot_tier_threshold                   = "SMALL"
+room_partition_max_partitions_per_room              = 4
+room_partition_admin_api_enabled                    = true
+room_partition_assignment_enabled                   = true
+room_partition_assignment_dynamic_subscribe_enabled = true
+room_partition_assignment_node_drain_enabled        = true
+room_partition_assignment_node_drain_readiness_timeout_ms = 15000
+
+room_partition_lifecycle_enabled = false
+
+realtime_workload_publish_enabled     = false
+realtime_workload_summary_enabled     = false
+realtime_workload_publish_interval_ms = 5000
+realtime_workload_snapshot_ttl_ms     = 30000
+realtime_workload_top_room_limit      = 10
+
+app_disk_size_gb        = 20
+lb_disk_size_gb         = 10
+mysql_disk_size_gb      = 20
+redis_disk_size_gb      = 10
+k6_disk_size_gb         = 10
+monitoring_disk_size_gb = 15
+
+enable_monitoring       = false
+monitoring_machine_type = "e2-standard-2"
+grafana_source_ranges   = []

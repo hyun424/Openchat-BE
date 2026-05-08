@@ -43,7 +43,13 @@ public class RedisRoomPartitionControlPublisher implements RoomPartitionControlP
             String channel = command.nodeId() == null
                     ? channelResolver.channel(command.roomId())
                     : channelResolver.nodeChannel(command.nodeId());
-            redisTemplate.convertAndSend(channel, payload);
+            Long receivers = redisTemplate.convertAndSend(channel, payload);
+            if (command.nodeId() != null && (receivers == null || receivers <= 0)) {
+                metrics.recordControlPublish(type, "no_receivers");
+                log.warn("[ROOM PARTITION CONTROL PUB NO RECEIVERS] type={} nodeId={}",
+                        type, command.nodeId());
+                return false;
+            }
             metrics.recordControlPublish(type, "success");
             return true;
         } catch (Exception e) {

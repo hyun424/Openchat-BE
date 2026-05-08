@@ -10,8 +10,19 @@ public record RealtimeNode(
         boolean draining,
         Instant reportedAt,
         Instant expiresAt,
-        Set<Integer> subscribedPartitions
+        Set<Integer> subscribedPartitions,
+        int openSessions
 ) {
+
+    public RealtimeNode(String nodeId,
+                        String role,
+                        String wsUrl,
+                        boolean draining,
+                        Instant reportedAt,
+                        Instant expiresAt,
+                        Set<Integer> subscribedPartitions) {
+        this(nodeId, role, wsUrl, draining, reportedAt, expiresAt, subscribedPartitions, 0);
+    }
 
     public boolean activeAt(Instant now) {
         return nodeId != null

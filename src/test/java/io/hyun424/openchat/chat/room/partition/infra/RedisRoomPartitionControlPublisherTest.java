@@ -10,10 +10,12 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentCaptor.forClass;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class RedisRoomPartitionControlPublisherTest {
 
@@ -29,6 +31,8 @@ class RedisRoomPartitionControlPublisherTest {
                 new RoomPartitionControlChannelResolver(),
                 new RoomPartitionMetrics(new SimpleMeterRegistry())
         );
+        when(redisTemplate.convertAndSend(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn(1L);
 
         boolean published = publisher.publish(RoomPartitionControlCommand.reconnect(
                 10L,
@@ -53,5 +57,28 @@ class RedisRoomPartitionControlPublisherTest {
         assertEquals(100, payload.limit());
         assertEquals(500L, payload.retryAfterMs());
         assertEquals(4L, payload.routeVersion());
+    }
+
+    @Test
+    @DisplayName("node control channel receiver가 없으면 publish 실패로 처리한다")
+    void publish_returnsFalseWhenNodeControlHasNoReceivers() {
+        StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
+        RedisRoomPartitionControlPublisher publisher = new RedisRoomPartitionControlPublisher(
+                redisTemplate,
+                objectMapper,
+                new RoomPartitionControlChannelResolver(),
+                new RoomPartitionMetrics(new SimpleMeterRegistry())
+        );
+        when(redisTemplate.convertAndSend(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn(0L);
+
+        boolean published = publisher.publish(RoomPartitionControlCommand.nodeReconnect(
+                "node-a",
+                "node_drain",
+                100,
+                500
+        ));
+
+        assertFalse(published);
     }
 }

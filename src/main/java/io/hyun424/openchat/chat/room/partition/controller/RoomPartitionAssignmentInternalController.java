@@ -57,13 +57,13 @@ public class RoomPartitionAssignmentInternalController {
             @RequestParam(required = false) @Min(0) Long retryAfterMs
     ) {
         RealtimeNodeDrainService.NodeDrainResult result = nodeDrainService.startDrain(nodeId, limit, retryAfterMs);
-        return ResponseEntity.ok(new NodeDrainResponse(result.nodeId(), result.draining(), result.reconnectPublished()));
+        return ResponseEntity.ok(NodeDrainResponse.from(result));
     }
 
     @PostMapping("/nodes/{nodeId}/undrain")
     public ResponseEntity<NodeDrainResponse> unmarkDraining(@PathVariable String nodeId) {
         RealtimeNodeDrainService.NodeDrainResult result = nodeDrainService.stopDrain(nodeId);
-        return ResponseEntity.ok(new NodeDrainResponse(result.nodeId(), result.draining(), result.reconnectPublished()));
+        return ResponseEntity.ok(NodeDrainResponse.from(result));
     }
 
     public record NodeRegistryResponse(
@@ -80,8 +80,25 @@ public class RoomPartitionAssignmentInternalController {
 
     public record NodeDrainResponse(
             String nodeId,
+            String operationId,
             boolean draining,
-            boolean reconnectPublished
+            String status,
+            boolean reconnectPublished,
+            int targetedSessions,
+            int remainingSessions,
+            String reason
     ) {
+        static NodeDrainResponse from(RealtimeNodeDrainService.NodeDrainResult result) {
+            return new NodeDrainResponse(
+                    result.nodeId(),
+                    result.operationId(),
+                    result.draining(),
+                    result.status(),
+                    result.reconnectPublished(),
+                    result.targetedSessions(),
+                    result.remainingSessions(),
+                    result.reason()
+            );
+        }
     }
 }

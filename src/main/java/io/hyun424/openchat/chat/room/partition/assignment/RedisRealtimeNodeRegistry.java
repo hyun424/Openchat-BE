@@ -63,6 +63,7 @@ public class RedisRealtimeNodeRegistry implements RealtimeNodeRegistry {
                 String payload = redisTemplate.opsForValue().get(nodeKey(id));
                 if (payload == null || payload.isBlank()) {
                     redisTemplate.opsForSet().remove(NODES_KEY, id);
+                    redisTemplate.opsForSet().remove(DRAINING_KEY, id);
                     continue;
                 }
                 try {
@@ -74,10 +75,14 @@ public class RedisRealtimeNodeRegistry implements RealtimeNodeRegistry {
                             node.draining() || drainingIds.contains(node.nodeId()),
                             node.reportedAt(),
                             node.expiresAt(),
-                            node.subscribedPartitions() == null ? Set.of() : node.subscribedPartitions()
+                            node.subscribedPartitions() == null ? Set.of() : node.subscribedPartitions(),
+                            Math.max(0, node.openSessions())
                     );
                     if (normalized.expiresAt() != null && normalized.expiresAt().isAfter(now)) {
                         nodes.add(normalized);
+                    } else {
+                        redisTemplate.opsForSet().remove(NODES_KEY, id);
+                        redisTemplate.opsForSet().remove(DRAINING_KEY, id);
                     }
                 } catch (Exception e) {
                     log.warn("malformed realtime node registry entry nodeId={}", id, e);

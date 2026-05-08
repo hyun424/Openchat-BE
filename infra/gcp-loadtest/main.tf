@@ -427,6 +427,7 @@ resource "google_compute_instance" "api" {
       room_partition_assignment_enabled                          = var.room_partition_assignment_enabled ? "true" : "false"
       room_partition_assignment_dynamic_subscribe_enabled        = var.room_partition_assignment_dynamic_subscribe_enabled ? "true" : "false"
       room_partition_assignment_node_drain_enabled               = var.room_partition_assignment_node_drain_enabled ? "true" : "false"
+      room_partition_assignment_node_drain_readiness_timeout_ms  = var.room_partition_assignment_node_drain_readiness_timeout_ms
       room_partition_lifecycle_enabled                           = var.room_partition_lifecycle_enabled ? "true" : "false"
       room_partition_lifecycle_interval_ms                       = var.room_partition_lifecycle_interval_ms
       room_partition_lifecycle_scale_up_stable_window_ms         = var.room_partition_lifecycle_scale_up_stable_window_ms
@@ -515,6 +516,7 @@ resource "google_compute_instance" "realtime" {
       room_partition_assignment_enabled                          = var.room_partition_assignment_enabled ? "true" : "false"
       room_partition_assignment_dynamic_subscribe_enabled        = var.room_partition_assignment_dynamic_subscribe_enabled ? "true" : "false"
       room_partition_assignment_node_drain_enabled               = var.room_partition_assignment_node_drain_enabled ? "true" : "false"
+      room_partition_assignment_node_drain_readiness_timeout_ms  = var.room_partition_assignment_node_drain_readiness_timeout_ms
       room_partition_lifecycle_enabled                           = var.room_partition_lifecycle_enabled ? "true" : "false"
       room_partition_lifecycle_interval_ms                       = var.room_partition_lifecycle_interval_ms
       room_partition_lifecycle_scale_up_stable_window_ms         = var.room_partition_lifecycle_scale_up_stable_window_ms
@@ -717,6 +719,10 @@ resource "google_compute_instance" "k6" {
       k6_assignment_preflight_partition_count = var.room_partition_partition_count
       k6_assignment_preflight_expected_nodes  = var.k6_assignment_preflight_expected_nodes
       k6_assignment_preflight_timeout_seconds = var.k6_assignment_preflight_timeout_seconds
+      k6_node_drain_enabled                   = var.k6_node_drain_enabled ? "true" : "false"
+      k6_node_drain_after_seconds             = var.k6_node_drain_after_seconds
+      k6_node_drain_limit                     = var.k6_node_drain_limit
+      k6_node_drain_retry_after_ms            = var.k6_node_drain_retry_after_ms
       realtime_workload_summary_enabled       = var.realtime_workload_summary_enabled ? "true" : "false"
       connect_ramp_seconds                    = var.connect_ramp_seconds
       hot_rooms                               = var.hot_rooms

@@ -17,6 +17,7 @@ public class RoomPartitionAssignmentProperties {
     private boolean nodeDrainEnabled = false;
     private int nodeDrainReconnectLimit = 200;
     private long nodeDrainRetryAfterMs = 500;
+    private long nodeDrainReadinessTimeoutMs = 15000;
 
     public boolean enabled() {
         return enabled;
@@ -96,5 +97,13 @@ public class RoomPartitionAssignmentProperties {
 
     public void setNodeDrainRetryAfterMs(long nodeDrainRetryAfterMs) {
         this.nodeDrainRetryAfterMs = nodeDrainRetryAfterMs;
+    }
+
+    public long nodeDrainReadinessTimeoutMs() {
+        return Math.max(0, nodeDrainReadinessTimeoutMs);
+    }
+
+    public void setNodeDrainReadinessTimeoutMs(long nodeDrainReadinessTimeoutMs) {
+        this.nodeDrainReadinessTimeoutMs = nodeDrainReadinessTimeoutMs;
     }
 }

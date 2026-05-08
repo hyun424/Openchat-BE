@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.util.Set;
 
 import io.hyun424.openchat.chat.room.partition.config.RoomPartitionProperties;
+import io.hyun424.openchat.infra.websocket.session.RoomSessionRegistry;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -15,6 +16,7 @@ public class RealtimeNodeHeartbeatService {
     private final RealtimeNodeSubscriptionState subscriptionState;
     private final RoomPartitionAssignmentProperties properties;
     private final RoomPartitionProperties partitionProperties;
+    private final RoomSessionRegistry roomSessionRegistry;
     private final String nodeId;
     private final String role;
 
@@ -23,6 +25,7 @@ public class RealtimeNodeHeartbeatService {
             RealtimeNodeSubscriptionState subscriptionState,
             RoomPartitionAssignmentProperties properties,
             RoomPartitionProperties partitionProperties,
+            RoomSessionRegistry roomSessionRegistry,
             @Value("${app.instance-id:local}") String nodeId,
             @Value("${app.role:combined}") String role
     ) {
@@ -30,6 +33,7 @@ public class RealtimeNodeHeartbeatService {
         this.subscriptionState = subscriptionState;
         this.properties = properties;
         this.partitionProperties = partitionProperties;
+        this.roomSessionRegistry = roomSessionRegistry;
         this.nodeId = nodeId;
         this.role = role;
     }
@@ -44,7 +48,8 @@ public class RealtimeNodeHeartbeatService {
                 drainingIds.contains(nodeId),
                 now,
                 now.plusMillis(properties.retentionMs()),
-                subscribedPartitions()
+                subscribedPartitions(),
+                roomSessionRegistry.openSessions().size()
         );
         registry.heartbeat(node);
     }

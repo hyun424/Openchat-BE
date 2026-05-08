@@ -44,10 +44,10 @@ public class RoomPartitionControlSubscriber {
                 metrics.recordControlIgnored("invalid_node_reconnect");
                 return;
             }
-            int targeted = controlHandler.handleNodeReconnect(command);
+            RoomPartitionControlHandler.NodeReconnectResult result = controlHandler.handleNodeReconnect(command);
             metrics.recordControlReceived(type, "success");
-            log.debug("[ROOM PARTITION CONTROL NODE RECONNECT] nodeId={} targeted={} reason={}",
-                    command.nodeId(), targeted, command.reason());
+            log.info("[ROOM PARTITION CONTROL NODE RECONNECT] nodeId={} openSessionsBefore={} sent={} remainingOpenSessions={} reason={}",
+                    command.nodeId(), result.openSessionsBefore(), result.sent(), result.remainingOpenSessions(), command.reason());
             return;
         }
 
