@@ -528,6 +528,28 @@ node drain smoke 이후 남은 문제는 "drain이 된다"가 아니라, 운영�
 
 trade-off는 남아 있다. 이 작업은 durable command log, background orchestrator, force-drain, EKS/MIG hook을 구현하지 않는다. 대신 현재 단계에서는 운영 판단을 명확하게 만들고, 후속 자동화가 붙을 수 있는 응답 계약을 준비하는 데 집중한다.
 
+#### Validation Result
+
+`20260508-node-drain-hardening-smoke` GCP smoke에서 status-only hardening의 응답 계약이 실제 node drain 흐름에서도 유지되는지 확인했다.
+
+결과는 다음과 같다.
+
+- k6 exit code `0`
+- HTTP error rate `0.00%`
+- WebSocket connect success `149/149`
+- route failure/fallback/mismatch `0/0/0`
+- node drain reconnect controls `49`
+- sent/ack/DB rows `22,271 / 22,271 / 22,271`
+- observer visible freshness p95 `122.45ms`
+- target node `gcp-realtime-1`
+- status transition `reconnect_published -> sessions_remaining -> complete`
+- drained node openSessions `0`
+- cleanup 후 RUN_ID GCE VM 잔여 없음
+
+이 결과로 `retryable`, `nextAction`, `readinessReason`이 단순 API 필드가 아니라, 실제 GCP smoke에서 drain runner가 다음 행동을 판단할 수 있는 contract로 동작함을 확인했다. 특히 `POST drain` 응답은 `reconnect_published`, `nextAction=poll_status`, `readinessReason=ready`였고, 이후 status polling은 `sessions_remaining`, 마지막 progress는 `complete`, `nextAction=none`으로 수렴했다.
+
+이번 결과의 의미는 "인프라 종료 자동화 완성"이 아니라 "인프라 종료 자동화를 붙이기 전에 앱이 종료 가능 상태를 명확히 판단할 수 있게 됐다"는 것이다. 다음 단계는 이 응답 계약을 사용하는 drain orchestrator 또는 운영 스크립트를 만들고, 그 다음에 MIG/EKS scale-in hook과 연결하는 것이다.
+
 ---
 
 ## 포트폴리오에서 사용할 최종 서사

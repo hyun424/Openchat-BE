@@ -261,3 +261,47 @@ v1에서는 안전성을 우선했다. 세션이 남아 있는데 강제로 unsu
 - status endpoint는 reconnect publish나 `markDraining`을 수행하지 않는다.
 - Redis registry의 `nodes()` 조회는 기존 구현상 stale node/draining flag cleanup을 할 수 있으므로, "완전 무부작용 GET"이 아니라 "drain command를 실행하지 않는 observation endpoint"로 해석한다.
 - Redis Pub/Sub command durability, ack/retry log, force-drain, EKS/MIG lifecycle hook은 후속 작업으로 둔다.
+
+### Follow-up Result: Node Drain Status-only Hardening Smoke
+
+`20260508-node-drain-hardening-smoke`로 GCP regression smoke를 실행했다. 이 실행은 새 테스트 하네스를 만들지 않고 기존 node drain smoke profile을 사용했으며, 앱 코드, k6, Terraform, production default를 변경하지 않는 `EXECUTION_ONLY` 검증이었다.
+
+#### Result
+
+| 항목 | 결과 |
+|---|---:|
+| k6 exit code | `0` |
+| HTTP error rate | `0.00%` |
+| WebSocket connect success | `149/149` |
+| route failure/fallback/mismatch | `0/0/0` |
+| node drain reconnect controls | `49` |
+| sent/ack/DB rows | `22,271 / 22,271 / 22,271` |
+| observer visible freshness p95 | `122.45ms` |
+| target node | `gcp-realtime-1` |
+| drained node openSessions | `0` |
+| cleanup | RUN_ID GCE VM 잔여 없음 |
+
+#### Status Contract Evidence
+
+node drain 응답과 status polling snapshot에서 다음 상태 전이가 확인됐다.
+
+1. `POST drain`: `status=reconnect_published`, `retryable=true`, `nextAction=poll_status`, `readinessReason=ready`, `targetedSessions=47`
+2. after-request `GET drain/status`: `status=sessions_remaining`, `retryable=true`, `nextAction=retry_reconnect`, `readinessReason=ready`, `remainingSessions=47`
+3. progress `GET drain/status`: `status=complete`, `retryable=false`, `nextAction=none`, `readinessReason=ready`, `remainingSessions=0`
+
+이 결과는 status-only hardening의 핵심 가정, 즉 future orchestrator가 응답만 보고 `poll`, `retry`, `wait`, `complete`를 구분할 수 있다는 점을 GCP 환경에서 확인한 것이다.
+
+#### Interpretation
+
+이번 단계는 자동 VM 종료나 EKS eviction을 수행하지 않는다. 대신 "이 node를 종료해도 되는가?"를 앱 레벨에서 판단할 수 있는 contract를 고정했다.
+
+포트폴리오에서는 다음처럼 설명한다.
+
+> WebSocket node drain을 단순 reconnect command가 아니라 운영 판단 contract로 확장했다. `retryable`, `nextAction`, `readinessReason`을 도입하고, replacement owner readiness를 확인한 뒤에만 `complete`로 판정하도록 보강했다. GCP smoke에서 `reconnect_published -> sessions_remaining -> complete` 전이, route mismatch `0`, sent/ack/DB rows `22,271`건 일치, drained node openSessions `0`을 확인해 future MIG/EKS scale-in이 붙을 수 있는 앱 레벨 종료 가능 신호를 검증했다.
+
+#### Remaining Work
+
+- drain orchestrator 또는 운영 스크립트가 `nextAction`을 읽고 poll/retry/wait/abort/complete를 자동 수행하게 만든다.
+- 반복 reconnect가 필요한 상황에서 command durability와 ack/retry log가 필요한지 검토한다.
+- MIG/EKS scale-in hook은 drain orchestrator가 `complete`를 확인한 뒤 연결한다.
+- smoke 이후 load/soak에서 반복 drain, observer visibility, ack/DB 정합성 누적을 확인한다.

@@ -365,6 +365,8 @@ OpenChat은 hot room fan-out을 partition으로 나누는 단계까지 발전했
 
 GCP node drain smoke에서 WebSocket connect success `145/145`, route failure/fallback/mismatch `0/0/0`, node drain reconnect control `45`건, sent/ack/DB rows `22300/22300/22300` 일치를 확인했다. drain 대상 node `gcp-realtime-1`은 assignment owner에서 제외됐고, 최종 open session count가 `0`이 되었다. 이 결과로 "node를 안전하게 비운 뒤 종료 가능 상태로 만들 수 있다"는 앱 레벨 근거를 확보했다.
 
+후속 hardening에서는 운영자나 future orchestrator가 응답만 보고 다음 행동을 판단할 수 있도록 `GET /drain/status`, `retryable`, `nextAction`, `readinessReason` 계약을 추가했다. `20260508-node-drain-hardening-smoke`에서는 k6 exit code `0`, HTTP error `0.00%`, WebSocket connect `149/149`, route failure/fallback/mismatch `0/0/0`, node drain reconnect control `49`건, sent/ack/DB rows `22271/22271/22271`, drained node openSessions `0`을 확인했다. status snapshot은 `reconnect_published -> sessions_remaining -> complete`로 수렴했고, 마지막 상태는 `nextAction=none`, `readinessReason=ready`였다.
+
 ### 배운 점
 
 실시간 시스템의 scale-out은 서버 수 증가가 아니라 ownership contract를 맞추는 문제다. route, 실제 연결, subscriber, reconnect, drain completion signal이 모두 같은 기준을 따라야 운영 가능한 구조가 된다. 또한 EKS나 MIG 자동 종료를 붙이기 전에, 애플리케이션이 먼저 "이 node는 안전하게 비워졌다"는 상태를 증명할 수 있어야 한다.
