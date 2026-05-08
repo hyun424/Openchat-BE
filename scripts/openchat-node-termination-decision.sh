@@ -20,21 +20,40 @@ Options:
 USAGE
 }
 
+invalid_usage() {
+  local message="$1"
+  echo "$message" >&2
+  usage >&2
+  exit 30
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --input)
+      if [ "$#" -lt 2 ] || [[ "${2:-}" == --* ]]; then
+        invalid_usage "--input requires a value"
+      fi
       INPUT="${2:-}"
       shift 2
       ;;
     --node-id)
+      if [ "$#" -lt 2 ] || [[ "${2:-}" == --* ]]; then
+        invalid_usage "--node-id requires a value"
+      fi
       NODE_ID="${2:-}"
       shift 2
       ;;
     --output)
+      if [ "$#" -lt 2 ] || [[ "${2:-}" == --* ]]; then
+        invalid_usage "--output requires a value"
+      fi
       OUTPUT="${2:-}"
       shift 2
       ;;
     --max-age-seconds)
+      if [ "$#" -lt 2 ] || [[ "${2:-}" == --* ]]; then
+        invalid_usage "--max-age-seconds requires a value"
+      fi
       MAX_AGE_SECONDS="${2:-}"
       shift 2
       ;;
@@ -43,9 +62,7 @@ while [ "$#" -gt 0 ]; do
       exit 0
       ;;
     *)
-      echo "Unknown argument: $1" >&2
-      usage >&2
-      exit 1
+      invalid_usage "Unknown argument: $1"
       ;;
   esac
 done
@@ -83,19 +100,22 @@ write_output() {
   printf '%s\n' "$json"
 }
 
-write_invalid_input() {
-  local reason="$1"
+write_input_error() {
+  local result="$1"
+  local exit_code="$2"
+  local reason="$3"
   local created_at
   created_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
   local json
   json="$(jq -n \
     --arg contractVersion "$CONTRACT_VERSION" \
     --arg nodeId "$NODE_ID" \
+    --arg result "$result" \
     --arg reason "$reason" \
     --arg createdAt "$created_at" \
     '{
       contractVersion: $contractVersion,
-      result: "invalid_input",
+      result: $result,
       terminationAllowed: false,
       recommendedAction: "fix_input",
       nodeId: $nodeId,
@@ -114,15 +134,19 @@ write_invalid_input() {
       createdAt: $createdAt
     }')"
   write_output "$json"
-  exit 30
+  exit "$exit_code"
+}
+
+write_unexpected_input() {
+  write_input_error "unexpected_input" 31 "$1"
 }
 
 validate_input_file() {
   if [ ! -r "$INPUT" ]; then
-    write_invalid_input "input file is not readable"
+    write_unexpected_input "input file is not readable"
   fi
   if ! jq -e . "$INPUT" >/dev/null 2>&1; then
-    write_invalid_input "input is not valid JSON"
+    write_unexpected_input "input is not valid JSON"
   fi
   if ! jq -e '
     type == "object"
@@ -135,7 +159,7 @@ validate_input_file() {
     and (.remainingSessions | type == "number")
     and (.completedAt | type == "string")
   ' "$INPUT" >/dev/null 2>&1; then
-    write_invalid_input "input missing required orchestrator result fields"
+    write_unexpected_input "input missing required orchestrator result fields"
   fi
 }
 
@@ -175,7 +199,7 @@ build_decision() {
           guard("source_status_complete"; $source.lastStatus == "complete"; "complete"; $source.lastStatus),
           guard("source_next_action_none"; $source.lastNextAction == "none"; "none"; $source.lastNextAction),
           guard("remaining_sessions_zero"; $source.remainingSessions == 0; "0"; $source.remainingSessions),
-          guard("result_fresh"; ($completedEpoch != null and $ageSeconds <= $maxAgeSeconds); ("age <= " + ($maxAgeSeconds | tostring)); (if $completedEpoch == null then "invalid completedAt" else ($ageSeconds | floor) end))
+          guard("result_fresh"; ($completedEpoch != null and $ageSeconds >= 0 and $ageSeconds <= $maxAgeSeconds); ("0 <= age <= " + ($maxAgeSeconds | tostring)); (if $completedEpoch == null then "invalid completedAt" else ($ageSeconds | floor) end))
         ] as $guards
       | ($guards | map(select(.passed == false))) as $failed
       | ($guards | map(select(.name == "node_id_match" and .passed == false)) | length > 0) as $nodeMismatch

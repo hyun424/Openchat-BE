@@ -120,8 +120,8 @@ test_invalid_json_is_unexpected_input() {
   exit_code=$?
   set -e
 
-  assert_eq "30" "$exit_code" "exit code"
-  assert_eq "invalid_input" "$(jq -r '.result' "$CASE_DIR/result.json")" "result"
+  assert_eq "31" "$exit_code" "exit code"
+  assert_eq "unexpected_input" "$(jq -r '.result' "$CASE_DIR/result.json")" "result"
   assert_eq "fix_input" "$(jq -r '.recommendedAction' "$CASE_DIR/result.json")" "recommendedAction"
 }
 
@@ -134,8 +134,8 @@ test_missing_required_field_is_unexpected_input() {
   exit_code=$?
   set -e
 
-  assert_eq "30" "$exit_code" "exit code"
-  assert_eq "invalid_input" "$(jq -r '.result' "$CASE_DIR/result.json")" "result"
+  assert_eq "31" "$exit_code" "exit code"
+  assert_eq "unexpected_input" "$(jq -r '.result' "$CASE_DIR/result.json")" "result"
 }
 
 test_missing_arguments_are_usage_error() {
@@ -178,6 +178,22 @@ test_stale_ready_result_is_unsafe() {
   assert_eq "false" "$(jq -r '.guards[] | select(.name == "result_fresh") | .passed' "$CASE_DIR/result.json")" "freshness guard"
 }
 
+test_future_completed_at_is_unsafe() {
+  new_case "future"
+  future_completed_at="$(date -u -d '+1 hour' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -v+1H +"%Y-%m-%dT%H:%M:%SZ")"
+  ready_json | jq --arg completedAt "$future_completed_at" '.completedAt = $completedAt' > "$CASE_DIR/input.json"
+
+  set +e
+  "$SCRIPT" --input "$CASE_DIR/input.json" --node-id node-a --max-age-seconds 600 \
+    --output "$CASE_DIR/result.json" > "$CASE_DIR/stdout.json"
+  exit_code=$?
+  set -e
+
+  assert_eq "20" "$exit_code" "exit code"
+  assert_eq "unsafe" "$(jq -r '.result' "$CASE_DIR/result.json")" "result"
+  assert_eq "false" "$(jq -r '.guards[] | select(.name == "result_fresh") | .passed' "$CASE_DIR/result.json")" "freshness guard"
+}
+
 test_unknown_source_result_is_unexpected_input() {
   new_case "unknown-result"
   ready_json | jq '.result = "weird"' > "$CASE_DIR/input.json"
@@ -200,6 +216,7 @@ test_missing_required_field_is_unexpected_input
 test_missing_arguments_are_usage_error
 test_nonzero_source_exit_code_is_unsafe
 test_stale_ready_result_is_unsafe
+test_future_completed_at_is_unsafe
 test_unknown_source_result_is_unexpected_input
 
 echo "openchat node termination decision tests passed"
