@@ -155,3 +155,82 @@ Acceptance:
 - final `room_partition_state.status=ACTIVE`
 - final partition count is below the scale-up peak
 - cleanup leaves no GCE VM residue
+
+## Implementation Status
+
+Status: completed in local commit `a924cca feat: automate partition lifecycle scaling`.
+
+Completed scope:
+
+- lifecycle configuration and production-disabled defaults
+- Redis scheduler lease and room operation cooldowns
+- automatic scale-up decision and action
+- `completeScaleUp()` state transition
+- scale-up redistribution through reconnect controls
+- k6 reconnect handling and route metric capture
+- drain progress in realtime node snapshots
+- drain progress aggregation in cluster summary
+- automatic scale-down drain/reconnect/complete flow
+- low-cardinality lifecycle metrics and room-level logs
+- GCP lifecycle smoke profile and result collection
+- targeted lifecycle unit tests
+- full local test pass
+
+The implementation keeps the lifecycle loop disabled by default. GCP smoke enables it explicitly through the load-test profile.
+
+## Final GCP Smoke Result
+
+Final accepted run:
+
+```text
+run id: 20260508-auto-partition-lifecycle-smoke6
+k6 exit code: 0
+HTTP error: 0%
+WebSocket connect success: 100%
+sent / ack / DB rows: 22,039 / 22,039 / 22,039
+reconnect controls received by k6: 75
+final room_partition_state.status: ACTIVE
+final room_partition_state.partition_count: 2
+GCE VM residue after cleanup: none
+```
+
+Observed state transition:
+
+```text
+1 ACTIVE
+-> 4 ACTIVE
+-> 4 DRAINING draining_partitions=2,3
+-> 2 ACTIVE
+```
+
+Important log evidence:
+
+- `partition scale-up completed`
+- `partition redistribution requested`
+- `partition scale-down drain started`
+- `partition drain completed`
+
+Negative checks:
+
+- no `getWsRoute failed`
+- no duplicate key error for partition state initialization
+- no partition exception
+- no sent/ack/DB mismatch in final smoke
+
+## Known Notes
+
+- Smoke profile intentionally leaves the final persisted state at `ACTIVE 2`. The implementation can continue with a later `2 -> 1` drain, but the final smoke cooldown keeps the result artifact focused on one full scale-up plus one full safe scale-down.
+- A previous smoke observed `sent=22,339`, `ack=22,333`, `DB=22,339`. This was a k6 reconnect observation issue, not server-side message loss. k6 was closing the socket immediately after `room.reconnect` before pending acks could be counted. The final implementation stops sending, waits briefly for pending acks, flushes counters, then reconnects.
+- The next design topic is dynamic realtime partition ownership. Current GCP smoke still uses explicit node/partition assignment through environment configuration.
+
+## Local Verification
+
+Commands run after implementation:
+
+```bash
+terraform -chdir=infra/gcp-loadtest fmt -check
+git diff --check
+./gradlew test
+```
+
+All passed before commit `a924cca`.
