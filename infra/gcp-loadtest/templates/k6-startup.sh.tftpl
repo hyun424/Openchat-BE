@@ -220,6 +220,28 @@ collect_assignment_snapshot() {
     > "$RESULT_ROOT/metrics/room-partition-assignments-$suffix.json" || true
 }
 
+collect_node_drain_status_snapshot() {
+  local target_node="$1"
+  local suffix="$2"
+  local token="$3"
+  if [ -z "$target_node" ] || [ "$target_node" = "null" ]; then
+    echo "{\"error\":\"target node unavailable\"}" > "$RESULT_ROOT/metrics/node-drain-status-$suffix.json"
+    return 0
+  fi
+  if [ -z "$token" ]; then
+    token=$(get_workload_summary_token || true)
+  fi
+  if [ -z "$token" ]; then
+    echo "{\"error\":\"token unavailable\",\"targetNode\":\"$target_node\"}" > "$RESULT_ROOT/metrics/node-drain-status-$suffix.json"
+    return 0
+  fi
+
+  curl --max-time 10 -sf \
+    -H "Authorization: Bearer $token" \
+    "$BASE_URL/api/internal/room-partition/nodes/$target_node/drain/status" \
+    > "$RESULT_ROOT/metrics/node-drain-status-$suffix.json" || true
+}
+
 trigger_node_drain_during_run() {
   local label="$1"
   local output_file="$RESULT_ROOT/metrics/node-drain-$label.json"
@@ -267,23 +289,33 @@ trigger_node_drain_during_run() {
     return 1
   fi
   collect_assignment_snapshot "node-drain-after-request-$label"
+  collect_node_drain_status_snapshot "$target_node" "node-drain-after-request-$label" "$token"
 
   local complete="false"
   local last_sessions="unknown"
   local last_still_owner="unknown"
   local last_ready_count="unknown"
+  local last_drain_status="unknown"
+  local last_next_action="unknown"
   for attempt in $(seq 1 90); do
     sleep 2
     collect_assignment_snapshot "node-drain-progress-$label-$attempt"
+    collect_node_drain_status_snapshot "$target_node" "node-drain-progress-$label-$attempt" "$token"
     local sessions
     local still_owner
     local ready_count
+    local status_snapshot
+    local next_action
     sessions=$(jq -r --arg node "$target_node" '[ (.nodes // [])[] | select(.nodeId == $node) | (.openSessions // 0) ] | max // 0' "$RESULT_ROOT/metrics/room-partition-nodes-node-drain-progress-$label-$attempt.json" 2>/dev/null || echo "0")
     still_owner=$(jq -r --arg node "$target_node" '[ (.assignments // {})[] | select(.nodeId == $node) ] | length' "$RESULT_ROOT/metrics/room-partition-assignments-node-drain-progress-$label-$attempt.json" 2>/dev/null || echo "0")
     ready_count=$(jq -r '[ (.assignments // {})[] | select(.ready == true) ] | length' "$RESULT_ROOT/metrics/room-partition-assignments-node-drain-progress-$label-$attempt.json" 2>/dev/null || echo "0")
+    status_snapshot=$(jq -r '.status // "missing_status"' "$RESULT_ROOT/metrics/node-drain-status-node-drain-progress-$label-$attempt.json" 2>/dev/null || echo "parse_failed")
+    next_action=$(jq -r '.nextAction // "missing_next_action"' "$RESULT_ROOT/metrics/node-drain-status-node-drain-progress-$label-$attempt.json" 2>/dev/null || echo "parse_failed")
     last_sessions="$sessions"
     last_still_owner="$still_owner"
     last_ready_count="$ready_count"
+    last_drain_status="$status_snapshot"
+    last_next_action="$next_action"
     if [ "$sessions" = "0" ] && [ "$still_owner" = "0" ] && [ "$ready_count" -ge "$K6_ASSIGNMENT_PREFLIGHT_PARTITION_COUNT" ]; then
       complete="true"
       break
@@ -298,7 +330,9 @@ trigger_node_drain_during_run() {
       --arg sessions "$last_sessions" \
       --arg stillOwner "$last_still_owner" \
       --arg readyCount "$last_ready_count" \
-      '{targetNode: $targetNode, complete: false, status: $status, lastSessions: $sessions, lastStillOwner: $stillOwner, lastReadyCount: $readyCount}' \
+      --arg drainStatus "$last_drain_status" \
+      --arg nextAction "$last_next_action" \
+      '{targetNode: $targetNode, complete: false, status: $status, lastSessions: $sessions, lastStillOwner: $stillOwner, lastReadyCount: $readyCount, lastDrainStatus: $drainStatus, lastNextAction: $nextAction}' \
       > "$output_file" 2>/dev/null || echo "{\"targetNode\":\"$target_node\",\"complete\":false,\"status\":\"timeout\"}" > "$output_file"
     return 1
   fi
@@ -306,8 +340,10 @@ trigger_node_drain_during_run() {
   jq -nc \
     --arg targetNode "$target_node" \
     --arg complete "$complete" \
+    --arg drainStatus "$last_drain_status" \
+    --arg nextAction "$last_next_action" \
     --argjson response "$${drain_response:-null}" \
-    '{targetNode: $targetNode, complete: ($complete == "true"), response: $response}' \
+    '{targetNode: $targetNode, complete: ($complete == "true"), lastDrainStatus: $drainStatus, lastNextAction: $nextAction, response: $response}' \
     > "$output_file" 2>/dev/null || echo "{\"targetNode\":\"$target_node\",\"complete\":$complete}" > "$output_file"
 }
 
