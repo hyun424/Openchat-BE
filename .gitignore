@@ -18,6 +18,7 @@ docs/*
 !docs/OPENCHAT-BRANCH-DECISION-LOG.md
 !docs/LLM-WORKFLOW-RULES.md
 !docs/node-drain-orchestrator-plan.md
+!docs/node-termination-contract-plan.md
 data/
 k6/results/
 infra/gcp-loadtest/.terraform/
