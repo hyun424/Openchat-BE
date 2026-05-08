@@ -124,6 +124,7 @@ class RoomSessionRegistryTest {
         assertCounter(meterRegistry, "ws.send.failed", 1);
         assertCounter(meterRegistry, "ws.send.frame.failed", 1);
         awaitRoomCount(registry, 1L, 0);
+        verify(session, timeout(500)).close(CloseStatus.SESSION_NOT_RELIABLE);
         registry.shutdownExecutor();
         metrics.shutdown();
     }
@@ -144,6 +145,7 @@ class RoomSessionRegistryTest {
         assertCounter(meterRegistry, "ws.send.failed", 1);
         assertCounter(meterRegistry, "ws.send.frame.failed", 1);
         awaitRoomCount(registry, 1L, 0);
+        verify(session, timeout(500)).close(CloseStatus.SESSION_NOT_RELIABLE);
         registry.shutdownExecutor();
         metrics.shutdown();
     }

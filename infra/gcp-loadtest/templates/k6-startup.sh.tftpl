@@ -33,6 +33,7 @@ K6_ASSIGNMENT_PREFLIGHT_ENABLED="${k6_assignment_preflight_enabled}"
 K6_ASSIGNMENT_PREFLIGHT_PARTITION_COUNT="${k6_assignment_preflight_partition_count}"
 K6_ASSIGNMENT_PREFLIGHT_EXPECTED_NODES="${k6_assignment_preflight_expected_nodes}"
 K6_ASSIGNMENT_PREFLIGHT_TIMEOUT_SECONDS="${k6_assignment_preflight_timeout_seconds}"
+REALTIME_WORKLOAD_SUMMARY_ENABLED="${realtime_workload_summary_enabled}"
 CONNECT_RAMP_SECONDS="${connect_ramp_seconds}"
 HOT_ROOMS="${hot_rooms}"
 VUS_PER_ROOM="${vus_per_room}"
@@ -179,6 +180,13 @@ get_workload_summary_token() {
 
 collect_realtime_workload_snapshot() {
   local suffix="$1"
+  if [ "$REALTIME_WORKLOAD_SUMMARY_ENABLED" != "true" ]; then
+    echo "{\"enabled\":false,\"skipped\":true}" > "$RESULT_ROOT/metrics/realtime-workload-summary-$suffix.json"
+    echo "{\"enabled\":false,\"skipped\":true}" > "$RESULT_ROOT/metrics/realtime-workload-recommendations-$suffix.json"
+    collect_room_partition_state_dump "$suffix"
+    return 0
+  fi
+
   local workload_token
   workload_token=$(get_workload_summary_token || true)
   if [ -n "$workload_token" ]; then

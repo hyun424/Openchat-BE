@@ -407,6 +407,9 @@ resource "google_compute_instance" "api" {
       run_id                                                     = var.run_id
       app_role                                                   = "api"
       app_index                                                  = count.index + 1
+      spring_jpa_hibernate_ddl_auto                              = count.index == 0 ? "update" : "validate"
+      schema_initializer                                         = count.index == 0 ? "true" : "false"
+      schema_ready_object                                        = "runs/${var.run_id}/workers/schema.ready"
       mysql_ip                                                   = google_compute_instance.mysql.network_interface[0].network_ip
       redis_ip                                                   = google_compute_instance.redis.network_interface[0].network_ip
       websocket_broadcast_lanes                                  = var.websocket_broadcast_lanes
@@ -492,6 +495,9 @@ resource "google_compute_instance" "realtime" {
       run_id                                                     = var.run_id
       app_role                                                   = "realtime"
       app_index                                                  = count.index + 1
+      spring_jpa_hibernate_ddl_auto                              = "validate"
+      schema_initializer                                         = "false"
+      schema_ready_object                                        = "runs/${var.run_id}/workers/schema.ready"
       mysql_ip                                                   = google_compute_instance.mysql.network_interface[0].network_ip
       redis_ip                                                   = google_compute_instance.redis.network_interface[0].network_ip
       websocket_broadcast_lanes                                  = var.websocket_broadcast_lanes
@@ -711,6 +717,7 @@ resource "google_compute_instance" "k6" {
       k6_assignment_preflight_partition_count = var.room_partition_partition_count
       k6_assignment_preflight_expected_nodes  = var.k6_assignment_preflight_expected_nodes
       k6_assignment_preflight_timeout_seconds = var.k6_assignment_preflight_timeout_seconds
+      realtime_workload_summary_enabled       = var.realtime_workload_summary_enabled ? "true" : "false"
       connect_ramp_seconds                    = var.connect_ramp_seconds
       hot_rooms                               = var.hot_rooms
       vus_per_room                            = var.vus_per_room

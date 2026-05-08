@@ -11,6 +11,8 @@ import io.hyun424.openchat.chat.metrics.ChatPipelineMetrics;
 import io.hyun424.openchat.chat.outbox.PostCommitLivePublishService;
 import io.hyun424.openchat.chat.room.domain.Room;
 import io.hyun424.openchat.chat.room.metadata.RoomMetadataUpdateBuffer;
+import io.hyun424.openchat.chat.room.partition.metrics.RoomPartitionMetrics;
+import io.hyun424.openchat.chat.room.partition.service.RoomPartitionRoutingService;
 import io.hyun424.openchat.chat.room.service.RoomService;
 import io.hyun424.openchat.global.ratelimit.RateLimiter;
 import io.hyun424.openchat.infra.websocket.session.RoomSessionRegistry;
@@ -55,6 +57,8 @@ class ChatWebSocketHandlerTest {
     @Mock private ChatPipelineMetrics chatPipelineMetrics;
     @Mock private PostCommitLivePublishService postCommitLivePublishService;
     @Mock private RoomMetadataUpdateBuffer roomMetadataUpdateBuffer;
+    @Mock private RoomPartitionRoutingService roomPartitionRoutingService;
+    @Mock private RoomPartitionMetrics roomPartitionMetrics;
     @Mock private WebSocketSession session;
 
     @InjectMocks
@@ -307,6 +311,22 @@ class ChatWebSocketHandlerTest {
         verify(session).close(captor.capture());
         assertEquals(4002, captor.getValue().getCode());
         verify(chatIngestService, never()).ingest(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("afterConnectionEstablished: connected node frame은 registry 경유로 전송")
+    void afterConnectionEstablished_sendsConnectedNodeFrameThroughRegistry() throws Exception {
+        Room room = Room.builder().id(1L).name("Room").ownerId("x").build();
+        when(roomService.getRoomOrThrow(1L)).thenReturn(room);
+        when(roomSessionRegistry.sendControlToSession(eq("session-1"), any(), eq("node_connected"))).thenReturn(true);
+
+        handler.afterConnectionEstablished(session);
+
+        verify(roomSessionRegistry).add(eq(1L), isNull(), eq(session));
+        verify(roomSessionRegistry).sendControlToSession(eq("session-1"), argThat(payload ->
+                payload != null && payload.getClass().getSimpleName().equals("ConnectedNodePayload")
+        ), eq("node_connected"));
+        verify(session, never()).sendMessage(any(TextMessage.class));
     }
 
     @Test

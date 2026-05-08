@@ -10,7 +10,6 @@ import io.hyun424.openchat.chat.room.service.RoomService;
 import io.hyun424.openchat.infra.websocket.session.RoomSessionRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.socket.CloseStatus;
-import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
 @Slf4j
@@ -115,7 +114,10 @@ class WebSocketConnectionService {
                     partitionId,
                     routeQueryParser.assignmentVersion(session)
             );
-            session.sendMessage(new TextMessage(objectMapper.writeValueAsString(payload)));
+            boolean sent = roomSessionRegistry.sendControlToSession(session.getId(), payload, "node_connected");
+            if (!sent) {
+                log.warn("failed to send connected node control frame session={} nodeId={}", session.getId(), nodeId);
+            }
         } catch (Exception e) {
             log.warn("failed to send connected node control frame session={} nodeId={}", session.getId(), nodeId, e);
         }
