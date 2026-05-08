@@ -19,6 +19,17 @@ import org.springframework.stereotype.Service;
 public class RealtimeNodeDrainService {
 
     private static final String REASON = "node_drain";
+    private static final String ACTION_NONE = "none";
+    private static final String ACTION_POLL_STATUS = "poll_status";
+    private static final String ACTION_RETRY_RECONNECT = "retry_reconnect";
+    private static final String ACTION_WAIT_ASSIGNMENT = "wait_assignment";
+    private static final String ACTION_WAIT_REPLACEMENT_READY = "wait_replacement_ready";
+    private static final String ACTION_WAIT_NODE_HEARTBEAT = "wait_node_heartbeat";
+    private static final String ACTION_ADD_REPLACEMENT_NODE = "add_replacement_node";
+    private static final String ACTION_FIX_REQUEST = "fix_request";
+    private static final String ACTION_ENABLE_NODE_DRAIN = "enable_node_drain";
+    private static final String ACTION_INVESTIGATE_PUBLISH = "investigate_publish";
+    private static final String ACTION_START_DRAIN = "start_drain";
 
     private final RealtimeNodeRegistry registry;
     private final RoomPartitionControlPublisher controlPublisher;
@@ -44,39 +55,42 @@ public class RealtimeNodeDrainService {
         String operationId = operationId(nodeId);
         if (!properties.nodeDrainEnabled()) {
             log.info("realtime node drain skipped because node drain is disabled nodeId={}", nodeId);
-            return NodeDrainResult.skipped(nodeId, operationId, "disabled");
+            return NodeDrainResult.disabled(nodeId, operationId);
         }
         if (nodeId == null || nodeId.isBlank()) {
-            return NodeDrainResult.skipped(nodeId, operationId, "invalid_node");
+            return NodeDrainResult.invalid(nodeId, operationId);
         }
 
         List<RealtimeNode> nodes = registry.nodes();
         Optional<RealtimeNode> target = findNode(nodes, nodeId);
         if (target.isEmpty()) {
             log.info("realtime node drain rejected because node is unknown or stale nodeId={}", nodeId);
-            return NodeDrainResult.skipped(nodeId, operationId, "unknown_node");
+            return NodeDrainResult.unknown(nodeId, operationId);
         }
         if (!hasReplacementActiveNode(nodes, nodeId)) {
             log.info("realtime node drain rejected because target is the last active node nodeId={}", nodeId);
-            return NodeDrainResult.skipped(nodeId, operationId, "last_active_node", target.get().openSessions());
+            return NodeDrainResult.lastActive(nodeId, operationId, target.get().openSessions());
         }
 
         registry.markDraining(nodeId, true);
         Readiness readiness = waitForReplacementReady(nodeId);
         RealtimeNode currentTarget = currentTarget(nodeId).orElse(target.get());
         if (!readiness.ready()) {
-            log.info("realtime node drain waiting for replacement owner nodeId={} reason={} remainingSessions={}",
-                    nodeId, readiness.reason(), currentTarget.openSessions());
-            return NodeDrainResult.waiting(
+            NodeDrainResult result = NodeDrainResult.waitingForReadiness(
                     nodeId,
                     operationId,
                     readiness.reason(),
                     currentTarget.openSessions()
             );
+            log.info("realtime node drain waiting nodeId={} operationId={} status={} nextAction={} remainingSessions={} readinessReason={}",
+                    nodeId, operationId, result.status(), result.nextAction(), result.remainingSessions(), result.readinessReason());
+            return result;
         }
         if (currentTarget.openSessions() <= 0) {
-            log.info("realtime node drain complete without reconnect nodeId={}", nodeId);
-            return NodeDrainResult.complete(nodeId, operationId);
+            NodeDrainResult result = NodeDrainResult.complete(nodeId, operationId, readiness.reason());
+            log.info("realtime node drain complete without reconnect nodeId={} operationId={} status={} nextAction={} remainingSessions={} readinessReason={}",
+                    nodeId, operationId, result.status(), result.nextAction(), result.remainingSessions(), result.readinessReason());
+            return result;
         }
 
         RoomPartitionControlCommand command = RoomPartitionControlCommand.nodeReconnect(
@@ -87,25 +101,59 @@ public class RealtimeNodeDrainService {
         );
         int targetedSessions = Math.min(currentTarget.openSessions(), command.limit());
         boolean published = controlPublisher.publish(command);
-        String status = published ? "reconnect_published" : "publish_failed";
-        log.info("realtime node drain requested nodeId={} status={} openSessions={} reconnectPublished={} limit={} retryAfterMs={}",
-                nodeId, status, currentTarget.openSessions(), published, command.limit(), command.retryAfterMs());
-        return new NodeDrainResult(
-                nodeId,
-                operationId,
-                true,
-                status,
-                published,
-                targetedSessions,
-                currentTarget.openSessions(),
-                REASON
-        );
+        NodeDrainResult result = published
+                ? NodeDrainResult.reconnectPublished(nodeId, operationId, targetedSessions, currentTarget.openSessions(), readiness.reason())
+                : NodeDrainResult.publishFailed(nodeId, operationId, targetedSessions, currentTarget.openSessions(), readiness.reason());
+        log.info("realtime node drain requested nodeId={} operationId={} status={} nextAction={} remainingSessions={} readinessReason={} reconnectPublished={} limit={} retryAfterMs={}",
+                nodeId, operationId, result.status(), result.nextAction(), result.remainingSessions(), result.readinessReason(),
+                published, command.limit(), command.retryAfterMs());
+        return result;
+    }
+
+    public NodeDrainResult drainStatus(String nodeId) {
+        String operationId = operationId(nodeId);
+        if (!properties.nodeDrainEnabled()) {
+            return NodeDrainResult.disabled(nodeId, operationId);
+        }
+        if (nodeId == null || nodeId.isBlank()) {
+            return NodeDrainResult.invalid(nodeId, operationId);
+        }
+
+        Optional<RealtimeNode> target = currentTarget(nodeId);
+        if (target.isEmpty()) {
+            return NodeDrainResult.unknown(nodeId, operationId);
+        }
+        RealtimeNode currentTarget = target.get();
+        if (!currentTarget.draining()) {
+            return NodeDrainResult.notDraining(nodeId, operationId, currentTarget.openSessions());
+        }
+        if (currentTarget.openSessions() <= 0) {
+            return NodeDrainResult.complete(nodeId, operationId, "ready");
+        }
+
+        Readiness readiness = replacementReady(nodeId);
+        if (!readiness.ready()) {
+            return NodeDrainResult.waitingForReadiness(nodeId, operationId, readiness.reason(), currentTarget.openSessions());
+        }
+        return NodeDrainResult.sessionsRemaining(nodeId, operationId, currentTarget.openSessions(), readiness.reason());
     }
 
     public NodeDrainResult stopDrain(String nodeId) {
         registry.markDraining(nodeId, false);
         log.info("realtime node drain cleared nodeId={}", nodeId);
-        return new NodeDrainResult(nodeId, operationId(nodeId), false, "undrained", false, 0, 0, REASON);
+        return new NodeDrainResult(
+                nodeId,
+                operationId(nodeId),
+                false,
+                "undrained",
+                false,
+                0,
+                0,
+                REASON,
+                false,
+                ACTION_NONE,
+                null
+        );
     }
 
     private Optional<RealtimeNode> findNode(List<RealtimeNode> nodes, String nodeId) {
@@ -182,22 +230,157 @@ public class RealtimeNodeDrainService {
             boolean reconnectPublished,
             int targetedSessions,
             int remainingSessions,
-            String reason
+            String reason,
+            boolean retryable,
+            String nextAction,
+            String readinessReason
     ) {
-        static NodeDrainResult skipped(String nodeId, String operationId, String status) {
-            return skipped(nodeId, operationId, status, 0);
+        static NodeDrainResult disabled(String nodeId, String operationId) {
+            return skipped(nodeId, operationId, "disabled", 0, false, ACTION_ENABLE_NODE_DRAIN, null);
         }
 
-        static NodeDrainResult skipped(String nodeId, String operationId, String status, int remainingSessions) {
-            return new NodeDrainResult(nodeId, operationId, false, status, false, 0, Math.max(0, remainingSessions), REASON);
+        static NodeDrainResult invalid(String nodeId, String operationId) {
+            return skipped(nodeId, operationId, "invalid_node", 0, false, ACTION_FIX_REQUEST, null);
         }
 
-        static NodeDrainResult waiting(String nodeId, String operationId, String status, int remainingSessions) {
-            return new NodeDrainResult(nodeId, operationId, true, status, false, 0, Math.max(0, remainingSessions), REASON);
+        static NodeDrainResult unknown(String nodeId, String operationId) {
+            return skipped(nodeId, operationId, "unknown_node", 0, true, ACTION_WAIT_NODE_HEARTBEAT, null);
         }
 
-        static NodeDrainResult complete(String nodeId, String operationId) {
-            return new NodeDrainResult(nodeId, operationId, true, "complete", false, 0, 0, REASON);
+        static NodeDrainResult lastActive(String nodeId, String operationId, int remainingSessions) {
+            return skipped(nodeId, operationId, "last_active_node", remainingSessions, false, ACTION_ADD_REPLACEMENT_NODE, null);
+        }
+
+        static NodeDrainResult notDraining(String nodeId, String operationId, int remainingSessions) {
+            return skipped(nodeId, operationId, "not_draining", remainingSessions, false, ACTION_START_DRAIN, null);
+        }
+
+        static NodeDrainResult skipped(
+                String nodeId,
+                String operationId,
+                String status,
+                int remainingSessions,
+                boolean retryable,
+                String nextAction,
+                String readinessReason
+        ) {
+            return new NodeDrainResult(
+                    nodeId,
+                    operationId,
+                    false,
+                    status,
+                    false,
+                    0,
+                    Math.max(0, remainingSessions),
+                    REASON,
+                    retryable,
+                    nextAction,
+                    readinessReason
+            );
+        }
+
+        static NodeDrainResult waitingForReadiness(String nodeId, String operationId, String status, int remainingSessions) {
+            return new NodeDrainResult(
+                    nodeId,
+                    operationId,
+                    true,
+                    status,
+                    false,
+                    0,
+                    Math.max(0, remainingSessions),
+                    REASON,
+                    true,
+                    actionForReadiness(status),
+                    status
+            );
+        }
+
+        static NodeDrainResult complete(String nodeId, String operationId, String readinessReason) {
+            return new NodeDrainResult(
+                    nodeId,
+                    operationId,
+                    true,
+                    "complete",
+                    false,
+                    0,
+                    0,
+                    REASON,
+                    false,
+                    ACTION_NONE,
+                    readinessReason
+            );
+        }
+
+        static NodeDrainResult reconnectPublished(
+                String nodeId,
+                String operationId,
+                int targetedSessions,
+                int remainingSessions,
+                String readinessReason
+        ) {
+            return new NodeDrainResult(
+                    nodeId,
+                    operationId,
+                    true,
+                    "reconnect_published",
+                    true,
+                    Math.max(0, targetedSessions),
+                    Math.max(0, remainingSessions),
+                    REASON,
+                    true,
+                    ACTION_POLL_STATUS,
+                    readinessReason
+            );
+        }
+
+        static NodeDrainResult publishFailed(
+                String nodeId,
+                String operationId,
+                int targetedSessions,
+                int remainingSessions,
+                String readinessReason
+        ) {
+            return new NodeDrainResult(
+                    nodeId,
+                    operationId,
+                    true,
+                    "publish_failed",
+                    false,
+                    Math.max(0, targetedSessions),
+                    Math.max(0, remainingSessions),
+                    REASON,
+                    true,
+                    ACTION_INVESTIGATE_PUBLISH,
+                    readinessReason
+            );
+        }
+
+        static NodeDrainResult sessionsRemaining(
+                String nodeId,
+                String operationId,
+                int remainingSessions,
+                String readinessReason
+        ) {
+            return new NodeDrainResult(
+                    nodeId,
+                    operationId,
+                    true,
+                    "sessions_remaining",
+                    false,
+                    0,
+                    Math.max(0, remainingSessions),
+                    REASON,
+                    true,
+                    ACTION_RETRY_RECONNECT,
+                    readinessReason
+            );
+        }
+
+        private static String actionForReadiness(String status) {
+            if ("assignment_unavailable".equals(status)) {
+                return ACTION_WAIT_ASSIGNMENT;
+            }
+            return ACTION_WAIT_REPLACEMENT_READY;
         }
     }
 

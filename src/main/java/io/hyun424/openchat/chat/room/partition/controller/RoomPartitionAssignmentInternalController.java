@@ -60,6 +60,12 @@ public class RoomPartitionAssignmentInternalController {
         return ResponseEntity.ok(NodeDrainResponse.from(result));
     }
 
+    @GetMapping("/nodes/{nodeId}/drain/status")
+    public ResponseEntity<NodeDrainResponse> drainStatus(@PathVariable String nodeId) {
+        RealtimeNodeDrainService.NodeDrainResult result = nodeDrainService.drainStatus(nodeId);
+        return ResponseEntity.ok(NodeDrainResponse.from(result));
+    }
+
     @PostMapping("/nodes/{nodeId}/undrain")
     public ResponseEntity<NodeDrainResponse> unmarkDraining(@PathVariable String nodeId) {
         RealtimeNodeDrainService.NodeDrainResult result = nodeDrainService.stopDrain(nodeId);
@@ -86,7 +92,10 @@ public class RoomPartitionAssignmentInternalController {
             boolean reconnectPublished,
             int targetedSessions,
             int remainingSessions,
-            String reason
+            String reason,
+            boolean retryable,
+            String nextAction,
+            String readinessReason
     ) {
         static NodeDrainResponse from(RealtimeNodeDrainService.NodeDrainResult result) {
             return new NodeDrainResponse(
@@ -97,7 +106,10 @@ public class RoomPartitionAssignmentInternalController {
                     result.reconnectPublished(),
                     result.targetedSessions(),
                     result.remainingSessions(),
-                    result.reason()
+                    result.reason(),
+                    result.retryable(),
+                    result.nextAction(),
+                    result.readinessReason()
             );
         }
     }
