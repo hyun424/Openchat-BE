@@ -90,6 +90,8 @@ test_reconnect_retry_then_complete() {
   assert_eq "openchat.reconnect-command-log.v1" "$(jq -r '.durableReconnectCommandLog.contractVersion' "$CASE_DIR/result.json")" "durable log contract"
   assert_eq "false" "$(jq -r '.durableReconnectCommandLog.enabled' "$CASE_DIR/result.json")" "durable log default enabled"
   assert_eq "reconnect-a,reconnect-b" "$(jq -r '.durableReconnectCommandLog.expectedCommandIds | join(",")' "$CASE_DIR/result.json")" "durable expected ids"
+  assert_eq "false" "$(jq -r '.durableReconnectCommandLog.deliveryEvidence.enabled' "$CASE_DIR/result.json")" "delivery evidence default enabled"
+  assert_eq "audit_only" "$(jq -r '.durableReconnectCommandLog.deliveryEvidence.mode' "$CASE_DIR/result.json")" "delivery evidence mode"
 }
 
 test_blocked_last_active_node() {
