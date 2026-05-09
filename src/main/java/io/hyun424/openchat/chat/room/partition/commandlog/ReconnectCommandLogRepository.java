@@ -137,6 +137,31 @@ public class ReconnectCommandLogRepository {
                 ROW_MAPPER);
     }
 
+    public List<String> findExpiredCommandIds(long cutoffCreatedAt, int limit) {
+        return jdbcTemplate.queryForList("""
+                        SELECT command_id
+                        FROM reconnect_command_log
+                        WHERE created_at < :cutoffCreatedAt
+                        ORDER BY created_at ASC, id ASC
+                        LIMIT :limit
+                        """,
+                new MapSqlParameterSource()
+                        .addValue("cutoffCreatedAt", cutoffCreatedAt)
+                        .addValue("limit", Math.max(1, limit)),
+                String.class);
+    }
+
+    public int deleteByCommandIds(Collection<String> commandIds) {
+        if (commandIds == null || commandIds.isEmpty()) {
+            return 0;
+        }
+        return jdbcTemplate.update("""
+                        DELETE FROM reconnect_command_log
+                        WHERE command_id IN (:commandIds)
+                        """,
+                new MapSqlParameterSource("commandIds", commandIds));
+    }
+
     private static Long nullableLong(ResultSet rs, String column) throws SQLException {
         long value = rs.getLong(column);
         return rs.wasNull() ? null : value;

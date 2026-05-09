@@ -150,6 +150,12 @@ variable "k6_node_termination_decision_enabled" {
   default     = false
 }
 
+variable "k6_node_termination_strict_delivery_evidence_enabled" {
+  description = "Require reconnect command delivery evidence in the provider-neutral termination decision command."
+  type        = bool
+  default     = false
+}
+
 variable "k6_gcp_node_termination_adapter_enabled" {
   description = "Run the GCP VM termination adapter after node termination decision succeeds."
   type        = bool

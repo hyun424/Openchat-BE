@@ -34,6 +34,7 @@ k6_node_drain_orchestrator_timeout_seconds = 240
 k6_node_drain_orchestrator_poll_interval_ms = 2000
 k6_node_drain_orchestrator_max_reconnect_attempts = 8
 k6_node_termination_decision_enabled = true
+k6_node_termination_strict_delivery_evidence_enabled = false
 k6_gcp_node_termination_adapter_enabled = true
 k6_gcp_node_termination_adapter_mode = "stop"
 k6_gcp_node_termination_post_stop_probe_enabled = true

@@ -732,6 +732,7 @@ resource "google_compute_instance" "k6" {
       k6_node_drain_orchestrator_poll_interval_ms              = var.k6_node_drain_orchestrator_poll_interval_ms
       k6_node_drain_orchestrator_max_reconnect_attempts        = var.k6_node_drain_orchestrator_max_reconnect_attempts
       k6_node_termination_decision_enabled                     = var.k6_node_termination_decision_enabled ? "true" : "false"
+      k6_node_termination_strict_delivery_evidence_enabled     = var.k6_node_termination_strict_delivery_evidence_enabled ? "true" : "false"
       k6_gcp_node_termination_adapter_enabled                  = var.k6_gcp_node_termination_adapter_enabled ? "true" : "false"
       k6_gcp_node_termination_adapter_mode                     = var.k6_gcp_node_termination_adapter_mode
       k6_gcp_node_termination_post_stop_probe_enabled          = var.k6_gcp_node_termination_post_stop_probe_enabled ? "true" : "false"

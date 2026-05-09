@@ -227,7 +227,18 @@ write_result() {
           duplicateCommandIds: [],
           recordCount: 0,
           lastRecordedCommandId: null,
-          records: []
+          records: [],
+          deliveryEvidence: {
+            enabled: false,
+            mode: "audit_only",
+            collectionStatus: "disabled",
+            collectionError: null,
+            complete: false,
+            commandCount: 0,
+            strictEligibleCommandCount: 0,
+            missingHandlers: [],
+            failedHandlers: []
+          }
         }
       )
     }')"

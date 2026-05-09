@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS reconnect_command_log (
   last_error TEXT NULL,
   PRIMARY KEY (id),
   UNIQUE KEY uk_reconnect_command_id (command_id),
+  KEY idx_reconnect_command_created (created_at, id),
   KEY idx_reconnect_command_operation (operation_id, created_at),
   KEY idx_reconnect_command_target_node (target_node_id, created_at)
 );
