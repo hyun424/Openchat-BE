@@ -42,6 +42,7 @@ K6_NODE_DRAIN_ORCHESTRATOR_TIMEOUT_SECONDS="${k6_node_drain_orchestrator_timeout
 K6_NODE_DRAIN_ORCHESTRATOR_POLL_INTERVAL_MS="${k6_node_drain_orchestrator_poll_interval_ms}"
 K6_NODE_DRAIN_ORCHESTRATOR_MAX_RECONNECT_ATTEMPTS="${k6_node_drain_orchestrator_max_reconnect_attempts}"
 K6_NODE_TERMINATION_DECISION_ENABLED="${k6_node_termination_decision_enabled}"
+K6_NODE_TERMINATION_STRICT_DELIVERY_EVIDENCE_ENABLED="${k6_node_termination_strict_delivery_evidence_enabled}"
 K6_GCP_NODE_TERMINATION_ADAPTER_ENABLED="${k6_gcp_node_termination_adapter_enabled}"
 K6_GCP_NODE_TERMINATION_ADAPTER_MODE="${k6_gcp_node_termination_adapter_mode}"
 K6_GCP_NODE_TERMINATION_POST_STOP_PROBE_ENABLED="${k6_gcp_node_termination_post_stop_probe_enabled}"
@@ -684,13 +685,17 @@ trigger_node_drain_during_run() {
       local decision_output="$RESULT_ROOT/metrics/node-termination-decision-$label.json"
       local decision_stdout="$RESULT_ROOT/metrics/node-termination-decision-stdout-$label.json"
       chmod +x "$WORKDIR/scripts/openchat-node-termination-decision.sh" || true
+      local decision_args=(
+        --input "$orchestrator_output"
+        --node-id "$target_node"
+        --output "$decision_output"
+      )
+      if [ "$K6_NODE_TERMINATION_STRICT_DELIVERY_EVIDENCE_ENABLED" = "true" ]; then
+        decision_args+=(--strict-delivery-evidence)
+      fi
 
       set +e
-      "$WORKDIR/scripts/openchat-node-termination-decision.sh" \
-        --input "$orchestrator_output" \
-        --node-id "$target_node" \
-        --output "$decision_output" \
-        > "$decision_stdout"
+      "$WORKDIR/scripts/openchat-node-termination-decision.sh" "$${decision_args[@]}" > "$decision_stdout"
       local decision_status=$?
       set -e
 

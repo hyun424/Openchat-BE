@@ -6,6 +6,7 @@ NODE_ID=""
 OUTPUT=""
 MAX_AGE_SECONDS=600
 CONTRACT_VERSION="openchat.node-termination-decision.v1"
+STRICT_DELIVERY_EVIDENCE="${OPENCHAT_STRICT_DELIVERY_EVIDENCE:-false}"
 
 usage() {
   cat <<'USAGE'
@@ -17,6 +18,7 @@ Options:
   --node-id NODE_ID Node expected to be terminated.
   --output PATH     Optional decision JSON output path.
   --max-age-seconds Freshness window for completed orchestrator results. Default: 600.
+  --strict-delivery-evidence Require durable reconnect delivery evidence before allowing termination.
 USAGE
 }
 
@@ -57,6 +59,10 @@ while [ "$#" -gt 0 ]; do
       MAX_AGE_SECONDS="${2:-}"
       shift 2
       ;;
+    --strict-delivery-evidence)
+      STRICT_DELIVERY_EVIDENCE="true"
+      shift
+      ;;
     --help|-h)
       usage
       exit 0
@@ -87,6 +93,9 @@ validate_args() {
   if ! is_non_negative_integer "$MAX_AGE_SECONDS"; then
     echo "--max-age-seconds must be a non-negative integer" >&2
     exit 30
+  fi
+  if [ "$STRICT_DELIVERY_EVIDENCE" != "true" ]; then
+    STRICT_DELIVERY_EVIDENCE="false"
   fi
 }
 
@@ -171,6 +180,7 @@ build_decision() {
     --arg expectedNodeId "$NODE_ID" \
     --arg createdAt "$created_at" \
     --argjson maxAgeSeconds "$MAX_AGE_SECONDS" \
+    --arg strictDeliveryEvidence "$STRICT_DELIVERY_EVIDENCE" \
     '
       def guard($name; $passed; $expected; $actual):
         {
@@ -191,6 +201,8 @@ build_decision() {
       . as $source
       | ($source.completedAt | fromdateiso8601?) as $completedEpoch
       | (now - ($completedEpoch // 0)) as $ageSeconds
+      | ($strictDeliveryEvidence == "true") as $strictDeliveryEvidenceEnabled
+      | ($source.durableReconnectCommandLog.deliveryEvidence // null) as $deliveryEvidence
       | [
           guard("node_id_match"; $source.nodeId == $expectedNodeId; $expectedNodeId; $source.nodeId),
           guard("source_exit_code_zero"; $source.exitCode == 0; "0"; $source.exitCode),
@@ -201,12 +213,25 @@ build_decision() {
           guard("remaining_sessions_zero"; $source.remainingSessions == 0; "0"; $source.remainingSessions),
           guard("result_fresh"; ($completedEpoch != null and $ageSeconds >= 0 and $ageSeconds <= $maxAgeSeconds); ("0 <= age <= " + ($maxAgeSeconds | tostring)); (if $completedEpoch == null then "invalid completedAt" else ($ageSeconds | floor) end))
         ] as $guards
+      | (if $strictDeliveryEvidenceEnabled then [
+          guard(
+            "delivery_evidence_complete";
+            ($deliveryEvidence != null
+              and (($deliveryEvidence.collectionStatus // "missing") == "collected")
+              and (($deliveryEvidence.complete // false) == true));
+            "collected deliveryEvidence.complete=true";
+            (if $deliveryEvidence == null then "missing"
+             else (($deliveryEvidence.collectionStatus // "missing") + " complete=" + (($deliveryEvidence.complete // false) | tostring))
+             end)
+          )
+        ] else [] end) as $strictGuards
       | ($guards | map(select(.passed == false))) as $failed
+      | ($strictGuards | map(select(.passed == false))) as $strictFailed
       | ($guards | map(select(.name == "node_id_match" and .passed == false)) | length > 0) as $nodeMismatch
       | ($guards | map(select(.name == "result_fresh" and .passed == false)) | length > 0) as $stale
       | ($source.terminationAllowed == true and ($failed | length > 0)) as $contradictoryAllowed
       | ((source_result_known($source.result) | not) or (source_next_action_known($source.lastNextAction) | not)) as $unexpected
-      | ($failed | length == 0) as $ready
+      | (($failed | length == 0) and ($strictFailed | length == 0)) as $ready
       | {
           contractVersion: $contractVersion,
           result: (
@@ -234,6 +259,7 @@ build_decision() {
           sourceAttemptedReconnectCommandIds: ($source.attemptedReconnectCommandIds // []),
           sourceLastReconnectCommandId: ($source.lastReconnectCommandId // null),
           sourceDurableReconnectCommandLog: ($source.durableReconnectCommandLog // null),
+          strictDeliveryEvidence: $strictDeliveryEvidenceEnabled,
 	          auditEvidence: {
 	            durableLogCollectionStatus: ($source.durableReconnectCommandLog.collectionStatus // null),
 	            durableLogCollectionError: ($source.durableReconnectCommandLog.collectionError // null),
@@ -244,7 +270,17 @@ build_decision() {
 	              end
 	            ),
             durableLogMissingCommandIds: ($source.durableReconnectCommandLog.missingCommandIds // []),
-            durableLogRecordCount: ($source.durableReconnectCommandLog.recordCount // 0)
+            durableLogRecordCount: ($source.durableReconnectCommandLog.recordCount // 0),
+            deliveryEvidenceCollectionStatus: ($deliveryEvidence.collectionStatus // null),
+            deliveryEvidenceCollectionError: ($deliveryEvidence.collectionError // null),
+            deliveryEvidenceComplete: (
+              if ($deliveryEvidence == null or ($deliveryEvidence | has("complete") | not)) then null
+              else $deliveryEvidence.complete
+              end
+            ),
+            deliveryEvidenceMissingHandlers: ($deliveryEvidence.missingHandlers // []),
+            deliveryEvidenceFailedHandlers: ($deliveryEvidence.failedHandlers // []),
+            deliveryEvidenceStrictEligibleCommandCount: ($deliveryEvidence.strictEligibleCommandCount // 0)
           },
           remainingSessions: $source.remainingSessions,
           reason: (
@@ -253,10 +289,11 @@ build_decision() {
             elif $nodeMismatch then "orchestrator result nodeId does not match requested node"
             elif $stale then "orchestrator result is stale"
             elif $contradictoryAllowed then "orchestrator result allows termination but safety guards failed"
+            elif ($strictFailed | length > 0) then "strict delivery evidence is not ready for termination"
             else "orchestrator result is not ready for termination"
             end
           ),
-          guards: $guards,
+          guards: ($guards + $strictGuards),
           createdAt: $createdAt
         }
     ' "$INPUT"
