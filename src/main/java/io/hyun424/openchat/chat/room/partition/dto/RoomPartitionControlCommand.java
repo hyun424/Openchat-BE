@@ -5,6 +5,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import java.time.Instant;
 import java.util.Locale;
 import java.util.Set;
+import java.util.UUID;
 
 public record RoomPartitionControlCommand(
         String type,
@@ -15,7 +16,8 @@ public record RoomPartitionControlCommand(
         long retryAfterMs,
         long routeVersion,
         long requestedAt,
-        String nodeId
+        String nodeId,
+        String commandId
 ) {
 
     public static final String TYPE_RECONNECT = "partition.reconnect";
@@ -45,7 +47,8 @@ public record RoomPartitionControlCommand(
                 Math.max(0, retryAfterMs),
                 Math.max(0, routeVersion),
                 Instant.now().toEpochMilli(),
-                null
+                null,
+                newCommandId()
         );
     }
 
@@ -62,7 +65,8 @@ public record RoomPartitionControlCommand(
                 Math.max(0, retryAfterMs),
                 0,
                 Instant.now().toEpochMilli(),
-                nodeId
+                nodeId,
+                newCommandId()
         );
     }
 
@@ -97,5 +101,9 @@ public record RoomPartitionControlCommand(
         }
         String normalized = reason.trim().toLowerCase(Locale.ROOT);
         return ALLOWED_REASONS.contains(normalized) ? normalized : "unknown";
+    }
+
+    private static String newCommandId() {
+        return "reconnect-" + UUID.randomUUID();
     }
 }

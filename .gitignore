@@ -19,6 +19,7 @@ docs/*
 !docs/LLM-WORKFLOW-RULES.md
 !docs/node-drain-orchestrator-plan.md
 !docs/node-termination-contract-plan.md
+!docs/gcp-vm-termination-adapter-plan.md
 data/
 k6/results/
 infra/gcp-loadtest/.terraform/

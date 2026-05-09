@@ -38,6 +38,7 @@ OpenChat의 확장성 작업은 다음 순서로 진행됐다.
 -> workload summary와 자동 lifecycle smoke
 -> dynamic realtime partition ownership
 -> node drain으로 realtime node 종료 가능 상태 증명
+-> reconnect commandId traceability와 durable audit evidence
 ```
 
 핵심 메시지는 "서버를 많이 띄웠다"가 아니다.
@@ -606,6 +607,61 @@ decision command는 `scripts/openchat-node-termination-decision.sh`로 추가했
 
 이 결과로 앱이 만든 drain completion 신호를 외부 provider-neutral termination gate가 소비해 `terminate_node` 권고까지 낼 수 있음을 확인했다. 다음 단계는 이 decision output을 입력으로 받는 GCP VM adapter를 만들고, run-scoped guard와 dry-run/stop/delete mode를 붙여 실제 VM 종료 smoke를 수행하는 것이다.
 
+#### Update: Durable Reconnect Command Log v1
+
+reconnect command traceability와 GCP VM termination adapter까지 검증한 뒤 남은 문제는 "어떤 reconnect command가 발행됐는가"를 artifact에서는 볼 수 있지만, 운영자가 나중에 DB만 보고 command 단위의 발행/처리 근거를 설명하기에는 부족하다는 점이었다. 특히 node drain이나 termination은 성공/실패를 단일 summary로만 보면, 실제로 어떤 commandId가 Redis publish 되었고 어떤 node가 처리했는지 사후 진단이 어렵다.
+
+검토한 선택지는 다음과 같았다.
+
+- A. 기존 GCP artifact의 commandId 목록만 유지한다.
+- B. Redis Pub/Sub를 Redis Streams 또는 durable outbox로 교체한다.
+- C. Redis Pub/Sub 경로는 유지하고, commandId 단위 DB audit log를 best-effort로 남긴다.
+- D. durable log 누락을 termination hard gate에 포함한다.
+
+이번에는 C를 선택했다. v1 목표는 delivery guarantee가 아니라 audit/diagnosis evidence 강화였기 때문이다. Redis Pub/Sub를 바꾸거나 termination gate에 넣으면 안정성 기능이 오히려 종료 자동화를 막는 false negative가 될 수 있다. 대신 commandId trace가 켜진 환경에서만 DB audit log를 남기고, DB write 실패는 reconnect/drain 흐름을 깨지 않게 fail-open으로 처리했다.
+
+구현 과정에서 중요한 설계 변경도 있었다. 처음에는 JPA entity로 `ReconnectCommandLog`, `ReconnectCommandHandlingLog`를 추가하는 방향을 고려했지만, 기본 `ddl-auto=validate` 환경에서는 feature flag가 꺼져 있어도 테이블이 없으면 startup이 실패할 수 있었다. 그래서 Hibernate managed entity가 아니라 `JdbcTemplate` native repository와 MySQL `INSERT ... ON DUPLICATE KEY UPDATE`를 사용했다. GCP loadtest에서는 schema initializer VM이 command log DDL을 명시적으로 적용하고 required column probe로 partial schema를 걸러내도록 했다.
+
+기대 효과는 다음이다.
+
+- reconnect commandId를 orchestrator artifact, termination decision, DB audit row로 연결할 수 있다.
+- 운영자가 `commandId` 또는 `operationId` 기준으로 publish status, Redis receiver count, handler node 처리 결과를 사후 확인할 수 있다.
+- command log 기능이 꺼진 기본 환경은 새 테이블 없이도 기존 startup 계약을 유지한다.
+- durable log는 audit evidence로만 남기므로 terminationAllowed의 안전 판단을 흔들지 않는다.
+
+감수한 trade-off는 다음이다.
+
+- v1은 durable delivery guarantee가 아니다.
+- DB row가 있다고 해서 client reconnect 완료를 의미하지 않는다.
+- Redis Pub/Sub command 자체를 재전송 가능한 durable queue로 바꾸지 않는다.
+- per-session ack, command cleanup scheduler, strict termination gate는 후속 hardening으로 남긴다.
+
+`20260509-durable-reconnect-command-log-smoke` GCP smoke 결과는 다음이다.
+
+- k6 exit code single/post-stop `0 / 0`
+- HTTP error rate `0%`
+- WebSocket connect success single/post-stop `149/149`, `20/20`
+- route failure/fallback/mismatch `0/0/0`
+- sent/ack/DB rows single `22,301 / 22,301 / 22,301`
+- post-stop sent/ack/DB rows `624 / 624 / 624`
+- reconnect command id `2`개 존재
+- `reconnect_command_log` DB rows `2`
+- publish status `SUCCEEDED`, Redis receivers `1`
+- `durableReconnectCommandLog.collectionStatus=collected`
+- `missingCommandIds=0`, `duplicateCommandIds=0`
+- termination decision에 `sourceDurableReconnectCommandLog` 보존
+- `auditEvidence.durableLogComplete=true`
+- GCP stop adapter `RUNNING -> TERMINATED`
+- post-stop probe PASS
+- cleanup 후 RUN_ID GCE VM 잔여 `0`
+
+이 결과의 의미는 "Redis Pub/Sub를 durable queue로 바꿨다"가 아니다. 정확히는 node drain/termination 흐름에서 사용된 reconnect command를 commandId 단위로 추적하고, 그 command가 DB audit evidence와 GCP artifact에 누락 없이 남는다는 점을 증명한 것이다. 따라서 포트폴리오에서는 "운영자가 장애 후 어떤 command가 발행됐고 어떤 evidence가 남았는지 설명 가능한 구조를 만들었다"로 표현하는 것이 정확하다.
+
+관련 상세 문서:
+
+- [Reconnect Command Traceability STAR 기록](./portfolio-star/reconnect-command-traceability/README.md)
+- [GCP smoke 결과: Durable Reconnect Command Log](./GCP-smoke-결과-20260509-durable-reconnect-command-log-smoke.md)
+
 ---
 
 ## 포트폴리오에서 사용할 최종 서사
@@ -620,14 +676,15 @@ OpenChat의 확장성 작업은 "몇 명을 처리했다"가 아니라 다음 �
 6. WebSocket long-lived connection 특성 때문에 scale-down은 drain/reconnect/resync로 처리했다.
 7. API node와 Realtime node의 메모리 경계를 Redis control-plane으로 넘겼다.
 8. 마지막으로 dynamic ownership과 node drain을 검증해, 특정 realtime node를 안전하게 비운 뒤 종료 가능한 상태까지 증명했다.
+9. reconnect commandId를 DB durable audit log와 GCP artifact로 연결해, drain/termination 과정의 사후 진단 근거를 남겼다.
 
 ## 자기소개서용 압축 문장
 
-> 대규모 WebSocket 채팅에서 성능 문제를 단순 서버 증설로 해결하지 않고, 부하 생성기 관측 비용, active fan-out 대상, room work, partition ownership, reconnect/resync 경로를 단계적으로 분리했습니다. GCP 기반 검증에서 1800명 단일방 ack/DB `201,538`건 일치, 1500명 active/passive fan-out passive unexpected `0`, dynamic node drain route mismatch `0`, ack/DB `22,300`건 일치와 drained node session `0`을 확인하며, 측정 신뢰도와 운영 가능한 scale-out 구조를 함께 검증했습니다.
+> 대규모 WebSocket 채팅에서 성능 문제를 단순 서버 증설로 해결하지 않고, 부하 생성기 관측 비용, active fan-out 대상, room work, partition ownership, reconnect/resync 경로를 단계적으로 분리했습니다. GCP 기반 검증에서 1800명 단일방 ack/DB `201,538`건 일치, 1500명 active/passive fan-out passive unexpected `0`, dynamic node drain route mismatch `0`, ack/DB `22,300`건 일치와 drained node session `0`을 확인했습니다. 이후 reconnect commandId를 DB audit log와 GCP artifact로 연결해 drain/termination 과정의 사후 진단 근거까지 남기며, 측정 신뢰도와 운영 가능한 scale-out 구조를 함께 검증했습니다.
 
 ## 면접에서 강조할 경계
 
 - "오토스케일링을 완성했다"보다 "오토스케일링이 안전하게 동작하기 위한 앱 레벨 protocol과 검증 기반을 만들었다"가 정확하다.
 - K8s/EKS는 아직 도입하지 않았다. 대신 K8s가 맡을 node lifecycle 이전에 앱이 맡아야 할 route, ownership, reconnect, drain contract를 먼저 증명했다.
 - 일부 결과는 성능 개선 수치가 아니라 측정 신뢰도 개선 또는 안전성 검증 수치다.
-- Redis Pub/Sub control-plane은 v1에서 durable command log가 아니며, ack/retry/force-drain 정책은 후속 hardening이다.
+- Durable Reconnect Command Log v1은 audit/diagnosis evidence이지 delivery guarantee가 아니다. Redis Streams, reconnect outbox, client ack, force-drain 정책은 후속 hardening이다.

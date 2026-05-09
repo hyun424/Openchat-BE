@@ -11,6 +11,7 @@ REDIS_IP="${redis_ip}"
 SPRING_JPA_HIBERNATE_DDL_AUTO="${spring_jpa_hibernate_ddl_auto}"
 SCHEMA_INITIALIZER="${schema_initializer}"
 SCHEMA_READY_OBJECT="${schema_ready_object}"
+ROOM_PARTITION_CONTROL_COMMAND_LOG_ENABLED="${room_partition_control_command_log_enabled}"
 WORKDIR="/opt/openchat"
 LOG_DIR="/var/log/openchat-loadtest"
 APP_INTERNAL_IP="$(hostname -I | awk '{print $1}')"
@@ -44,6 +45,79 @@ collect_socket_snapshot() {
   } > "$out_dir/$name.txt" 2>&1
 }
 
+ensure_reconnect_command_log_schema() {
+  if [ "$ROOM_PARTITION_CONTROL_COMMAND_LOG_ENABLED" != "true" ]; then
+    return 0
+  fi
+  if [ "$SCHEMA_INITIALIZER" != "true" ]; then
+    return 0
+  fi
+
+  echo "[app] ensuring reconnect command log schema"
+  mysql --connect-timeout=10 \
+    -h "$MYSQL_IP" \
+    -uopenchat \
+    -popenchat \
+    openchat <<'SQL'
+CREATE TABLE IF NOT EXISTS reconnect_command_log (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  command_id VARCHAR(80) NOT NULL,
+  operation_id VARCHAR(120) NOT NULL,
+  command_type VARCHAR(40) NOT NULL,
+  room_id BIGINT NULL,
+  partition_id INT NULL,
+  target_node_id VARCHAR(120) NULL,
+  publisher_node_id VARCHAR(120) NOT NULL,
+  reason VARCHAR(80) NOT NULL,
+  route_version BIGINT NULL,
+  limit_value INT NOT NULL,
+  retry_after_ms BIGINT NOT NULL,
+  publish_status VARCHAR(30) NOT NULL,
+  redis_receivers BIGINT NULL,
+  created_at BIGINT NOT NULL,
+  published_at BIGINT NULL,
+  failed_at BIGINT NULL,
+  last_error TEXT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_reconnect_command_id (command_id),
+  KEY idx_reconnect_command_operation (operation_id, created_at),
+  KEY idx_reconnect_command_target_node (target_node_id, created_at)
+);
+
+CREATE TABLE IF NOT EXISTS reconnect_command_handling_log (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  command_id VARCHAR(80) NOT NULL,
+  handler_node_id VARCHAR(120) NOT NULL,
+  status VARCHAR(30) NOT NULL,
+  open_sessions_before INT NOT NULL,
+  targeted_sessions INT NOT NULL,
+  sent_sessions INT NOT NULL,
+  failed_sessions INT NOT NULL,
+  remaining_open_sessions INT NOT NULL,
+  handled_at BIGINT NOT NULL,
+  last_error TEXT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_reconnect_command_handler (command_id, handler_node_id),
+  KEY idx_reconnect_handling_command (command_id),
+  KEY idx_reconnect_handling_node (handler_node_id, handled_at)
+);
+SQL
+
+  mysql --connect-timeout=10 \
+    -h "$MYSQL_IP" \
+    -uopenchat \
+    -popenchat \
+    openchat <<'SQL'
+SELECT command_id, operation_id, command_type, target_node_id, publish_status, redis_receivers, created_at, published_at, failed_at
+FROM reconnect_command_log
+LIMIT 0;
+
+SELECT command_id, handler_node_id, status, open_sessions_before, targeted_sessions, sent_sessions, failed_sessions, remaining_open_sessions, handled_at
+FROM reconnect_command_handling_log
+LIMIT 0;
+SQL
+}
+
 case "$APP_ROLE" in
   api)
     WEBSOCKET_ENABLED=false
@@ -73,7 +147,7 @@ collect_socket_snapshot "app-socket-before"
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y docker.io unzip curl jq gnupg ca-certificates netcat-openbsd iproute2
+apt-get install -y docker.io unzip curl jq gnupg ca-certificates netcat-openbsd iproute2 default-mysql-client
 systemctl enable --now docker
 
 if ! command -v gcloud >/dev/null 2>&1; then
@@ -131,6 +205,8 @@ if [ "$SCHEMA_INITIALIZER" != "true" ]; then
     sleep 2
   done
 fi
+
+ensure_reconnect_command_log_schema
 
 docker rm -f openchat-app >/dev/null 2>&1 || true
 echo "[app] starting backend container ddl_auto=$SPRING_JPA_HIBERNATE_DDL_AUTO schema_initializer=$SCHEMA_INITIALIZER"
@@ -202,6 +278,8 @@ docker run -d \
   -e ROOM_PARTITION_ADMIN_API_ENABLED="${room_partition_admin_api_enabled}" \
   -e ROOM_PARTITION_ASSIGNMENT_ENABLED="${room_partition_assignment_enabled}" \
   -e ROOM_PARTITION_ASSIGNMENT_DYNAMIC_SUBSCRIBE_ENABLED="${room_partition_assignment_dynamic_subscribe_enabled}" \
+  -e ROOM_PARTITION_CONTROL_COMMAND_TRACE_ENABLED="${room_partition_control_command_trace_enabled}" \
+  -e ROOM_PARTITION_CONTROL_COMMAND_LOG_ENABLED="${room_partition_control_command_log_enabled}" \
   -e ROOM_PARTITION_ASSIGNMENT_WS_URL="ws://$APP_INTERNAL_IP:8080" \
   -e ROOM_PARTITION_ASSIGNMENT_NODE_DRAIN_ENABLED="${room_partition_assignment_node_drain_enabled}" \
   -e ROOM_PARTITION_ASSIGNMENT_NODE_DRAIN_READINESS_TIMEOUT_MS="${room_partition_assignment_node_drain_readiness_timeout_ms}" \

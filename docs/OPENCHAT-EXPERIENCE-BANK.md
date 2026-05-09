@@ -344,10 +344,10 @@ Realtime pod의 기본 단위를 `4 vCPU / 8GB`로 두고, pod work budget을 `1
 ## [EXP-OC-12]
 
 - 프로젝트: OpenChat
-- 유형: Dynamic Realtime Partition Ownership와 Node Drain 검증
-- 역할: node registry 기반 assignment 설계, node-aware routing, reconnect 기반 drain, GCP smoke 검증
+- 유형: Dynamic Realtime Partition Ownership, Node Drain, 운영 증거 계약 검증
+- 역할: node registry 기반 assignment 설계, node-aware routing, reconnect 기반 drain, commandId audit evidence 설계, GCP smoke 검증
 - 사용 문항: 시스템 설계 / 문제해결 / 확장성 / 운영 안정성 / 포트폴리오 설명
-- 키워드: `[WebSocket, dynamic ownership, node drain, reconnect, Redis Pub/Sub, GCP, k6]`
+- 키워드: `[WebSocket, dynamic ownership, node drain, reconnect, Redis Pub/Sub, audit log, GCP, k6]`
 
 ### 상황
 
@@ -371,11 +371,20 @@ GCP node drain smoke에서 WebSocket connect success `145/145`, route failure/fa
 
 그 다음 단계에서는 실제 VM 종료 전에 provider-neutral termination decision contract를 추가했다. `20260508-node-termination-contract-smoke`에서는 orchestrator exitCode `0`, `terminationAllowed=true`, decision `result=ready`, `recommendedAction=terminate_node`, route failure/fallback/mismatch `0/0/0`, sent/ack/DB rows `22266/22266/22266`, drained node openSessions `0`을 확인했다. 실제 VM stop/delete는 하지 않고, GCP/MIG/EKS adapter가 공통으로 소비할 수 있는 안전 게이트만 검증했다.
 
+이후 GCP VM termination adapter를 붙여 실제 node stop까지 검증했고, 마지막으로 Durable Reconnect Command Log v1을 추가해 운영 증거를 보강했다. 처음에는 reconnect commandId가 GCP artifact에만 남았기 때문에, 장애 후 운영자가 DB만 보고 "어떤 command가 발행됐고 어떤 node가 처리했는지"를 설명하기 어려웠다. 이를 해결하기 위해 Redis Pub/Sub 경로는 그대로 두고, commandId 단위 publish audit row와 commandId + handlerNodeId 단위 handling row를 best-effort로 남기는 구조를 만들었다.
+
+설계에서 중요한 판단은 durable log를 termination hard gate로 쓰지 않는 것이었다. DB audit row 누락은 진단 증거 약화이지, 이미 `remainingSessions=0`이고 orchestrator/termination decision guard가 통과한 node 종료를 막는 이유로 두면 false negative가 커질 수 있다. 또한 JPA entity를 그대로 추가하면 기본 `ddl-auto=validate` 환경에서 feature disabled여도 테이블 부재로 startup이 실패할 수 있어, `JdbcTemplate` native upsert와 GCP schema initializer DDL로 분리했다.
+
+`20260509-durable-reconnect-command-log-smoke`에서는 k6 exit code `0`, HTTP error `0%`, WebSocket connect `149/149`, route failure/fallback/mismatch `0/0/0`, sent/ack/DB rows `22301/22301/22301`, post-stop `624/624/624`를 확인했다. reconnect command id는 2개였고 `reconnect_command_log` DB row도 2개로 일치했다. durable log collection은 `collectionStatus=collected`, `missingCommandIds=0`, `duplicateCommandIds=0`이었으며, termination decision에는 `sourceDurableReconnectCommandLog`와 `auditEvidence.durableLogComplete=true`가 보존됐다. GCP stop adapter는 `RUNNING -> TERMINATED`, post-stop probe는 PASS, cleanup 후 RUN_ID VM 잔여는 `0`이었다.
+
 ### 배운 점
 
 실시간 시스템의 scale-out은 서버 수 증가가 아니라 ownership contract를 맞추는 문제다. route, 실제 연결, subscriber, reconnect, drain completion signal이 모두 같은 기준을 따라야 운영 가능한 구조가 된다. 또한 EKS나 MIG 자동 종료를 붙이기 전에, 애플리케이션이 먼저 "이 node는 안전하게 비워졌다"는 상태를 증명할 수 있어야 한다.
 
+운영 가능한 구조는 성공 여부만 반환하는 것에서 끝나지 않는다. 장애 후 어떤 command가 발행됐고 어떤 evidence가 남았는지 설명할 수 있어야 한다. Durable Reconnect Command Log v1을 통해 "자동 종료를 실행했다"보다 "종료 판단과 reconnect command 증거를 분리해 사후 진단 가능한 구조로 만들었다"는 점을 배웠다.
+
 상세 문서: [Dynamic Realtime Partition Ownership와 Node Drain STAR 기록](./2026-05-08-dynamic-realtime-partition-ownership-star.md)
+보강 문서: [Reconnect Command Traceability STAR 기록](./portfolio-star/reconnect-command-traceability/README.md)
 
 ---
 
@@ -387,7 +396,7 @@ GCP node drain smoke에서 WebSocket connect success `145/145`, route failure/fa
 2. `EXP-OC-02` Durability-first 메시지 유실 방지
 3. `EXP-OC-09` 부하 생성기 병목 분리와 측정 신뢰도 개선
 4. `EXP-OC-10` Active Room Fan-out과 브라우저 E2E 검증
-5. `EXP-OC-12` Dynamic Realtime Partition Ownership와 Node Drain 검증
+5. `EXP-OC-12` Dynamic Realtime Partition Ownership, Node Drain, 운영 증거 계약 검증
 
 ### 면접에서 기술적으로 풀기 좋은 경험
 
@@ -395,7 +404,7 @@ GCP node drain smoke에서 WebSocket connect success `145/145`, route failure/fa
 2. `EXP-OC-04` 중복 메시지 방지와 idempotency
 3. `EXP-OC-07` 부하 테스트 기반 병목 분석과 성능 개선
 4. `EXP-OC-10` Active Room Fan-out과 브라우저 E2E 검증
-5. `EXP-OC-12` Dynamic Realtime Partition Ownership와 Node Drain 검증
+5. `EXP-OC-12` Dynamic Realtime Partition Ownership, Node Drain, 운영 증거 계약 검증
 
 ### 협업/서비스 이해 관점으로 풀기 좋은 경험
 

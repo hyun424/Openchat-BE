@@ -130,7 +130,10 @@ class RealtimeNodeDrainServiceTest {
         assertTrue(result.reconnectPublished());
         assertEquals(12, result.targetedSessions());
         assertEquals(12, result.remainingSessions());
-        verify(fixture.publisher).publish(any(RoomPartitionControlCommand.class));
+        ArgumentCaptor<RoomPartitionControlCommand> captor = forClass(RoomPartitionControlCommand.class);
+        verify(fixture.publisher).publish(captor.capture());
+        assertEquals(captor.getValue().commandId(), result.commandId());
+        assertFalse(result.commandId().isBlank());
     }
 
     @Test
@@ -165,6 +168,7 @@ class RealtimeNodeDrainServiceTest {
         assertEquals("investigate_publish", result.nextAction());
         assertFalse(result.reconnectPublished());
         assertEquals(12, result.remainingSessions());
+        assertFalse(result.commandId().isBlank());
     }
 
     @Test

@@ -1,10 +1,15 @@
 package io.hyun424.openchat.chat.room.partition.infra;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.hyun424.openchat.chat.room.partition.commandlog.ReconnectCommandLogService;
+import io.hyun424.openchat.chat.room.partition.commandlog.ReconnectCommandPublishStatus;
 import io.hyun424.openchat.chat.room.partition.dto.RoomPartitionControlCommand;
 import io.hyun424.openchat.chat.room.partition.metrics.RoomPartitionMetrics;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Primary;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
@@ -18,48 +23,144 @@ public class RedisRoomPartitionControlPublisher implements RoomPartitionControlP
     private final ObjectMapper redisObjectMapper;
     private final RoomPartitionControlChannelResolver channelResolver;
     private final RoomPartitionMetrics metrics;
+    private final boolean commandTraceEnabled;
+    private final boolean commandLogEnabled;
+    private final String publisherNodeId;
+    private final ReconnectCommandLogService commandLogService;
 
+    @Autowired
     public RedisRoomPartitionControlPublisher(
             StringRedisTemplate redisTemplate,
             @Qualifier("redisObjectMapper") ObjectMapper redisObjectMapper,
             RoomPartitionControlChannelResolver channelResolver,
-            RoomPartitionMetrics metrics
+            RoomPartitionMetrics metrics,
+            ReconnectCommandLogService commandLogService,
+            @Value("${app.room-partition.control.command-trace-enabled:false}") boolean commandTraceEnabled,
+            @Value("${app.room-partition.control.command-log.enabled:false}") boolean commandLogEnabled,
+            @Value("${app.instance-id:local}") String publisherNodeId
     ) {
         this.redisTemplate = redisTemplate;
         this.redisObjectMapper = redisObjectMapper;
         this.channelResolver = channelResolver;
         this.metrics = metrics;
+        this.commandTraceEnabled = commandTraceEnabled;
+        this.commandLogEnabled = commandLogEnabled;
+        this.publisherNodeId = publisherNodeId;
+        this.commandLogService = commandLogService;
+    }
+
+    RedisRoomPartitionControlPublisher(
+            StringRedisTemplate redisTemplate,
+            ObjectMapper redisObjectMapper,
+            RoomPartitionControlChannelResolver channelResolver,
+            RoomPartitionMetrics metrics
+    ) {
+        this(redisTemplate, redisObjectMapper, channelResolver, metrics, null, false, false, "test");
+    }
+
+    RedisRoomPartitionControlPublisher(
+            StringRedisTemplate redisTemplate,
+            ObjectMapper redisObjectMapper,
+            RoomPartitionControlChannelResolver channelResolver,
+            RoomPartitionMetrics metrics,
+            boolean commandTraceEnabled
+    ) {
+        this(redisTemplate, redisObjectMapper, channelResolver, metrics, null, commandTraceEnabled, false, "test");
     }
 
     @Override
     public boolean publish(RoomPartitionControlCommand command) {
+        return publish(command, defaultOperationId(command));
+    }
+
+    @Override
+    public boolean publish(RoomPartitionControlCommand command, String operationId) {
         String type = command == null ? "unknown" : command.type();
         try {
             if (command == null || (command.roomId() == null && command.nodeId() == null)) {
                 metrics.recordControlPublish(type, "invalid");
                 return false;
             }
-            String payload = redisObjectMapper.writeValueAsString(command);
+            recordAttempt(command, operationId);
+            String payload = serialize(command);
             String channel = command.nodeId() == null
                     ? channelResolver.channel(command.roomId())
                     : channelResolver.nodeChannel(command.nodeId());
             Long receivers = redisTemplate.convertAndSend(channel, payload);
             if (command.nodeId() != null && (receivers == null || receivers <= 0)) {
                 metrics.recordControlPublish(type, "no_receivers");
-                log.warn("[ROOM PARTITION CONTROL PUB NO RECEIVERS] type={} nodeId={}",
-                        type, command.nodeId());
+                markFailed(command, ReconnectCommandPublishStatus.NO_RECEIVERS, "no receivers");
+                log.warn("[ROOM PARTITION CONTROL PUB NO RECEIVERS] type={} nodeId={} commandId={}",
+                        type, command.nodeId(), command.commandId());
                 return false;
             }
             metrics.recordControlPublish(type, "success");
+            markSucceeded(command, receivers);
             return true;
         } catch (Exception e) {
             metrics.recordControlPublish(type, "publish_failed");
-            log.warn("[ROOM PARTITION CONTROL PUB FAIL] type={} roomId={} nodeId={}",
+            markFailed(command, ReconnectCommandPublishStatus.FAILED, e.getMessage());
+            log.warn("[ROOM PARTITION CONTROL PUB FAIL] type={} roomId={} nodeId={} commandId={}",
                     type,
                     command != null ? command.roomId() : null,
                     command != null ? command.nodeId() : null,
+                    command != null ? command.commandId() : null,
                     e);
             return false;
         }
+    }
+
+    private void recordAttempt(RoomPartitionControlCommand command, String operationId) {
+        if (commandLogEnabled && commandLogService != null) {
+            try {
+                commandLogService.recordPublishAttempt(command, operationId, publisherNodeId);
+            } catch (Exception e) {
+                log.warn("[RECONNECT COMMAND LOG PUBLISH ATTEMPT IGNORED] commandId={} operationId={}",
+                        command.commandId(), operationId, e);
+            }
+        }
+    }
+
+    private void markSucceeded(RoomPartitionControlCommand command, Long receivers) {
+        if (commandLogEnabled && commandLogService != null) {
+            try {
+                commandLogService.markPublishSucceeded(command.commandId(), receivers);
+            } catch (Exception e) {
+                log.warn("[RECONNECT COMMAND LOG PUBLISH SUCCESS IGNORED] commandId={}", command.commandId(), e);
+            }
+        }
+    }
+
+    private void markFailed(RoomPartitionControlCommand command, ReconnectCommandPublishStatus status, String error) {
+        if (commandLogEnabled && commandLogService != null && command != null) {
+            try {
+                commandLogService.markPublishFailed(command.commandId(), status, error);
+            } catch (Exception e) {
+                log.warn("[RECONNECT COMMAND LOG PUBLISH FAIL IGNORED] commandId={} status={}",
+                        command.commandId(), status, e);
+            }
+        }
+    }
+
+    private String defaultOperationId(RoomPartitionControlCommand command) {
+        if (command == null) {
+            return "unknown";
+        }
+        if (command.nodeId() != null) {
+            return "node_drain:" + command.nodeId();
+        }
+        if (command.roomId() != null && command.partitionId() != null) {
+            return "room_partition_reconnect:" + command.roomId() + ":" + command.partitionId();
+        }
+        return "unknown";
+    }
+
+    private String serialize(RoomPartitionControlCommand command) throws com.fasterxml.jackson.core.JsonProcessingException {
+        if (commandTraceEnabled) {
+            return redisObjectMapper.writeValueAsString(command);
+        }
+        ObjectNode node = redisObjectMapper.valueToTree(command);
+        node.remove("commandId");
+        return redisObjectMapper.writeValueAsString(node);
     }
 }

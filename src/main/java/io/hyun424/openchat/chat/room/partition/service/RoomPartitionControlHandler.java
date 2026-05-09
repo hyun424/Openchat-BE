@@ -22,26 +22,31 @@ public class RoomPartitionControlHandler {
         this.metrics = metrics;
     }
 
-    public int handleReconnect(RoomPartitionControlCommand command) {
+    public ReconnectHandlingResult handleReconnect(RoomPartitionControlCommand command) {
         List<String> sessionIds = roomSessionRegistry.openSessionIds(command.roomId(), command.partitionId());
         int limit = Math.min(command.limit(), sessionIds.size());
         int sent = 0;
+        int failed = 0;
         for (int i = 0; i < limit; i++) {
             boolean success = sendReconnect(sessionIds.get(i), command);
             metrics.recordReconnectControlSent(command.reason(), success ? "success" : "failed");
             if (success) {
                 sent++;
+            } else {
+                failed++;
             }
         }
         metrics.recordReconnectTargeted(command.reason(), sent);
-        return sent;
+        int remaining = roomSessionRegistry.openSessionIds(command.roomId(), command.partitionId()).size();
+        return new ReconnectHandlingResult(sessionIds.size(), limit, sent, failed, remaining);
     }
 
-    public NodeReconnectResult handleNodeReconnect(RoomPartitionControlCommand command) {
+    public ReconnectHandlingResult handleNodeReconnect(RoomPartitionControlCommand command) {
         List<io.hyun424.openchat.infra.websocket.session.SessionStateTracker.OpenSessionInfo> sessions =
                 roomSessionRegistry.openSessions();
         int limit = Math.min(command.limit(), sessions.size());
         int sent = 0;
+        int failed = 0;
         for (int i = 0; i < limit; i++) {
             io.hyun424.openchat.infra.websocket.session.SessionStateTracker.OpenSessionInfo session = sessions.get(i);
             boolean success = roomSessionRegistry.sendControlToSession(
@@ -50,18 +55,21 @@ public class RoomPartitionControlHandler {
                             session.roomId(),
                             command.reason(),
                             command.retryAfterMs(),
-                            command.routeVersion()
+                            command.routeVersion(),
+                            command.commandId()
                     ),
                     PAYLOAD_TYPE
             );
             metrics.recordReconnectControlSent(command.reason(), success ? "success" : "failed");
             if (success) {
                 sent++;
+            } else {
+                failed++;
             }
         }
         metrics.recordReconnectTargeted(command.reason(), sent);
         int remaining = roomSessionRegistry.openSessions().size();
-        return new NodeReconnectResult(sessions.size(), sent, remaining);
+        return new ReconnectHandlingResult(sessions.size(), limit, sent, failed, remaining);
     }
 
     private boolean sendReconnect(String sessionId, RoomPartitionControlCommand command) {
@@ -71,15 +79,18 @@ public class RoomPartitionControlHandler {
                         command.roomId(),
                         command.reason(),
                         command.retryAfterMs(),
-                        command.routeVersion()
+                        command.routeVersion(),
+                        command.commandId()
                 ),
                 PAYLOAD_TYPE
         );
     }
 
-    public record NodeReconnectResult(
+    public record ReconnectHandlingResult(
             int openSessionsBefore,
-            int sent,
+            int targetedSessions,
+            int sentSessions,
+            int failedSessions,
             int remainingOpenSessions
     ) {
     }

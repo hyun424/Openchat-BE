@@ -46,7 +46,8 @@ class RoomPartitionAssignmentInternalControllerTest {
                 "node_drain",
                 true,
                 "poll_status",
-                "ready"
+                "ready",
+                "reconnect-123"
         ));
 
         mockMvc.perform(post("/api/internal/room-partition/nodes/node-a/drain")
@@ -57,7 +58,8 @@ class RoomPartitionAssignmentInternalControllerTest {
                 .andExpect(jsonPath("$.status").value("reconnect_published"))
                 .andExpect(jsonPath("$.retryable").value(true))
                 .andExpect(jsonPath("$.nextAction").value("poll_status"))
-                .andExpect(jsonPath("$.readinessReason").value("ready"));
+                .andExpect(jsonPath("$.readinessReason").value("ready"))
+                .andExpect(jsonPath("$.commandId").value("reconnect-123"));
 
         verify(nodeDrainService).startDrain("node-a", 10, 250L);
     }
@@ -75,7 +77,8 @@ class RoomPartitionAssignmentInternalControllerTest {
                 "node_drain",
                 true,
                 "retry_reconnect",
-                "ready"
+                "ready",
+                null
         ));
 
         mockMvc.perform(get("/api/internal/room-partition/nodes/node-a/drain/status"))
