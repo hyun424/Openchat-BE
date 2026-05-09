@@ -62,7 +62,18 @@ ready_json() {
     "duplicateCommandIds": [],
     "recordCount": 2,
     "lastRecordedCommandId": "reconnect-b",
-    "records": []
+    "records": [],
+    "deliveryEvidence": {
+      "enabled": true,
+      "mode": "audit_only",
+      "collectionStatus": "collected",
+      "collectionError": null,
+      "complete": true,
+      "commandCount": 2,
+      "strictEligibleCommandCount": 2,
+      "missingHandlers": [],
+      "failedHandlers": []
+    }
   },
   "remainingSessions": 0,
   "completedAt": "__COMPLETED_AT__"
@@ -80,13 +91,97 @@ test_ready_allows_termination() {
   assert_eq "openchat.node-termination-decision.v1" "$(jq -r '.contractVersion' "$CASE_DIR/result.json")" "contractVersion"
   assert_eq "true" "$(jq -r '.terminationAllowed' "$CASE_DIR/result.json")" "terminationAllowed"
   assert_eq "terminate_node" "$(jq -r '.recommendedAction' "$CASE_DIR/result.json")" "recommendedAction"
+  assert_eq "false" "$(jq -r '.strictDeliveryEvidence' "$CASE_DIR/result.json")" "strictDeliveryEvidence"
   assert_eq "reconnect-a,reconnect-b" "$(jq -r '.sourceReconnectCommandIds | join(",")' "$CASE_DIR/result.json")" "sourceReconnectCommandIds"
   assert_eq "reconnect-a,reconnect-b" "$(jq -r '.sourceAttemptedReconnectCommandIds | join(",")' "$CASE_DIR/result.json")" "sourceAttemptedReconnectCommandIds"
   assert_eq "2" "$(jq -r '.sourceDurableReconnectCommandLog.recordCount' "$CASE_DIR/result.json")" "source durable record count"
   assert_eq "true" "$(jq -r '.auditEvidence.durableLogComplete' "$CASE_DIR/result.json")" "durable audit complete"
+  assert_eq "true" "$(jq -r '.auditEvidence.deliveryEvidenceComplete' "$CASE_DIR/result.json")" "delivery evidence complete"
+  assert_eq "0" "$(jq -r '.guards | map(select(.name == "delivery_evidence_complete")) | length' "$CASE_DIR/result.json")" "strict guard absent by default"
   assert_eq "collected" "$(jq -r '.auditEvidence.durableLogCollectionStatus' "$CASE_DIR/result.json")" "durable collection status"
   assert_eq "0" "$(jq -r '.guards | map(select(.passed == false)) | length' "$CASE_DIR/result.json")" "failed guard count"
   assert_eq "ready" "$(jq -r '.result' "$CASE_DIR/stdout.json")" "stdout result"
+}
+
+test_strict_cli_allows_complete_delivery_evidence() {
+  new_case "strict-cli-ready"
+  write_input "$(ready_json)"
+
+  "$SCRIPT" --input "$CASE_DIR/input.json" --node-id node-a --strict-delivery-evidence \
+    --output "$CASE_DIR/result.json" > "$CASE_DIR/stdout.json"
+
+  assert_eq "ready" "$(jq -r '.result' "$CASE_DIR/result.json")" "result"
+  assert_eq "true" "$(jq -r '.strictDeliveryEvidence' "$CASE_DIR/result.json")" "strictDeliveryEvidence"
+  assert_eq "true" "$(jq -r '.guards[] | select(.name == "delivery_evidence_complete") | .passed' "$CASE_DIR/result.json")" "strict guard"
+}
+
+test_strict_env_allows_complete_delivery_evidence() {
+  new_case "strict-env-ready"
+  write_input "$(ready_json)"
+
+  OPENCHAT_STRICT_DELIVERY_EVIDENCE=true run_decision
+
+  assert_eq "ready" "$(jq -r '.result' "$CASE_DIR/result.json")" "result"
+  assert_eq "true" "$(jq -r '.strictDeliveryEvidence' "$CASE_DIR/result.json")" "strictDeliveryEvidence"
+}
+
+test_strict_off_preserves_ready_when_delivery_evidence_incomplete() {
+  new_case "strict-off-incomplete"
+  ready_json | jq '.durableReconnectCommandLog.deliveryEvidence.complete = false | .durableReconnectCommandLog.deliveryEvidence.missingHandlers = ["node-a"]' > "$CASE_DIR/input.json"
+
+  run_decision
+
+  assert_eq "ready" "$(jq -r '.result' "$CASE_DIR/result.json")" "result"
+  assert_eq "true" "$(jq -r '.terminationAllowed' "$CASE_DIR/result.json")" "terminationAllowed"
+  assert_eq "false" "$(jq -r '.auditEvidence.deliveryEvidenceComplete' "$CASE_DIR/result.json")" "delivery evidence complete"
+  assert_eq "0" "$(jq -r '.guards | map(select(.name == "delivery_evidence_complete")) | length' "$CASE_DIR/result.json")" "strict guard absent"
+}
+
+test_strict_on_blocks_incomplete_delivery_evidence_as_not_ready() {
+  new_case "strict-on-incomplete"
+  ready_json | jq '.durableReconnectCommandLog.deliveryEvidence.complete = false | .durableReconnectCommandLog.deliveryEvidence.missingHandlers = ["node-a"]' > "$CASE_DIR/input.json"
+
+  set +e
+  "$SCRIPT" --input "$CASE_DIR/input.json" --node-id node-a --strict-delivery-evidence \
+    --output "$CASE_DIR/result.json" > "$CASE_DIR/stdout.json"
+  exit_code=$?
+  set -e
+
+  assert_eq "10" "$exit_code" "exit code"
+  assert_eq "not_ready" "$(jq -r '.result' "$CASE_DIR/result.json")" "result"
+  assert_eq "false" "$(jq -r '.terminationAllowed' "$CASE_DIR/result.json")" "terminationAllowed"
+  assert_eq "false" "$(jq -r '.guards[] | select(.name == "delivery_evidence_complete") | .passed' "$CASE_DIR/result.json")" "strict guard"
+  assert_eq "node-a" "$(jq -r '.auditEvidence.deliveryEvidenceMissingHandlers | join(",")' "$CASE_DIR/result.json")" "missing handlers"
+}
+
+test_strict_on_blocks_missing_delivery_evidence_as_not_ready() {
+  new_case "strict-on-missing"
+  ready_json | jq 'del(.durableReconnectCommandLog.deliveryEvidence)' > "$CASE_DIR/input.json"
+
+  set +e
+  "$SCRIPT" --input "$CASE_DIR/input.json" --node-id node-a --strict-delivery-evidence \
+    --output "$CASE_DIR/result.json" > "$CASE_DIR/stdout.json"
+  exit_code=$?
+  set -e
+
+  assert_eq "10" "$exit_code" "exit code"
+  assert_eq "not_ready" "$(jq -r '.result' "$CASE_DIR/result.json")" "result"
+  assert_eq "missing" "$(jq -r '.guards[] | select(.name == "delivery_evidence_complete") | .actual' "$CASE_DIR/result.json")" "strict guard actual"
+}
+
+test_strict_on_blocks_delivery_collection_failure_as_not_ready() {
+  new_case "strict-on-collection-failed"
+  ready_json | jq '.durableReconnectCommandLog.deliveryEvidence.collectionStatus = "query_failed" | .durableReconnectCommandLog.deliveryEvidence.collectionError = "handling table missing"' > "$CASE_DIR/input.json"
+
+  set +e
+  "$SCRIPT" --input "$CASE_DIR/input.json" --node-id node-a --strict-delivery-evidence \
+    --output "$CASE_DIR/result.json" > "$CASE_DIR/stdout.json"
+  exit_code=$?
+  set -e
+
+  assert_eq "10" "$exit_code" "exit code"
+  assert_eq "not_ready" "$(jq -r '.result' "$CASE_DIR/result.json")" "result"
+  assert_eq "query_failed" "$(jq -r '.auditEvidence.deliveryEvidenceCollectionStatus' "$CASE_DIR/result.json")" "delivery collection status"
 }
 
 test_durable_log_collection_failure_is_not_complete() {
@@ -244,6 +339,12 @@ test_unknown_source_result_is_unexpected_input() {
 }
 
 test_ready_allows_termination
+test_strict_cli_allows_complete_delivery_evidence
+test_strict_env_allows_complete_delivery_evidence
+test_strict_off_preserves_ready_when_delivery_evidence_incomplete
+test_strict_on_blocks_incomplete_delivery_evidence_as_not_ready
+test_strict_on_blocks_missing_delivery_evidence_as_not_ready
+test_strict_on_blocks_delivery_collection_failure_as_not_ready
 test_durable_log_collection_failure_is_not_complete
 test_remaining_sessions_blocks_termination
 test_status_blocks_termination

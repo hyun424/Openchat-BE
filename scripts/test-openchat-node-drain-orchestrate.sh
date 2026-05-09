@@ -18,6 +18,15 @@ assert_eq() {
   fi
 }
 
+assert_file_contains() {
+  local file="$1"
+  local expected="$2"
+  local message="$3"
+  if ! grep -Fq -- "$expected" "$file"; then
+    fail "$message missing=$expected file=$file"
+  fi
+}
+
 make_fake_curl() {
   local case_dir="$1"
   mkdir -p "$case_dir/bin"
@@ -90,6 +99,21 @@ test_reconnect_retry_then_complete() {
   assert_eq "openchat.reconnect-command-log.v1" "$(jq -r '.durableReconnectCommandLog.contractVersion' "$CASE_DIR/result.json")" "durable log contract"
   assert_eq "false" "$(jq -r '.durableReconnectCommandLog.enabled' "$CASE_DIR/result.json")" "durable log default enabled"
   assert_eq "reconnect-a,reconnect-b" "$(jq -r '.durableReconnectCommandLog.expectedCommandIds | join(",")' "$CASE_DIR/result.json")" "durable expected ids"
+  assert_eq "false" "$(jq -r '.durableReconnectCommandLog.deliveryEvidence.enabled' "$CASE_DIR/result.json")" "delivery evidence default enabled"
+  assert_eq "audit_only" "$(jq -r '.durableReconnectCommandLog.deliveryEvidence.mode' "$CASE_DIR/result.json")" "delivery evidence mode"
+  assert_eq "2" "$(grep -Fc '/api/internal/room-partition/nodes/node-a/drain?limit=50&retryAfterMs=2000' "$FAKE_CURL_CALLS")" "default throttled drain calls"
+}
+
+test_explicit_limit_and_retry_after_override_defaults() {
+  run_case "explicit-pacing"
+  write_response 1 '{"nodeId":"node-a","operationId":"node_drain:node-a","draining":true,"status":"complete","reconnectPublished":false,"targetedSessions":0,"remainingSessions":0,"reason":"node_drain","retryable":false,"nextAction":"none","readinessReason":"ready"}'
+
+  "$SCRIPT" --base-url http://openchat.internal --node-id node-a --token test-token \
+    --timeout-seconds 5 --poll-interval-ms 0 --reconnect-limit 7 --reconnect-retry-after-ms 1234 \
+    --output "$CASE_DIR/result.json" > "$CASE_DIR/stdout.json"
+
+  assert_eq "complete" "$(jq -r '.result' "$CASE_DIR/result.json")" "result"
+  assert_file_contains "$FAKE_CURL_CALLS" "/api/internal/room-partition/nodes/node-a/drain?limit=7&retryAfterMs=1234" "explicit drain pacing override"
 }
 
 test_blocked_last_active_node() {
@@ -190,6 +214,7 @@ test_publish_failed_command_id_is_attempted_not_published() {
 }
 
 test_reconnect_retry_then_complete
+test_explicit_limit_and_retry_after_override_defaults
 test_blocked_last_active_node
 test_invalid_response_shape
 test_unknown_node_timeout

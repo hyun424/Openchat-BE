@@ -16,15 +16,18 @@ docs/*
 !docs/hot-room-loadtest-summary-for-portfolio.md
 !docs/2026-05-08-dynamic-realtime-partition-ownership-star.md
 !docs/OPENCHAT-BRANCH-DECISION-LOG.md
+!docs/OPENCHAT-CURRENT-WORK.md
 !docs/LLM-WORKFLOW-RULES.md
 !docs/node-drain-orchestrator-plan.md
 !docs/node-termination-contract-plan.md
 !docs/gcp-vm-termination-adapter-plan.md
+!docs/phase5-rolling-restart-soak-plan.md
 data/
 k6/results/
 infra/gcp-loadtest/.terraform/
 infra/gcp-loadtest/*.tfstate
 infra/gcp-loadtest/*.tfstate.*
+infra/gcp-loadtest/*.tfplan
 infra/gcp-loadtest/terraform.tfvars
 
 ### Environment ###

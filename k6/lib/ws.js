@@ -4,7 +4,8 @@ import { makeUUID } from './data-factory.js';
 import {
   wsConnectDuration, wsMessageRoundtrip, wsConnectSuccess,
   wsConnectFailure, wsConnectFailures, wsMsgSent, wsMsgReceived,
-  wsFramesReceived, chatAckRoundtrip, wsVisibleFreshness, wsAcksReceived,
+  wsFramesReceived, chatAckRoundtrip, wsVisibleFreshness, wsLatestVisibleFreshness,
+  wsVisibleGapMessages, wsAcksReceived,
   wsRealtimeIncompleteFrames, wsRealtimeOmittedMessages,
   wsMessageHandlerDuration, wsJsonParseDuration, wsBatchMessagesPerFrame,
   wsObserverVisibleSamples, wsControlMessagesSent, wsActiveHeartbeatSent,
@@ -328,7 +329,11 @@ export function connectAndChat(opts) {
 
         if (msg && msg.type === 'chat.batch' && msg.realtimeComplete === false) {
           counters.incompleteFrames += 1;
-          counters.omittedMessages += Number(msg.omittedCount || 0);
+          const omittedCount = Number(msg.omittedCount || 0);
+          counters.omittedMessages += omittedCount;
+          if (shouldRecordVisible && omittedCount > 0) {
+            wsVisibleGapMessages.add(omittedCount, metricTags);
+          }
         }
 
         const messages = msg && msg.type === 'chat.batch' && Array.isArray(msg.messages)
@@ -338,9 +343,11 @@ export function connectAndChat(opts) {
           wsBatchMessagesPerFrame.add(messages.length, metricTags);
         }
 
+        let latestCreatedAt = 0;
         for (const logicalMsg of messages) {
           counters.messagesReceived += 1;
           if (shouldRecordVisible && logicalMsg.createdAt) {
+            latestCreatedAt = Math.max(latestCreatedAt, Number(logicalMsg.createdAt));
             receivedSinceLastFreshnessSample += 1;
             if (receivedSinceLastFreshnessSample >= VISIBLE_FRESHNESS_SAMPLE_EVERY) {
               receivedSinceLastFreshnessSample = 0;
@@ -361,6 +368,9 @@ export function connectAndChat(opts) {
           if (shouldRunDetailCallback && onMessage) {
             onMessage(logicalMsg);
           }
+        }
+        if (shouldRecordVisible && latestCreatedAt > 0) {
+          wsLatestVisibleFreshness.add(Date.now() - latestCreatedAt, metricTags);
         }
       } catch (e) {
         // non-JSON 메시지 무시

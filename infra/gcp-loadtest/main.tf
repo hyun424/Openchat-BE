@@ -21,7 +21,9 @@ provider "google" {
 
 locals {
   safe_run_id        = lower(replace(var.run_id, "/[^a-z0-9-]/", "-"))
-  name_prefix        = substr("openchat-lt-${local.safe_run_id}", 0, 40)
+  run_hash           = substr(sha1(var.run_id), 0, 8)
+  name_prefix        = replace("openchat-lt-${substr(local.safe_run_id, 0, 19)}-${local.run_hash}", "/-+$/", "")
+  service_account_id = replace("oclt-${substr(local.safe_run_id, 0, 16)}-${local.run_hash}", "/-+$/", "")
   sanitized_project  = lower(replace(var.project_id, "/[^a-z0-9-]/", "-"))
   default_bucket     = substr(lower(replace("openchat-loadtest-${local.sanitized_project}", "/[^a-z0-9._-]/", "-")), 0, 63)
   bucket_name        = var.bucket_name != "" ? var.bucket_name : local.default_bucket
@@ -134,7 +136,7 @@ resource "google_storage_bucket_object" "source" {
 }
 
 resource "google_service_account" "runner" {
-  account_id   = replace(substr(local.name_prefix, 0, 30), "/-+$/", "")
+  account_id   = local.service_account_id
   display_name = "OpenChat loadtest runner ${var.run_id}"
 }
 
@@ -725,6 +727,10 @@ resource "google_compute_instance" "k6" {
       k6_assignment_preflight_timeout_seconds                  = var.k6_assignment_preflight_timeout_seconds
       k6_node_drain_enabled                                    = var.k6_node_drain_enabled ? "true" : "false"
       k6_node_drain_after_seconds                              = var.k6_node_drain_after_seconds
+      k6_rolling_restart_enabled                               = var.k6_rolling_restart_enabled ? "true" : "false"
+      k6_rolling_restart_target_count                          = var.k6_rolling_restart_target_count
+      k6_rolling_restart_interval_seconds                      = var.k6_rolling_restart_interval_seconds
+      k6_rolling_restart_min_active_nodes                      = var.k6_rolling_restart_min_active_nodes
       k6_node_drain_limit                                      = var.k6_node_drain_limit
       k6_node_drain_retry_after_ms                             = var.k6_node_drain_retry_after_ms
       k6_node_drain_orchestrator_enabled                       = var.k6_node_drain_orchestrator_enabled ? "true" : "false"
@@ -732,6 +738,7 @@ resource "google_compute_instance" "k6" {
       k6_node_drain_orchestrator_poll_interval_ms              = var.k6_node_drain_orchestrator_poll_interval_ms
       k6_node_drain_orchestrator_max_reconnect_attempts        = var.k6_node_drain_orchestrator_max_reconnect_attempts
       k6_node_termination_decision_enabled                     = var.k6_node_termination_decision_enabled ? "true" : "false"
+      k6_node_termination_strict_delivery_evidence_enabled     = var.k6_node_termination_strict_delivery_evidence_enabled ? "true" : "false"
       k6_gcp_node_termination_adapter_enabled                  = var.k6_gcp_node_termination_adapter_enabled ? "true" : "false"
       k6_gcp_node_termination_adapter_mode                     = var.k6_gcp_node_termination_adapter_mode
       k6_gcp_node_termination_post_stop_probe_enabled          = var.k6_gcp_node_termination_post_stop_probe_enabled ? "true" : "false"

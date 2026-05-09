@@ -377,6 +377,10 @@ GCP node drain smoke에서 WebSocket connect success `145/145`, route failure/fa
 
 `20260509-durable-reconnect-command-log-smoke`에서는 k6 exit code `0`, HTTP error `0%`, WebSocket connect `149/149`, route failure/fallback/mismatch `0/0/0`, sent/ack/DB rows `22301/22301/22301`, post-stop `624/624/624`를 확인했다. reconnect command id는 2개였고 `reconnect_command_log` DB row도 2개로 일치했다. durable log collection은 `collectionStatus=collected`, `missingCommandIds=0`, `duplicateCommandIds=0`이었으며, termination decision에는 `sourceDurableReconnectCommandLog`와 `auditEvidence.durableLogComplete=true`가 보존됐다. GCP stop adapter는 `RUNNING -> TERMINATED`, post-stop probe는 PASS, cleanup 후 RUN_ID VM 잔여는 `0`이었다.
 
+추가 hardening에서는 publish audit row만으로는 strict termination 판단에 충분하지 않다는 점을 보완했다. `commandId` 기준 publish/handling row를 요약해 `complete`, `missingCommandIds`, `failedHandlerCommandIds`, `handlerRecordCount`를 artifact로 남기고, termination decision에 `--strict-delivery-evidence` guard를 추가했다. 기본 운영 경로는 그대로 두되, GCP smoke나 운영 스크립트가 엄격한 증거를 요구할 때만 delivery evidence 불완전을 `not_ready`로 판단하게 했다. 또한 command log가 장기 운영에서 무한히 커지지 않도록 disabled-by-default retention cleanup을 추가했다.
+
+`20260509-reconnect-delivery-hardening-smoke`는 correctness evidence는 통과했지만 ACK p95 `3279ms` threshold 초과로 k6 exit `99`가 발생했다. 같은 HEAD로 재실행한 `20260509-reconnect-delivery-hardening-smoke2`에서는 k6 exit code `0/0`, HTTP error `0%`, WebSocket connect `149/149`, post-stop `20/20`, route failure/fallback/mismatch `0/0/0`, sent/ack/DB rows `22294/22294/22294`, post-stop `624/624/624`, delivery evidence `complete=true`, missing/failed handler `0/0`, strict termination `terminationAllowed=true`, GCP stop adapter `RUNNING -> TERMINATED`, cleanup 후 VM 잔여 `0`을 확인했다. ACK p95도 `32ms`, post-stop `19ms`로 정상화되어 첫 실행의 tail latency는 기능 회귀가 아니라 flake로 기록했다.
+
 ### 배운 점
 
 실시간 시스템의 scale-out은 서버 수 증가가 아니라 ownership contract를 맞추는 문제다. route, 실제 연결, subscriber, reconnect, drain completion signal이 모두 같은 기준을 따라야 운영 가능한 구조가 된다. 또한 EKS나 MIG 자동 종료를 붙이기 전에, 애플리케이션이 먼저 "이 node는 안전하게 비워졌다"는 상태를 증명할 수 있어야 한다.

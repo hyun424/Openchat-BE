@@ -4,11 +4,11 @@ set -euo pipefail
 BASE_URL=""
 NODE_ID=""
 TOKEN="${OPENCHAT_INTERNAL_TOKEN:-}"
-TIMEOUT_SECONDS=180
+TIMEOUT_SECONDS=420
 POLL_INTERVAL_MS=2000
-RECONNECT_LIMIT=1000
-RECONNECT_RETRY_AFTER_MS=500
-MAX_RECONNECT_ATTEMPTS=5
+RECONNECT_LIMIT=50
+RECONNECT_RETRY_AFTER_MS=2000
+MAX_RECONNECT_ATTEMPTS=40
 OUTPUT=""
 MODE="start"
 
@@ -227,7 +227,18 @@ write_result() {
           duplicateCommandIds: [],
           recordCount: 0,
           lastRecordedCommandId: null,
-          records: []
+          records: [],
+          deliveryEvidence: {
+            enabled: false,
+            mode: "audit_only",
+            collectionStatus: "disabled",
+            collectionError: null,
+            complete: false,
+            commandCount: 0,
+            strictEligibleCommandCount: 0,
+            missingHandlers: [],
+            failedHandlers: []
+          }
         }
       )
     }')"
