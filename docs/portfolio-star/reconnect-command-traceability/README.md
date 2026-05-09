@@ -545,6 +545,62 @@ Durable Log v1도 delivery guarantee는 아니다. DB row가 있다고 해서 cl
 
 후속으로 검토할 수 있는 것은 durable reconnect outbox, Redis Streams, command ack store, strict termination gate다. 이들은 실제 장애 패턴이 durable log만으로 부족하다고 확인될 때 진행하는 것이 맞다.
 
+## Follow-up Result: Reconnect Delivery Evidence Hardening
+
+Durable Log v1 이후 바로 이어진 hardening의 목적은 `commandId` traceability를 termination decision이 소비할 수 있는 evidence contract로 만드는 것이었다. publish row는 "Redis publish를 시도했고 성공했는가"를 설명하지만, strict termination 판단에는 target node handler가 command를 관측했는지까지 확인할 수 있어야 한다.
+
+### Situation
+
+Node drain, external orchestrator, termination decision, GCP VM stop까지 연결되면서 종료 자동화의 마지막 질문은 "종료 직전에 필요한 reconnect command evidence가 충분한가"가 되었다. 기존 durable log는 commandId와 publish status를 DB에 남겼지만, strict mode에서 handler-level evidence가 빠졌는지, 실패 handler가 있었는지, 어떤 command가 termination 판단에 포함됐는지를 한 번에 설명하기 어려웠다.
+
+### Task
+
+기본 운영 경로를 깨지 않으면서 GCP smoke와 future ops script가 다음을 확인할 수 있어야 했다.
+
+- expected commandId가 DB audit row에 모두 기록됐는가
+- strict 대상 command의 handler row가 모두 수집됐는가
+- 누락/실패 handler가 있으면 termination decision이 `not_ready`로 판단하는가
+- delivery evidence 수집이 실패해도 기본 모드에서는 기존 종료 안전 판단을 흔들지 않는가
+- command log table이 장기 운영에서 무한히 커지지 않는가
+
+### Action
+
+세 가지를 추가했다.
+
+1. Drain orchestrator artifact에 durable reconnect command log delivery summary를 추가했다. `collectionStatus`, `complete`, `strictEligibleCommandIds`, `missingCommandIds`, `failedHandlerCommandIds`, `handlerRecordCount`로 publish/handling evidence를 commandId 기준으로 설명한다.
+2. Termination decision script에 `--strict-delivery-evidence`를 추가했다. strict mode에서 delivery evidence가 불완전하면 `terminationAllowed=false`, `result=not_ready`로 판단한다. 이를 `unsafe`가 아니라 `not_ready`로 둔 이유는 세션이 남아 위험한 상태와, 증거 수집이 아직 충분하지 않은 상태를 구분하기 위해서다.
+3. Reconnect command log retention cleanup을 추가했다. 기본은 disabled이며, 켜면 handling row를 command row보다 먼저 삭제한다. 기본 보관 기간은 30일이고 cleanup query를 위해 `(created_at, id)` 인덱스를 추가했다.
+
+### Trade-offs
+
+Strict delivery evidence는 기본값으로 켜지 않았다. DB audit write나 result collection flake가 실제 종료 자동화를 과도하게 막는 false negative가 될 수 있기 때문이다. 대신 smoke와 ops script에서 명시적으로 strict mode를 켜 검증한다.
+
+이 작업도 reconnect delivery guarantee는 아니다. Handler row는 subscriber가 command를 처리했다는 evidence이지 client가 reconnect를 완료했다는 ack가 아니다. 종료 안전 판단은 여전히 session count, orchestrator completion, termination decision guard와 함께 봐야 한다.
+
+Retention cleanup도 scheduler까지 만들지 않았다. v1에서는 cleanup policy와 query path를 검증하고, 자동 주기 실행은 운영 hardening 단계로 남겼다.
+
+### Result
+
+첫 GCP run `20260509-reconnect-delivery-hardening-smoke`는 correctness evidence는 모두 통과했지만 k6 `chat_ack_roundtrip_ms` p95가 `3279ms`로 threshold를 넘어서 exit `99`가 됐다. sent/ack/DB rows, route mismatch, delivery evidence, termination decision, cleanup은 정상이었기 때문에 기능 실패가 아니라 tail latency flake로 분석했다.
+
+같은 HEAD로 재실행한 `20260509-reconnect-delivery-hardening-smoke2`는 PASS했다.
+
+- k6 exit code single/post-stop `0/0`
+- HTTP error `0%`
+- WebSocket connect single/post-stop `149/149`, `20/20`
+- route failure/fallback/mismatch `0/0/0`
+- sent/ack/DB rows single `22,294 / 22,294 / 22,294`
+- post-stop sent/ack/DB rows `624 / 624 / 624`
+- durable reconnect command log rows `1`
+- delivery evidence `collectionStatus=collected`, `complete=true`
+- missing/failed handlers `0/0`
+- strict termination `terminationAllowed=true`
+- GCP stop adapter `RUNNING -> TERMINATED`
+- cleanup 후 RUN_ID VM 잔여 `0`
+- ACK p95 single/post-stop `32ms`, `19ms`
+
+포트폴리오 표현은 "Redis Pub/Sub delivery를 보장했다"가 아니라 "node termination 전에 필요한 reconnect command evidence를 commandId 단위로 수집하고, strict mode에서 termination decision이 그 evidence를 소비하도록 만들었다"가 정확하다.
+
 ## Portfolio STAR Summary
 
 ### Situation
