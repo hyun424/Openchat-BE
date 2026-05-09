@@ -35,6 +35,10 @@ K6_ASSIGNMENT_PREFLIGHT_EXPECTED_NODES="${k6_assignment_preflight_expected_nodes
 K6_ASSIGNMENT_PREFLIGHT_TIMEOUT_SECONDS="${k6_assignment_preflight_timeout_seconds}"
 K6_NODE_DRAIN_ENABLED="${k6_node_drain_enabled}"
 K6_NODE_DRAIN_AFTER_SECONDS="${k6_node_drain_after_seconds}"
+K6_ROLLING_RESTART_ENABLED="${k6_rolling_restart_enabled}"
+K6_ROLLING_RESTART_TARGET_COUNT="${k6_rolling_restart_target_count}"
+K6_ROLLING_RESTART_INTERVAL_SECONDS="${k6_rolling_restart_interval_seconds}"
+K6_ROLLING_RESTART_MIN_ACTIVE_NODES="${k6_rolling_restart_min_active_nodes}"
 K6_NODE_DRAIN_LIMIT="${k6_node_drain_limit}"
 K6_NODE_DRAIN_RETRY_AFTER_MS="${k6_node_drain_retry_after_ms}"
 K6_NODE_DRAIN_ORCHESTRATOR_ENABLED="${k6_node_drain_orchestrator_enabled}"
@@ -93,6 +97,40 @@ fi
 
 mkdir -p "$LOG_DIR" "$RESULT_ROOT/k6/$PROFILE/$WORKER_LABEL" "$RESULT_ROOT/metrics"
 exec > >(tee -a "$LOG_DIR/k6-startup.log") 2>&1
+
+apt_update_with_retry() {
+  local attempt
+  local delay
+  for attempt in $(seq 1 5); do
+    echo "[apt] update attempt $attempt/5"
+    if apt-get update -o Acquire::Retries=3; then
+      return 0
+    fi
+    delay=$((attempt * 10))
+    echo "[apt] update failed attempt $attempt; retrying in $delay seconds" >&2
+    apt-get clean || true
+    rm -rf /var/lib/apt/lists/partial/* || true
+    sleep "$delay"
+  done
+  echo "[apt] update failed after retries" >&2
+  return 1
+}
+
+apt_install_with_retry() {
+  local attempt
+  local delay
+  for attempt in $(seq 1 3); do
+    echo "[apt] install attempt $attempt/3 packages=$*"
+    if apt-get install -y "$@"; then
+      return 0
+    fi
+    delay=$((attempt * 10))
+    echo "[apt] install failed attempt $attempt; retrying in $delay seconds" >&2
+    sleep "$delay"
+  done
+  echo "[apt] install failed after retries packages=$*" >&2
+  return 1
+}
 
 apply_socket_tuning() {
   ulimit -n 1048576 || ulimit -n 65535 || true
@@ -153,6 +191,301 @@ collect_db_message_count() {
   "dbMessageRows": $db_count
 }
 EOF
+}
+
+json_metric_value() {
+  local summary_file="$1"
+  local metric="$2"
+  local field="$3"
+  if [ ! -f "$summary_file" ]; then
+    echo 0
+    return 0
+  fi
+  jq -r --arg metric "$metric" --arg field "$field" '
+    .metrics[$metric] as $m
+    | if $m == null then 0
+      elif (($m.values // {})[$field] != null) then ($m.values // {})[$field]
+      elif ($m[$field] != null) then $m[$field]
+      elif ($field == "rate" and $m.value != null) then $m.value
+      else 0
+      end
+  ' "$summary_file" 2>/dev/null || echo 0
+}
+
+number_as_int() {
+  local value="$1"
+  awk -v value="$value" 'BEGIN { printf "%.0f", value + 0 }'
+}
+
+less_than_or_disabled() {
+  local value="$1"
+  local threshold="$2"
+  awk -v value="$value" -v threshold="$threshold" 'BEGIN {
+    if (threshold <= 0) exit 0
+    exit !(value < threshold)
+  }'
+}
+
+metric_gate_status() {
+  local value="$1"
+  local threshold="$2"
+  if awk -v threshold="$threshold" 'BEGIN { exit !(threshold <= 0) }'; then
+    echo "COLLECTED"
+    return 0
+  fi
+  if less_than_or_disabled "$value" "$threshold"; then
+    echo "PASS"
+  else
+    echo "PARTIAL"
+  fi
+}
+
+write_post_stop_probe_result() {
+  local label="$1"
+  local target_node="$2"
+  local probe_status="$3"
+  local summary_file="$4"
+  local db_file="$5"
+  local output_file="$6"
+
+  local sent
+  local ack
+  local db_rows
+  local route_failures
+  local route_fallbacks
+  local route_mismatches
+  local latest_p95
+  local latest_p99
+  local visible_p95
+  local visible_p99
+  local freshness_status
+  sent="$(number_as_int "$(json_metric_value "$summary_file" "ws_messages_sent_total" "count")")"
+  ack="$(number_as_int "$(json_metric_value "$summary_file" "ws_acks_received_total" "count")")"
+  db_rows="$(jq -r '.dbMessageRows // 0' "$db_file" 2>/dev/null || echo 0)"
+  route_failures="$(number_as_int "$(json_metric_value "$summary_file" "ws_route_failures_total" "count")")"
+  route_fallbacks="$(number_as_int "$(json_metric_value "$summary_file" "ws_route_fallback_total" "count")")"
+  route_mismatches="$(number_as_int "$(json_metric_value "$summary_file" "ws_route_assignment_mismatch_total" "count")")"
+  latest_p95="$(json_metric_value "$summary_file" "ws_visible_latest_freshness_ms" "p(95)")"
+  latest_p99="$(json_metric_value "$summary_file" "ws_visible_latest_freshness_ms" "p(99)")"
+  visible_p95="$(json_metric_value "$summary_file" "ws_visible_freshness_ms" "p(95)")"
+  visible_p99="$(json_metric_value "$summary_file" "ws_visible_freshness_ms" "p(99)")"
+  freshness_status="$(metric_gate_status "$latest_p95" "$K6_VISIBLE_FRESHNESS_P95_THRESHOLD_MS")"
+
+  local correctness_status="PASS"
+  if [ "$probe_status" -ne 0 ] || [ "$route_failures" -ne 0 ] || [ "$route_fallbacks" -ne 0 ] || [ "$route_mismatches" -ne 0 ] || [ "$sent" -ne "$ack" ] || [ "$sent" -ne "$db_rows" ]; then
+    correctness_status="FAIL"
+  fi
+
+  jq -n \
+    --arg gate_label "$label" \
+    --arg targetNode "$target_node" \
+    --arg correctnessResult "$correctness_status" \
+    --arg freshnessResult "$freshness_status" \
+    --argjson exitCode "$probe_status" \
+    --argjson thresholdExitCode 0 \
+    --argjson sent "$sent" \
+    --argjson ack "$ack" \
+    --argjson dbRows "$db_rows" \
+    --argjson routeFailures "$route_failures" \
+    --argjson routeFallbacks "$route_fallbacks" \
+    --argjson routeMismatches "$route_mismatches" \
+    --argjson latestP95 "$latest_p95" \
+    --argjson latestP99 "$latest_p99" \
+    --argjson visibleP95 "$visible_p95" \
+    --argjson visibleP99 "$visible_p99" \
+    '{
+      "label": $gate_label,
+      "targetNode": $targetNode,
+      "correctnessResult": $correctnessResult,
+      "freshnessResult": $freshnessResult,
+      "exitCode": $exitCode,
+      "thresholdExitCode": $thresholdExitCode,
+      "sent": $sent,
+      "ack": $ack,
+      "dbRows": $dbRows,
+      "routeFailures": $routeFailures,
+      "routeFallbacks": $routeFallbacks,
+      "routeMismatches": $routeMismatches,
+      "latestFreshnessP95": $latestP95,
+      "latestFreshnessP99": $latestP99,
+      "visibleFreshnessP95": $visibleP95,
+      "visibleFreshnessP99": $visibleP99
+    }' > "$output_file"
+}
+
+write_validation_gates() {
+  # Gate sections: correctness:, drainTermination:, performance:, postStopFreshness:, cleanup:
+  local label="$1"
+  local output_dir="$2"
+  local summary_file="$3"
+  local db_file="$4"
+  local raw_k6_status="$5"
+  local node_drain_status="$6"
+  local gate_file="$RESULT_ROOT/metrics/validation-gates-$label.json"
+  local rolling_file="$RESULT_ROOT/metrics/rolling-restart-$label.json"
+  local post_stop_file="$RESULT_ROOT/metrics/post-stop-probe-rr-$label-n*.json"
+
+  local sent
+  local ack
+  local db_rows
+  local route_failures
+  local route_fallbacks
+  local route_mismatches
+  local preflight_failures
+  local http_error_rate
+  local connect_failure_rate
+  local ack_p95
+  local ack_p99
+  local latest_p95
+  local latest_p99
+  local visible_p95
+  local visible_p99
+  sent="$(number_as_int "$(json_metric_value "$summary_file" "ws_messages_sent_total" "count")")"
+  ack="$(number_as_int "$(json_metric_value "$summary_file" "ws_acks_received_total" "count")")"
+  db_rows="$(jq -r '.dbMessageRows // 0' "$db_file" 2>/dev/null || echo 0)"
+  route_failures="$(number_as_int "$(json_metric_value "$summary_file" "ws_route_failures_total" "count")")"
+  route_fallbacks="$(number_as_int "$(json_metric_value "$summary_file" "ws_route_fallback_total" "count")")"
+  route_mismatches="$(number_as_int "$(json_metric_value "$summary_file" "ws_route_assignment_mismatch_total" "count")")"
+  preflight_failures="$(number_as_int "$(json_metric_value "$summary_file" "assignment_preflight_failures_total" "count")")"
+  http_error_rate="$(json_metric_value "$summary_file" "http_error_rate" "rate")"
+  connect_failure_rate="$(json_metric_value "$summary_file" "ws_connect_failure_rate" "rate")"
+  ack_p95="$(json_metric_value "$summary_file" "chat_ack_roundtrip_ms" "p(95)")"
+  ack_p99="$(json_metric_value "$summary_file" "chat_ack_roundtrip_ms" "p(99)")"
+  latest_p95="$(json_metric_value "$summary_file" "ws_visible_latest_freshness_ms" "p(95)")"
+  latest_p99="$(json_metric_value "$summary_file" "ws_visible_latest_freshness_ms" "p(99)")"
+  visible_p95="$(json_metric_value "$summary_file" "ws_visible_freshness_ms" "p(95)")"
+  visible_p99="$(json_metric_value "$summary_file" "ws_visible_freshness_ms" "p(99)")"
+
+  local correctness_status="PASS"
+  if [ ! -f "$summary_file" ] || [ "$route_failures" -ne 0 ] || [ "$route_fallbacks" -ne 0 ] || [ "$route_mismatches" -ne 0 ] || [ "$preflight_failures" -ne 0 ] || [ "$sent" -ne "$ack" ] || [ "$sent" -ne "$db_rows" ]; then
+    correctness_status="FAIL"
+  fi
+  if ! less_than_or_disabled "$http_error_rate" "0.01" || ! less_than_or_disabled "$connect_failure_rate" "0.01"; then
+    correctness_status="FAIL"
+  fi
+
+  local drain_status="NOT_APPLICABLE"
+  local rolling_result=""
+  local termination_allowed="false"
+  local delivery_complete="false"
+  local gcp_stopped_count=0
+  local post_stop_correctness="NOT_APPLICABLE"
+  local post_stop_freshness="NOT_APPLICABLE"
+  local post_stop_exit_code=0
+  if [ -f "$rolling_file" ]; then
+    rolling_result="$(jq -r '.result // ""' "$rolling_file" 2>/dev/null || echo "")"
+    termination_allowed="$(jq -r '.terminationAllowed // false' "$rolling_file" 2>/dev/null || echo false)"
+    delivery_complete="$(jq -r '.allDeliveryEvidenceComplete // false' "$rolling_file" 2>/dev/null || echo false)"
+    gcp_stopped_count="$(jq -r '.gcpStoppedCount // 0' "$rolling_file" 2>/dev/null || echo 0)"
+    post_stop_exit_code="$(jq -r '.postStopProbe.exitCode // 0' "$rolling_file" 2>/dev/null || echo 0)"
+    if [ "$node_drain_status" -eq 0 ] && [ "$rolling_result" = "complete" ] && [ "$termination_allowed" = "true" ] && [ "$delivery_complete" = "true" ]; then
+      drain_status="PASS"
+    else
+      drain_status="FAIL"
+    fi
+  elif [ "$node_drain_status" -eq 0 ]; then
+    drain_status="NOT_APPLICABLE"
+  else
+    drain_status="FAIL"
+  fi
+
+  local matched_post_stop_file=""
+  for candidate in $post_stop_file; do
+    if [ -f "$candidate" ]; then
+      matched_post_stop_file="$candidate"
+      break
+    fi
+  done
+  if [ -n "$matched_post_stop_file" ]; then
+    post_stop_correctness="$(jq -r '.correctnessResult // "NOT_APPLICABLE"' "$matched_post_stop_file" 2>/dev/null || echo "NOT_APPLICABLE")"
+    post_stop_freshness="$(jq -r '.freshnessResult // "NOT_APPLICABLE"' "$matched_post_stop_file" 2>/dev/null || echo "NOT_APPLICABLE")"
+  fi
+
+  local performance_status
+  local ack_status
+  local latest_status
+  ack_status="$(metric_gate_status "$ack_p95" "$K6_CHAT_ACK_P95_THRESHOLD_MS")"
+  latest_status="$(metric_gate_status "$latest_p95" "$K6_VISIBLE_FRESHNESS_P95_THRESHOLD_MS")"
+  performance_status="PASS"
+  if [ "$ack_status" = "PARTIAL" ] || [ "$latest_status" = "PARTIAL" ]; then
+    performance_status="PARTIAL"
+  elif [ "$ack_status" = "COLLECTED" ] || [ "$latest_status" = "COLLECTED" ]; then
+    performance_status="COLLECTED"
+  fi
+
+  jq -n \
+    --arg gate_label "$label" \
+    --arg correctnessStatus "$correctness_status" \
+    --arg drainStatus "$drain_status" \
+    --arg performanceStatus "$performance_status" \
+    --arg ackStatus "$ack_status" \
+    --arg latestStatus "$latest_status" \
+    --arg postStopCorrectness "$post_stop_correctness" \
+    --arg postStopFreshness "$post_stop_freshness" \
+    --arg rollingResult "$rolling_result" \
+    --argjson rawK6ExitCode "$raw_k6_status" \
+    --argjson effectiveExitCode "$node_drain_status" \
+    --argjson sent "$sent" \
+    --argjson ack "$ack" \
+    --argjson dbRows "$db_rows" \
+    --argjson routeFailures "$route_failures" \
+    --argjson routeFallbacks "$route_fallbacks" \
+    --argjson routeMismatches "$route_mismatches" \
+    --argjson preflightFailures "$preflight_failures" \
+    --argjson httpErrorRate "$http_error_rate" \
+    --argjson connectFailureRate "$connect_failure_rate" \
+    --argjson ackP95 "$ack_p95" \
+    --argjson ackP99 "$ack_p99" \
+    --argjson latestP95 "$latest_p95" \
+    --argjson latestP99 "$latest_p99" \
+    --argjson visibleP95 "$visible_p95" \
+    --argjson visibleP99 "$visible_p99" \
+    --argjson gcpStoppedCount "$gcp_stopped_count" \
+    --argjson postStopExitCode "$post_stop_exit_code" \
+    --arg terminationAllowed "$termination_allowed" \
+    --arg deliveryComplete "$delivery_complete" \
+    '{
+      "label": $gate_label,
+      "correctness": {
+        "status": $correctnessStatus,
+        "rawK6ExitCode": $rawK6ExitCode,
+        "sent": $sent,
+        "ack": $ack,
+        "dbRows": $dbRows,
+        "routeFailures": $routeFailures,
+        "routeFallbacks": $routeFallbacks,
+        "routeMismatches": $routeMismatches,
+        "assignmentPreflightFailures": $preflightFailures,
+        "httpErrorRate": $httpErrorRate,
+        "connectFailureRate": $connectFailureRate
+      },
+      "drainTermination": {
+        "status": $drainStatus,
+        "rollingResult": $rollingResult,
+        "terminationAllowed": ($terminationAllowed == "true"),
+        "deliveryEvidenceComplete": ($deliveryComplete == "true"),
+        "gcpStoppedCount": $gcpStoppedCount,
+        "postStopProbeExitCode": $postStopExitCode
+      },
+      "performance": {
+        "status": $performanceStatus,
+        "ackStatus": $ackStatus,
+        "latestFreshnessStatus": $latestStatus,
+        "ackP95": $ackP95,
+        "ackP99": $ackP99,
+        "latestFreshnessP95": $latestP95,
+        "latestFreshnessP99": $latestP99
+      },
+      "postStopFreshness": {
+        "status": $postStopFreshness,
+        "correctnessResult": $postStopCorrectness
+      },
+      "cleanup": {
+        "status": "DEFERRED_TO_RUNNER"
+      },
+      "visibleFreshnessP95": $visibleP95,
+      "visibleFreshnessP99": $visibleP99
+    }' > "$gate_file"
 }
 
 collect_room_partition_state_dump() {
@@ -549,7 +882,7 @@ run_gcp_node_termination_post_stop_probe() {
     -e CHAT_DURATION_SECONDS="$probe_duration" \
     -e K6_WS_SEND_STOP_AFTER_SECONDS="$probe_duration" \
     -e K6_CHAT_ACK_P95_THRESHOLD_MS="$K6_CHAT_ACK_P95_THRESHOLD_MS" \
-    -e K6_VISIBLE_FRESHNESS_P95_THRESHOLD_MS="1000" \
+    -e K6_VISIBLE_FRESHNESS_P95_THRESHOLD_MS="$K6_VISIBLE_FRESHNESS_P95_THRESHOLD_MS" \
     -e K6_ASSIGNMENT_PREFLIGHT_ENABLED="true" \
     -e K6_ASSIGNMENT_PREFLIGHT_PARTITION_COUNT="$K6_ASSIGNMENT_PREFLIGHT_PARTITION_COUNT" \
     -e K6_ASSIGNMENT_PREFLIGHT_EXPECTED_NODES="1" \
@@ -592,6 +925,13 @@ run_gcp_node_termination_post_stop_probe() {
 
   echo "$probe_status" > "$probe_output_dir/$label-exit-code.txt"
   collect_db_message_count "$probe_label" "$probe_output_dir"
+  write_post_stop_probe_result \
+    "$label" \
+    "$target_node" \
+    "$probe_status" \
+    "$probe_output_dir/$label-summary.json" \
+    "$probe_output_dir/$probe_label-db-message-count.json" \
+    "$RESULT_ROOT/metrics/post-stop-probe-$label.json"
   collect_assignment_snapshot "gcp-node-termination-post-stop-probe-$label"
   collect_node_drain_status_snapshot "$target_node" "gcp-node-termination-post-stop-probe-$label" ""
   return "$probe_status"
@@ -862,6 +1202,105 @@ collect_workload_snapshots_during_run() {
     collect_realtime_workload_snapshot "during-$label-$index"
     index=$((index + 1))
   done
+}
+
+trigger_rolling_restart_during_run() {
+  local label="$1"
+  local output_file="$RESULT_ROOT/metrics/rolling-restart-$label.json"
+  if [ "$K6_ROLLING_RESTART_ENABLED" != "true" ] || [ "$K6_IS_COORDINATOR" != "true" ]; then
+    return 0
+  fi
+
+  sleep "$K6_NODE_DRAIN_AFTER_SECONDS"
+  collect_assignment_snapshot "rolling-restart-before-$label"
+
+  local token
+  token=$(get_workload_summary_token || true)
+  if [ -z "$token" ]; then
+    echo "{\"status\":\"skipped\",\"reason\":\"token unavailable\"}" > "$output_file"
+    return 1
+  fi
+
+  echo "[k6] triggering rolling restart label=$label targets=$K6_ROLLING_RESTART_TARGET_COUNT min_active=$K6_ROLLING_RESTART_MIN_ACTIVE_NODES mode=$K6_GCP_NODE_TERMINATION_ADAPTER_MODE"
+  local rolling_stdout="$RESULT_ROOT/metrics/rolling-restart-stdout-$label.json"
+  local rolling_enricher="$RESULT_ROOT/metrics/rolling-restart-enricher-$label.sh"
+  chmod +x "$WORKDIR/scripts/openchat-rolling-restart-orchestrate.sh" || true
+  {
+    declare -f json_array_to_sql_in_list
+    declare -f enrich_orchestrator_with_reconnect_command_log
+    printf '%s\n' 'enrich_orchestrator_with_reconnect_command_log "$1" "$2"'
+  } > "$rolling_enricher"
+  chmod +x "$rolling_enricher"
+  export K6_RECONNECT_COMMAND_LOG_ENABLED MYSQL_INTERNAL_IP RESULT_ROOT
+
+  local rolling_args=(
+    --base-url "$BASE_URL"
+    --token "$token"
+    --project "$PROJECT_ID"
+    --zone "$ZONE"
+    --run-id "$RUN_ID"
+    --target-count "$K6_ROLLING_RESTART_TARGET_COUNT"
+    --min-active-nodes "$K6_ROLLING_RESTART_MIN_ACTIVE_NODES"
+    --interval-seconds "$K6_ROLLING_RESTART_INTERVAL_SECONDS"
+    --gcp-mode "$K6_GCP_NODE_TERMINATION_ADAPTER_MODE"
+    --partition-count "$K6_ASSIGNMENT_PREFLIGHT_PARTITION_COUNT"
+    --timeout-seconds "$K6_NODE_DRAIN_ORCHESTRATOR_TIMEOUT_SECONDS"
+    --poll-interval-ms "$K6_NODE_DRAIN_ORCHESTRATOR_POLL_INTERVAL_MS"
+    --reconnect-limit "$K6_NODE_DRAIN_LIMIT"
+    --reconnect-retry-after-ms "$K6_NODE_DRAIN_RETRY_AFTER_MS"
+    --max-reconnect-attempts "$K6_NODE_DRAIN_ORCHESTRATOR_MAX_RECONNECT_ATTEMPTS"
+    --output "$output_file"
+  )
+  if [ "$K6_NODE_TERMINATION_STRICT_DELIVERY_EVIDENCE_ENABLED" = "true" ]; then
+    rolling_args+=(--strict-delivery-evidence)
+  fi
+
+  set +e
+  OPENCHAT_ROLLING_RESTART_DRAIN_ENRICHER="$rolling_enricher" \
+    "$WORKDIR/scripts/openchat-rolling-restart-orchestrate.sh" "$${rolling_args[@]}" > "$rolling_stdout"
+  local rolling_status=$?
+  set -e
+
+  collect_assignment_snapshot "rolling-restart-after-$label"
+  collect_reconnect_command_log_dump "rolling-restart-after-$label"
+  if jq -e . "$output_file" >/dev/null 2>&1; then
+    jq -r '.steps[]?.nodeId // empty' "$output_file" | while read -r stopped_node; do
+      if [ -n "$stopped_node" ]; then
+        collect_node_drain_status_snapshot "$stopped_node" "rolling-restart-after-$label-$stopped_node" "$token"
+      fi
+    done
+  fi
+
+  if [ "$rolling_status" -ne 0 ]; then
+    echo "[k6] rolling restart failed label=$label status=$rolling_status" >&2
+    return "$rolling_status"
+  fi
+
+  if [ "$K6_GCP_NODE_TERMINATION_ADAPTER_MODE" = "stop" ] && [ "$K6_GCP_NODE_TERMINATION_POST_STOP_PROBE_ENABLED" = "true" ]; then
+    local post_stop_probe_status=0
+    if jq -e . "$output_file" >/dev/null 2>&1; then
+      jq -r '.steps[]?.nodeId // empty' "$output_file" | while read -r stopped_node; do
+        if [ -n "$stopped_node" ]; then
+          local stopped_node_suffix="$${stopped_node##*-}"
+          run_gcp_node_termination_post_stop_probe "rr-$label-n$stopped_node_suffix" "$stopped_node" || exit $?
+        fi
+      done || post_stop_probe_status=$?
+    fi
+    if jq -e . "$output_file" >/dev/null 2>&1; then
+      local output_tmp="$output_file.tmp"
+      jq --argjson postStopProbeExitCode "$post_stop_probe_status" \
+        '. + {
+          postStopProbe: {
+            enabled: true,
+            exitCode: $postStopProbeExitCode
+          }
+        }' "$output_file" > "$output_tmp" 2>/dev/null && mv "$output_tmp" "$output_file" || rm -f "$output_tmp"
+    fi
+    if [ "$post_stop_probe_status" -ne 0 ]; then
+      echo "[k6] rolling restart post-stop probe failed label=$label status=$post_stop_probe_status" >&2
+      return "$post_stop_probe_status"
+    fi
+  fi
 }
 
 collect_app_snapshots() {
@@ -1150,8 +1589,8 @@ apply_socket_tuning
 collect_socket_snapshot "socket-before"
 
 export DEBIAN_FRONTEND=noninteractive
-apt-get update
-apt-get install -y unzip curl jq gnupg ca-certificates iproute2 default-mysql-client
+apt_update_with_retry
+apt_install_with_retry unzip curl jq gnupg ca-certificates iproute2 default-mysql-client
 
 if ! command -v gcloud >/dev/null 2>&1; then
   curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
@@ -1163,8 +1602,8 @@ fi
 curl -fsSL https://dl.k6.io/key.gpg | gpg --dearmor -o /usr/share/keyrings/k6-archive-keyring.gpg
 echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
   > /etc/apt/sources.list.d/k6.list
-apt-get update
-apt-get install -y k6 google-cloud-cli iproute2 default-mysql-client
+apt_update_with_retry
+apt_install_with_retry k6 google-cloud-cli iproute2 default-mysql-client
 
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
@@ -1294,7 +1733,10 @@ for vus in $VUS_LIST; do
   fi
   node_drain_pid=""
   node_drain_status=0
-  if [ "$K6_IS_COORDINATOR" = "true" ] && [ "$K6_NODE_DRAIN_ENABLED" = "true" ]; then
+  if [ "$K6_IS_COORDINATOR" = "true" ] && [ "$K6_ROLLING_RESTART_ENABLED" = "true" ]; then
+    trigger_rolling_restart_during_run "$${worker_vus}vu" &
+    node_drain_pid=$!
+  elif [ "$K6_IS_COORDINATOR" = "true" ] && [ "$K6_NODE_DRAIN_ENABLED" = "true" ]; then
     trigger_node_drain_during_run "$${worker_vus}vu" &
     node_drain_pid=$!
   fi
@@ -1355,6 +1797,7 @@ for vus in $VUS_LIST; do
     -e K6_VISIBLE_FRESHNESS_SAMPLE_EVERY="100" \
     "$SCENARIO" 2>&1 | tee "$output_dir/$${worker_vus}vu.log"
   k6_status=$${PIPESTATUS[0]}
+  raw_k6_status="$k6_status"
   set -e
 
   if [ -n "$workload_snapshot_pid" ]; then
@@ -1380,6 +1823,13 @@ for vus in $VUS_LIST; do
   else
     collect_db_message_count "$test_label" "$output_dir"
     collect_prometheus_tps_summary "$test_label" "$output_dir"
+    write_validation_gates \
+      "$${worker_vus}vu" \
+      "$output_dir" \
+      "$output_dir/$${worker_vus}vu-summary.json" \
+      "$output_dir/$test_label-db-message-count.json" \
+      "$raw_k6_status" \
+      "$node_drain_status"
   fi
   echo "[k6] finished $label exit_code=$k6_status"
 done
@@ -1427,7 +1877,11 @@ cat > "$RESULT_ROOT/run-metadata-$WORKER_LABEL.json" <<EOF
   "redisVmName": "$REDIS_VM_NAME",
   "monitoringVmName": "$MONITORING_VM_NAME",
   "k6VmName": "$K6_VM_NAME",
-  "k6VmNames": "$K6_VM_NAMES"
+  "k6VmNames": "$K6_VM_NAMES",
+  "rollingRestartEnabled": "$K6_ROLLING_RESTART_ENABLED",
+  "rollingRestartTargetCount": "$K6_ROLLING_RESTART_TARGET_COUNT",
+  "rollingRestartMinActiveNodes": "$K6_ROLLING_RESTART_MIN_ACTIVE_NODES",
+  "rollingRestartIntervalSeconds": "$K6_ROLLING_RESTART_INTERVAL_SECONDS"
 }
 EOF
 

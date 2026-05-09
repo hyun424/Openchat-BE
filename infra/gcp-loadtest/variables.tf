@@ -108,16 +108,55 @@ variable "k6_node_drain_after_seconds" {
   default     = 30
 }
 
+variable "k6_rolling_restart_enabled" {
+  description = "Run rolling restart orchestration during k6 validation instead of a single node drain."
+  type        = bool
+  default     = false
+}
+
+variable "k6_rolling_restart_target_count" {
+  description = "Number of realtime nodes to drain and stop during rolling restart validation."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.k6_rolling_restart_target_count >= 1
+    error_message = "k6_rolling_restart_target_count must be at least 1."
+  }
+}
+
+variable "k6_rolling_restart_interval_seconds" {
+  description = "Seconds to wait between rolling restart targets."
+  type        = number
+  default     = 30
+
+  validation {
+    condition     = var.k6_rolling_restart_interval_seconds >= 0
+    error_message = "k6_rolling_restart_interval_seconds must be zero or greater."
+  }
+}
+
+variable "k6_rolling_restart_min_active_nodes" {
+  description = "Minimum active realtime nodes that must remain after each rolling restart target."
+  type        = number
+  default     = 2
+
+  validation {
+    condition     = var.k6_rolling_restart_min_active_nodes >= 1
+    error_message = "k6_rolling_restart_min_active_nodes must be at least 1."
+  }
+}
+
 variable "k6_node_drain_limit" {
   description = "Maximum sessions to target per node drain reconnect command."
   type        = number
-  default     = 1000
+  default     = 50
 }
 
 variable "k6_node_drain_retry_after_ms" {
   description = "Retry delay included in node drain reconnect controls."
   type        = number
-  default     = 500
+  default     = 2000
 }
 
 variable "k6_node_drain_orchestrator_enabled" {
@@ -129,7 +168,7 @@ variable "k6_node_drain_orchestrator_enabled" {
 variable "k6_node_drain_orchestrator_timeout_seconds" {
   description = "Maximum seconds the node drain orchestrator waits for completion."
   type        = number
-  default     = 180
+  default     = 420
 }
 
 variable "k6_node_drain_orchestrator_poll_interval_ms" {
@@ -141,7 +180,7 @@ variable "k6_node_drain_orchestrator_poll_interval_ms" {
 variable "k6_node_drain_orchestrator_max_reconnect_attempts" {
   description = "Maximum reconnect retries the node drain orchestrator can issue."
   type        = number
-  default     = 5
+  default     = 40
 }
 
 variable "k6_node_termination_decision_enabled" {

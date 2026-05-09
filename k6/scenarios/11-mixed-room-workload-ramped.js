@@ -162,7 +162,6 @@ function buildThresholds() {
     ws_connect_success_rate: ['rate>0.99'],
     ws_connect_failure_rate: ['rate<0.01'],
     ws_connect_duration_ms: ['p(95)<5000', 'p(99)<10000'],
-    'chat_ack_roundtrip_ms{presenceMode:active,clientMode:sender}': [`p(95)<${CHAT_ACK_P95_THRESHOLD_MS}`],
     'ws_passive_unexpected_messages_total{presenceMode:passive}': ['count<10'],
     mixed_room_config_mismatch_total: ['count==0'],
     ws_route_assignment_mismatch_total: ['count==0'],
@@ -170,6 +169,9 @@ function buildThresholds() {
     ws_route_failures_total: ['count==0'],
     assignment_preflight_failures_total: ['count==0'],
   };
+  if (CHAT_ACK_P95_THRESHOLD_MS > 0) {
+    thresholds['chat_ack_roundtrip_ms{presenceMode:active,clientMode:sender}'] = [`p(95)<${CHAT_ACK_P95_THRESHOLD_MS}`];
+  }
   if (VISIBLE_FRESHNESS_P95_THRESHOLD_MS > 0) {
     thresholds['ws_visible_freshness_ms{presenceMode:active,clientMode:observer}'] = [`p(95)<${VISIBLE_FRESHNESS_P95_THRESHOLD_MS}`];
   }

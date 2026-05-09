@@ -154,6 +154,25 @@ class RealtimeNodeDrainServiceTest {
     }
 
     @Test
+    void startDrain_usesThrottledDefaultsWhenLimitAndRetryAfterAreOmitted() {
+        Fixture fixture = new Fixture(List.of(
+                node("node-a", false, Set.of(0, 2), 120),
+                node("node-b", false, Set.of(0, 1, 2, 3), 0)
+        ));
+        when(fixture.publisher.publish(any())).thenReturn(true);
+
+        RealtimeNodeDrainService.NodeDrainResult result = fixture.service.startDrain("node-a", null, null);
+
+        assertEquals("reconnect_published", result.status());
+        assertEquals(50, result.targetedSessions());
+        assertEquals(120, result.remainingSessions());
+        ArgumentCaptor<RoomPartitionControlCommand> captor = forClass(RoomPartitionControlCommand.class);
+        verify(fixture.publisher).publish(captor.capture());
+        assertEquals(50, captor.getValue().limit());
+        assertEquals(2000L, captor.getValue().retryAfterMs());
+    }
+
+    @Test
     void startDrain_returnsPublishFailedWhenNodeControlHasNoReceivers() {
         Fixture fixture = new Fixture(List.of(
                 node("node-a", false, Set.of(0, 2), 12),

@@ -15,8 +15,8 @@ public class RoomPartitionAssignmentProperties {
     private long subscriberRefreshMs = 5000;
     private long unsubscribeGraceMs = 30000;
     private boolean nodeDrainEnabled = false;
-    private int nodeDrainReconnectLimit = 200;
-    private long nodeDrainRetryAfterMs = 500;
+    private int nodeDrainReconnectLimit = 50;
+    private long nodeDrainRetryAfterMs = 2000;
     private long nodeDrainReadinessTimeoutMs = 15000;
 
     public boolean enabled() {

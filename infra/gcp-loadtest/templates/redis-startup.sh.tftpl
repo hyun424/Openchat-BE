@@ -8,11 +8,45 @@ LOG_DIR="/var/log/openchat-loadtest"
 mkdir -p "$LOG_DIR"
 exec > >(tee -a "$LOG_DIR/redis-startup.log") 2>&1
 
+apt_update_with_retry() {
+  local attempt
+  local delay
+  for attempt in $(seq 1 5); do
+    echo "[apt] update attempt $attempt/5"
+    if apt-get update -o Acquire::Retries=3; then
+      return 0
+    fi
+    delay=$((attempt * 10))
+    echo "[apt] update failed attempt $attempt; retrying in $delay seconds" >&2
+    apt-get clean || true
+    rm -rf /var/lib/apt/lists/partial/* || true
+    sleep "$delay"
+  done
+  echo "[apt] update failed after retries" >&2
+  return 1
+}
+
+apt_install_with_retry() {
+  local attempt
+  local delay
+  for attempt in $(seq 1 3); do
+    echo "[apt] install attempt $attempt/3 packages=$*"
+    if apt-get install -y "$@"; then
+      return 0
+    fi
+    delay=$((attempt * 10))
+    echo "[apt] install failed attempt $attempt; retrying in $delay seconds" >&2
+    sleep "$delay"
+  done
+  echo "[apt] install failed after retries packages=$*" >&2
+  return 1
+}
+
 echo "[redis] startup begin run_id=$RUN_ID bucket=$BUCKET_NAME"
 
 export DEBIAN_FRONTEND=noninteractive
-apt-get update
-apt-get install -y docker.io curl jq gnupg ca-certificates iproute2
+apt_update_with_retry
+apt_install_with_retry docker.io curl jq gnupg ca-certificates iproute2
 systemctl enable --now docker
 
 if ! command -v gcloud >/dev/null 2>&1; then
@@ -20,8 +54,8 @@ if ! command -v gcloud >/dev/null 2>&1; then
     | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
   echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
     > /etc/apt/sources.list.d/google-cloud-sdk.list
-  apt-get update
-  apt-get install -y google-cloud-cli
+  apt_update_with_retry
+  apt_install_with_retry google-cloud-cli
 fi
 
 docker rm -f openchat-redis >/dev/null 2>&1 || true

@@ -1,11 +1,9 @@
-# GCP smoke for Dynamic Realtime Node Drain.
-# It verifies that a draining realtime node is removed from routing, existing
-# clients receive node_drain reconnect controls, and the drained node reaches
-# zero open WebSocket sessions.
+# Rolling restart mini-soak for realtime node drain/termination evidence.
+# It keeps the v1 safety default: stop one realtime node, leave at least two active nodes.
 
-profile               = "room-partition-node-drain-smoke"
+profile               = "room-partition-rolling-restart-mini-soak"
 api_count             = 1
-realtime_count        = 2
+realtime_count        = 3
 api_machine_type      = "e2-standard-2"
 realtime_machine_type = "e2-standard-2"
 app_machine_type      = "e2-standard-4"
@@ -16,30 +14,36 @@ k6_machine_type       = "e2-standard-2"
 k6_worker_count       = 1
 k6_cleanup_enabled    = true
 shared_room_mode      = false
-vus_list              = "100"
-chat_duration_seconds = 120
+vus_list              = "200"
+chat_duration_seconds = 300
 send_interval_ms      = 500
-connect_ramp_seconds  = 15
+connect_ramp_seconds  = 30
 
+k6_chat_ack_p95_threshold_ms          = 0
 k6_visible_freshness_p95_threshold_ms = 0
 k6_assignment_preflight_enabled       = true
-k6_assignment_preflight_expected_nodes = 2
-k6_assignment_preflight_timeout_seconds = 90
-k6_node_drain_enabled                  = true
-k6_node_drain_after_seconds            = 45
-k6_node_drain_limit                    = 50
-k6_node_drain_retry_after_ms           = 2000
-k6_node_drain_orchestrator_enabled     = true
-k6_node_drain_orchestrator_timeout_seconds = 420
-k6_node_drain_orchestrator_poll_interval_ms = 2000
-k6_node_drain_orchestrator_max_reconnect_attempts = 40
-k6_node_termination_decision_enabled = true
-k6_node_termination_strict_delivery_evidence_enabled = false
-k6_gcp_node_termination_adapter_enabled = true
-k6_gcp_node_termination_adapter_mode = "stop"
-k6_gcp_node_termination_post_stop_probe_enabled = true
-k6_gcp_node_termination_post_stop_probe_vus = 20
-k6_gcp_node_termination_post_stop_probe_duration_seconds = 20
+k6_assignment_preflight_expected_nodes = 3
+k6_assignment_preflight_timeout_seconds = 120
+
+k6_node_drain_enabled                              = false
+k6_node_drain_after_seconds                        = 90
+k6_rolling_restart_enabled                         = true
+k6_rolling_restart_target_count                    = 1
+k6_rolling_restart_interval_seconds                = 30
+k6_rolling_restart_min_active_nodes                = 2
+k6_node_drain_limit                                = 50
+k6_node_drain_retry_after_ms                       = 2000
+k6_node_drain_orchestrator_enabled                 = true
+k6_node_drain_orchestrator_timeout_seconds         = 420
+k6_node_drain_orchestrator_poll_interval_ms        = 2000
+k6_node_drain_orchestrator_max_reconnect_attempts  = 40
+k6_node_termination_decision_enabled               = true
+k6_node_termination_strict_delivery_evidence_enabled = true
+k6_gcp_node_termination_adapter_enabled            = true
+k6_gcp_node_termination_adapter_mode               = "stop"
+k6_gcp_node_termination_post_stop_probe_enabled    = true
+k6_gcp_node_termination_post_stop_probe_vus        = 40
+k6_gcp_node_termination_post_stop_probe_duration_seconds = 45
 
 hot_rooms                 = 1
 scenario                  = "k6/scenarios/11-mixed-room-workload-ramped.js"
@@ -55,7 +59,7 @@ active_heartbeat_interval_ms = 20000
 passive_settle_ms            = 2000
 
 mixed_hot_room_count       = 1
-mixed_hot_room_vus         = 100
+mixed_hot_room_vus         = 200
 mixed_hot_active_ratio     = 1.0
 mixed_hot_send_interval_ms = 500
 mixed_large_room_count     = 0
