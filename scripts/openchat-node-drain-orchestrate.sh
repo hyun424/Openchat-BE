@@ -209,6 +209,26 @@ write_result() {
         | map(select(.reconnectPublished == true) | .commandId // empty)
         | map(select(. != ""))
         | last // null
+      ),
+      durableReconnectCommandLog: (
+        ($history[0]
+          | map(.commandId // empty)
+          | map(select(. != ""))
+          | unique) as $expected
+        | {
+	          enabled: false,
+	          mode: "audit_only",
+	          contractVersion: "openchat.reconnect-command-log.v1",
+	          collectionStatus: "disabled",
+	          collectionError: null,
+	          expectedCommandIds: $expected,
+          recordedCommandIds: [],
+          missingCommandIds: [],
+          duplicateCommandIds: [],
+          recordCount: 0,
+          lastRecordedCommandId: null,
+          records: []
+        }
       )
     }')"
 

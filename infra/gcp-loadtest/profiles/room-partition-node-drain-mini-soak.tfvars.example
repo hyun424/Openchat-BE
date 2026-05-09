@@ -73,6 +73,7 @@ room_partition_admin_api_enabled                    = true
 room_partition_assignment_enabled                   = true
 room_partition_assignment_dynamic_subscribe_enabled = true
 room_partition_control_command_trace_enabled        = true
+room_partition_control_command_log_enabled          = true
 room_partition_assignment_node_drain_enabled        = true
 room_partition_assignment_node_drain_readiness_timeout_ms = 15000
 

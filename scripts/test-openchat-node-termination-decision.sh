@@ -50,6 +50,20 @@ ready_json() {
   "reconnectCommandIds": ["reconnect-a", "reconnect-b"],
   "attemptedReconnectCommandIds": ["reconnect-a", "reconnect-b"],
   "lastReconnectCommandId": "reconnect-b",
+  "durableReconnectCommandLog": {
+    "enabled": true,
+    "mode": "audit_only",
+    "contractVersion": "openchat.reconnect-command-log.v1",
+    "collectionStatus": "collected",
+    "collectionError": null,
+    "expectedCommandIds": ["reconnect-a", "reconnect-b"],
+    "recordedCommandIds": ["reconnect-a", "reconnect-b"],
+    "missingCommandIds": [],
+    "duplicateCommandIds": [],
+    "recordCount": 2,
+    "lastRecordedCommandId": "reconnect-b",
+    "records": []
+  },
   "remainingSessions": 0,
   "completedAt": "__COMPLETED_AT__"
 }
@@ -68,8 +82,24 @@ test_ready_allows_termination() {
   assert_eq "terminate_node" "$(jq -r '.recommendedAction' "$CASE_DIR/result.json")" "recommendedAction"
   assert_eq "reconnect-a,reconnect-b" "$(jq -r '.sourceReconnectCommandIds | join(",")' "$CASE_DIR/result.json")" "sourceReconnectCommandIds"
   assert_eq "reconnect-a,reconnect-b" "$(jq -r '.sourceAttemptedReconnectCommandIds | join(",")' "$CASE_DIR/result.json")" "sourceAttemptedReconnectCommandIds"
+  assert_eq "2" "$(jq -r '.sourceDurableReconnectCommandLog.recordCount' "$CASE_DIR/result.json")" "source durable record count"
+  assert_eq "true" "$(jq -r '.auditEvidence.durableLogComplete' "$CASE_DIR/result.json")" "durable audit complete"
+  assert_eq "collected" "$(jq -r '.auditEvidence.durableLogCollectionStatus' "$CASE_DIR/result.json")" "durable collection status"
   assert_eq "0" "$(jq -r '.guards | map(select(.passed == false)) | length' "$CASE_DIR/result.json")" "failed guard count"
   assert_eq "ready" "$(jq -r '.result' "$CASE_DIR/stdout.json")" "stdout result"
+}
+
+test_durable_log_collection_failure_is_not_complete() {
+  new_case "durable-collection-failed"
+  ready_json \
+    | jq '.durableReconnectCommandLog.collectionStatus = "query_failed" | .durableReconnectCommandLog.collectionError = "table missing"' \
+    > "$CASE_DIR/input.json"
+
+  run_decision
+
+  assert_eq "true" "$(jq -r '.terminationAllowed' "$CASE_DIR/result.json")" "terminationAllowed remains safety-only"
+  assert_eq "false" "$(jq -r '.auditEvidence.durableLogComplete' "$CASE_DIR/result.json")" "durable audit complete"
+  assert_eq "query_failed" "$(jq -r '.auditEvidence.durableLogCollectionStatus' "$CASE_DIR/result.json")" "durable collection status"
 }
 
 test_remaining_sessions_blocks_termination() {
@@ -214,6 +244,7 @@ test_unknown_source_result_is_unexpected_input() {
 }
 
 test_ready_allows_termination
+test_durable_log_collection_failure_is_not_complete
 test_remaining_sessions_blocks_termination
 test_status_blocks_termination
 test_node_mismatch_is_unsafe

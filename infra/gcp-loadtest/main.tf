@@ -427,6 +427,7 @@ resource "google_compute_instance" "api" {
       room_partition_assignment_enabled                          = var.room_partition_assignment_enabled ? "true" : "false"
       room_partition_assignment_dynamic_subscribe_enabled        = var.room_partition_assignment_dynamic_subscribe_enabled ? "true" : "false"
       room_partition_control_command_trace_enabled               = var.room_partition_control_command_trace_enabled ? "true" : "false"
+      room_partition_control_command_log_enabled                 = var.room_partition_control_command_log_enabled ? "true" : "false"
       room_partition_assignment_node_drain_enabled               = var.room_partition_assignment_node_drain_enabled ? "true" : "false"
       room_partition_assignment_node_drain_readiness_timeout_ms  = var.room_partition_assignment_node_drain_readiness_timeout_ms
       room_partition_lifecycle_enabled                           = var.room_partition_lifecycle_enabled ? "true" : "false"
@@ -517,6 +518,7 @@ resource "google_compute_instance" "realtime" {
       room_partition_assignment_enabled                          = var.room_partition_assignment_enabled ? "true" : "false"
       room_partition_assignment_dynamic_subscribe_enabled        = var.room_partition_assignment_dynamic_subscribe_enabled ? "true" : "false"
       room_partition_control_command_trace_enabled               = var.room_partition_control_command_trace_enabled ? "true" : "false"
+      room_partition_control_command_log_enabled                 = var.room_partition_control_command_log_enabled ? "true" : "false"
       room_partition_assignment_node_drain_enabled               = var.room_partition_assignment_node_drain_enabled ? "true" : "false"
       room_partition_assignment_node_drain_readiness_timeout_ms  = var.room_partition_assignment_node_drain_readiness_timeout_ms
       room_partition_lifecycle_enabled                           = var.room_partition_lifecycle_enabled ? "true" : "false"
@@ -735,6 +737,7 @@ resource "google_compute_instance" "k6" {
       k6_gcp_node_termination_post_stop_probe_enabled          = var.k6_gcp_node_termination_post_stop_probe_enabled ? "true" : "false"
       k6_gcp_node_termination_post_stop_probe_vus              = var.k6_gcp_node_termination_post_stop_probe_vus
       k6_gcp_node_termination_post_stop_probe_duration_seconds = var.k6_gcp_node_termination_post_stop_probe_duration_seconds
+      room_partition_control_command_log_enabled               = var.room_partition_control_command_log_enabled ? "true" : "false"
       realtime_workload_summary_enabled                        = var.realtime_workload_summary_enabled ? "true" : "false"
       connect_ramp_seconds                                     = var.connect_ramp_seconds
       hot_rooms                                                = var.hot_rooms

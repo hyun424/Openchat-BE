@@ -574,6 +574,12 @@ variable "room_partition_control_command_trace_enabled" {
   default     = false
 }
 
+variable "room_partition_control_command_log_enabled" {
+  description = "Persist reconnect command publish/handling audit rows for GCP validation. Requires command trace enabled."
+  type        = bool
+  default     = false
+}
+
 variable "room_partition_assignment_node_drain_enabled" {
   description = "Enable node-drain commands for realtime partition assignment smoke tests."
   type        = bool

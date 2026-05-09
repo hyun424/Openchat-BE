@@ -18,4 +18,9 @@ public class NoopRoomPartitionControlPublisher implements RoomPartitionControlPu
         metrics.recordControlPublish(command == null ? "unknown" : command.type(), "publish_failed");
         return false;
     }
+
+    @Override
+    public boolean publish(RoomPartitionControlCommand command, String operationId) {
+        return publish(command);
+    }
 }

@@ -2,6 +2,7 @@ package io.hyun424.openchat.chat.room.partition.infra;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.hyun424.openchat.chat.room.partition.commandlog.ReconnectCommandLogService;
 import io.hyun424.openchat.chat.room.partition.dto.RoomPartitionControlCommand;
 import io.hyun424.openchat.chat.room.partition.metrics.RoomPartitionMetrics;
 import io.hyun424.openchat.chat.room.partition.service.RoomPartitionControlHandler;
@@ -19,6 +20,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentCaptor.forClass;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -116,6 +118,73 @@ class RoomPartitionControlSubscriberTest {
         subscriber.onMessage("{\"type\":\"unknown\"}", "openchat:room-partition-control:1");
 
         verify(session, never()).sendMessage(any(TextMessage.class));
+        registry.shutdownExecutor();
+    }
+
+    @Test
+    @DisplayName("command log가 켜져 있으면 subscriber handling 결과를 node 단위로 기록한다")
+    void reconnectCommand_recordsDurableHandlingLog() throws Exception {
+        RoomSessionRegistry registry = new RoomSessionRegistry(objectMapper, 2, 16);
+        ReconnectCommandLogService commandLogService = mock(ReconnectCommandLogService.class);
+        RoomPartitionControlSubscriber subscriber = new RoomPartitionControlSubscriber(
+                objectMapper,
+                new RoomPartitionControlHandler(registry, new RoomPartitionMetrics(new SimpleMeterRegistry())),
+                new RoomPartitionMetrics(new SimpleMeterRegistry()),
+                commandLogService,
+                "handler-a"
+        );
+        WebSocketSession session = mockOpenSession("partition-1");
+        registry.add(1L, 1, session);
+        RoomPartitionControlCommand command = RoomPartitionControlCommand.reconnect(
+                1L,
+                1,
+                "scale_down",
+                100,
+                500,
+                8
+        );
+
+        subscriber.onMessage(objectMapper.writeValueAsString(command), "openchat:room-partition-control:1");
+
+        ArgumentCaptor<RoomPartitionControlHandler.ReconnectHandlingResult> captor =
+                forClass(RoomPartitionControlHandler.ReconnectHandlingResult.class);
+        verify(commandLogService).recordHandling(org.mockito.ArgumentMatchers.eq(command), org.mockito.ArgumentMatchers.eq("handler-a"), captor.capture());
+        assertEquals(1, captor.getValue().openSessionsBefore());
+        assertEquals(1, captor.getValue().targetedSessions());
+        assertEquals(1, captor.getValue().sentSessions());
+        assertEquals(0, captor.getValue().failedSessions());
+        registry.shutdownExecutor();
+    }
+
+    @Test
+    @DisplayName("command log 기록 실패는 reconnect control 전송 결과를 깨지 않는다")
+    void reconnectCommand_ignoresCommandLogFailure() throws Exception {
+        RoomSessionRegistry registry = new RoomSessionRegistry(objectMapper, 2, 16);
+        ReconnectCommandLogService commandLogService = mock(ReconnectCommandLogService.class);
+        RoomPartitionControlSubscriber subscriber = new RoomPartitionControlSubscriber(
+                objectMapper,
+                new RoomPartitionControlHandler(registry, new RoomPartitionMetrics(new SimpleMeterRegistry())),
+                new RoomPartitionMetrics(new SimpleMeterRegistry()),
+                commandLogService,
+                "handler-a"
+        );
+        WebSocketSession session = mockOpenSession("partition-1");
+        registry.add(1L, 1, session);
+        RoomPartitionControlCommand command = RoomPartitionControlCommand.reconnect(
+                1L,
+                1,
+                "scale_down",
+                100,
+                500,
+                8
+        );
+        doThrow(new RuntimeException("db down"))
+                .when(commandLogService)
+                .recordHandling(org.mockito.ArgumentMatchers.eq(command), org.mockito.ArgumentMatchers.eq("handler-a"), any());
+
+        subscriber.onMessage(objectMapper.writeValueAsString(command), "openchat:room-partition-control:1");
+
+        verify(session).sendMessage(any(TextMessage.class));
         registry.shutdownExecutor();
     }
 

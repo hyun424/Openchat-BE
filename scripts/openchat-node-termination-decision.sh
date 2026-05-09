@@ -233,6 +233,19 @@ build_decision() {
           sourceReconnectCommandIds: ($source.reconnectCommandIds // []),
           sourceAttemptedReconnectCommandIds: ($source.attemptedReconnectCommandIds // []),
           sourceLastReconnectCommandId: ($source.lastReconnectCommandId // null),
+          sourceDurableReconnectCommandLog: ($source.durableReconnectCommandLog // null),
+	          auditEvidence: {
+	            durableLogCollectionStatus: ($source.durableReconnectCommandLog.collectionStatus // null),
+	            durableLogCollectionError: ($source.durableReconnectCommandLog.collectionError // null),
+	            durableLogComplete: (
+	              if (($source.durableReconnectCommandLog // null) == null) then null
+	              elif (($source.durableReconnectCommandLog.collectionStatus // "collected") != "collected") then false
+	              else (($source.durableReconnectCommandLog.missingCommandIds // []) | length == 0)
+	              end
+	            ),
+            durableLogMissingCommandIds: ($source.durableReconnectCommandLog.missingCommandIds // []),
+            durableLogRecordCount: ($source.durableReconnectCommandLog.recordCount // 0)
+          },
           remainingSessions: $source.remainingSessions,
           reason: (
             if $ready then "all termination guards passed"

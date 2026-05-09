@@ -1,6 +1,7 @@
 package io.hyun424.openchat.chat.room.partition.infra;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.hyun424.openchat.chat.room.partition.commandlog.ReconnectCommandLogService;
 import io.hyun424.openchat.chat.room.partition.dto.RoomPartitionControlCommand;
 import io.hyun424.openchat.chat.room.partition.metrics.RoomPartitionMetrics;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -13,6 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentCaptor.forClass;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -115,5 +117,66 @@ class RedisRoomPartitionControlPublisherTest {
         ));
 
         assertFalse(published);
+    }
+
+    @Test
+    @DisplayName("command log가 켜져 있으면 publish attempt와 success를 audit log에 기록한다")
+    void publish_recordsDurableCommandLogWhenEnabled() {
+        StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
+        ReconnectCommandLogService commandLogService = mock(ReconnectCommandLogService.class);
+        RedisRoomPartitionControlPublisher publisher = new RedisRoomPartitionControlPublisher(
+                redisTemplate,
+                objectMapper,
+                new RoomPartitionControlChannelResolver(),
+                new RoomPartitionMetrics(new SimpleMeterRegistry()),
+                commandLogService,
+                true,
+                true,
+                "publisher-a"
+        );
+        when(redisTemplate.convertAndSend(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn(2L);
+
+        RoomPartitionControlCommand command = RoomPartitionControlCommand.nodeReconnect(
+                "node-a",
+                "node_drain",
+                100,
+                500
+        );
+
+        assertTrue(publisher.publish(command));
+
+        verify(commandLogService).recordPublishAttempt(command, "node_drain:node-a", "publisher-a");
+        verify(commandLogService).markPublishSucceeded(command.commandId(), 2L);
+    }
+
+    @Test
+    @DisplayName("command log 기록 실패는 Redis publish 성공 결과를 깨지 않는다")
+    void publish_ignoresCommandLogFailure() {
+        StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
+        ReconnectCommandLogService commandLogService = mock(ReconnectCommandLogService.class);
+        RedisRoomPartitionControlPublisher publisher = new RedisRoomPartitionControlPublisher(
+                redisTemplate,
+                objectMapper,
+                new RoomPartitionControlChannelResolver(),
+                new RoomPartitionMetrics(new SimpleMeterRegistry()),
+                commandLogService,
+                true,
+                true,
+                "publisher-a"
+        );
+        when(redisTemplate.convertAndSend(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn(1L);
+        RoomPartitionControlCommand command = RoomPartitionControlCommand.nodeReconnect(
+                "node-a",
+                "node_drain",
+                100,
+                500
+        );
+        doThrow(new RuntimeException("db down"))
+                .when(commandLogService)
+                .recordPublishAttempt(command, "node_drain:node-a", "publisher-a");
+
+        assertTrue(publisher.publish(command));
     }
 }

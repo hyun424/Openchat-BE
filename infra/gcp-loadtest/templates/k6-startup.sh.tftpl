@@ -47,6 +47,7 @@ K6_GCP_NODE_TERMINATION_ADAPTER_MODE="${k6_gcp_node_termination_adapter_mode}"
 K6_GCP_NODE_TERMINATION_POST_STOP_PROBE_ENABLED="${k6_gcp_node_termination_post_stop_probe_enabled}"
 K6_GCP_NODE_TERMINATION_POST_STOP_PROBE_VUS="${k6_gcp_node_termination_post_stop_probe_vus}"
 K6_GCP_NODE_TERMINATION_POST_STOP_PROBE_DURATION_SECONDS="${k6_gcp_node_termination_post_stop_probe_duration_seconds}"
+K6_RECONNECT_COMMAND_LOG_ENABLED="${room_partition_control_command_log_enabled}"
 REALTIME_WORKLOAD_SUMMARY_ENABLED="${realtime_workload_summary_enabled}"
 CONNECT_RAMP_SECONDS="${connect_ramp_seconds}"
 HOT_ROOMS="${hot_rooms}"
@@ -171,6 +172,128 @@ collect_room_partition_state_dump() {
     -B \
     -e "SELECT room_id, partition_count, version, status, draining_partitions, updated_at, updated_by FROM room_partition_state ORDER BY updated_at DESC, room_id;" \
     > "$output_file" 2>"$RESULT_ROOT/metrics/room-partition-state-$suffix.err" || true
+}
+
+json_array_to_sql_in_list() {
+  jq -r '
+    .[]?
+    | select(type == "string" and length > 0)
+    | select(test("^[A-Za-z0-9:_-]+$"))
+  ' | sort -u | awk 'BEGIN { first = 1 } { if (!first) printf ","; printf "\047%s\047", $0; first = 0 }'
+}
+
+collect_reconnect_command_log_dump() {
+  local label="$1"
+  local safe_label="$${label//\'/}"
+  local output_file="$RESULT_ROOT/metrics/reconnect-command-log-$safe_label.tsv"
+
+  if [ "$K6_RECONNECT_COMMAND_LOG_ENABLED" != "true" ]; then
+    echo "disabled" > "$output_file"
+    return 0
+  fi
+  if ! command -v mysql >/dev/null 2>&1; then
+    echo "mysql client not installed" > "$output_file"
+    return 0
+  fi
+
+  mysql \
+    --connect-timeout=5 \
+    -h "$MYSQL_INTERNAL_IP" \
+    -uopenchat \
+    -popenchat \
+    -D openchat \
+    -B \
+    -e "SELECT command_id, operation_id, command_type, COALESCE(target_node_id, ''), publish_status, COALESCE(redis_receivers, ''), created_at, COALESCE(published_at, ''), COALESCE(failed_at, '') FROM reconnect_command_log ORDER BY created_at DESC, command_id LIMIT 200;" \
+    > "$output_file" 2>"$RESULT_ROOT/metrics/reconnect-command-log-$safe_label.err" || true
+}
+
+enrich_orchestrator_with_reconnect_command_log() {
+  local label="$1"
+  local orchestrator_output="$2"
+
+  if [ "$K6_RECONNECT_COMMAND_LOG_ENABLED" != "true" ]; then
+    return 0
+  fi
+  if ! jq -e . "$orchestrator_output" >/dev/null 2>&1; then
+    return 0
+  fi
+  local expected_json
+  expected_json="$(jq -c '.attemptedReconnectCommandIds // []' "$orchestrator_output")"
+  local in_list
+  in_list="$(printf '%s' "$expected_json" | json_array_to_sql_in_list)"
+
+  local safe_label="$${label//\'/}"
+  local rows_file="$RESULT_ROOT/metrics/reconnect-command-log-orchestrator-$safe_label.tsv"
+  local err_file="$RESULT_ROOT/metrics/reconnect-command-log-orchestrator-$safe_label.err"
+  local collection_status="collected"
+  local collection_error=""
+  : > "$rows_file"
+  : > "$err_file"
+
+  if ! command -v mysql >/dev/null 2>&1; then
+    collection_status="mysql_unavailable"
+    collection_error="mysql client is not installed"
+  elif [ -z "$in_list" ]; then
+    collection_status="no_expected_commands"
+  else
+    if ! mysql \
+      --connect-timeout=5 \
+      -h "$MYSQL_INTERNAL_IP" \
+      -uopenchat \
+      -popenchat \
+      -D openchat \
+      -N -B \
+      -e "SELECT command_id, operation_id, command_type, COALESCE(target_node_id, ''), publish_status, COALESCE(redis_receivers, ''), created_at, COALESCE(published_at, ''), COALESCE(failed_at, '') FROM reconnect_command_log WHERE command_id IN ($in_list) ORDER BY created_at, command_id;" \
+      > "$rows_file" 2>"$err_file"; then
+      collection_status="query_failed"
+      collection_error="$(tr '\n' ' ' < "$err_file" | cut -c1-500)"
+      : > "$rows_file"
+    fi
+  fi
+
+  local records_json
+  records_json="$(jq -Rn '
+    [inputs
+      | select(length > 0)
+      | split("\t")
+      | {
+          commandId: .[0],
+          operationId: .[1],
+          commandType: .[2],
+          targetNodeId: (if .[3] == "" then null else .[3] end),
+          publishStatus: .[4],
+          redisReceivers: (if .[5] == "" then null else (.[5] | tonumber) end),
+          createdAt: (.[6] | tonumber),
+          publishedAt: (if .[7] == "" then null else (.[7] | tonumber) end),
+          failedAt: (if .[8] == "" then null else (.[8] | tonumber) end)
+        }
+    ]
+  ' < "$rows_file")"
+
+  local tmp_output="$orchestrator_output.tmp"
+  jq --argjson expected "$expected_json" \
+    --argjson records "$records_json" \
+    --arg collectionStatus "$collection_status" \
+    --arg collectionError "$collection_error" '
+    ($records | map(.commandId)) as $recordedRaw
+    | ($recordedRaw | unique) as $recorded
+    | (if $collectionStatus == "collected" then ($expected | map(select(($recorded | index(.)) == null))) else [] end) as $missing
+    | ($recordedRaw | group_by(.) | map(select(length > 1) | .[0])) as $duplicates
+    | .durableReconnectCommandLog = {
+        enabled: true,
+        mode: "audit_only",
+        contractVersion: "openchat.reconnect-command-log.v1",
+        collectionStatus: $collectionStatus,
+        collectionError: (if $collectionError == "" then null else $collectionError end),
+        expectedCommandIds: $expected,
+        recordedCommandIds: $recorded,
+        missingCommandIds: $missing,
+        duplicateCommandIds: $duplicates,
+        recordCount: ($records | length),
+        lastRecordedCommandId: ($recordedRaw | last // null),
+        records: $records
+      }
+  ' "$orchestrator_output" > "$tmp_output" 2>/dev/null && mv "$tmp_output" "$orchestrator_output" || rm -f "$tmp_output"
 }
 
 get_workload_summary_token() {
@@ -425,6 +548,8 @@ trigger_node_drain_during_run() {
 
     collect_assignment_snapshot "node-drain-after-orchestrator-$label"
     collect_node_drain_status_snapshot "$target_node" "node-drain-after-orchestrator-$label" "$token"
+    collect_reconnect_command_log_dump "node-drain-after-orchestrator-$label"
+    enrich_orchestrator_with_reconnect_command_log "$label" "$orchestrator_output"
 
     if jq -e . "$orchestrator_output" >/dev/null 2>&1; then
       jq -nc \
