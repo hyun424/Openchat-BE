@@ -25,15 +25,18 @@ public class ReconnectCommandLogService {
 
     private final ReconnectCommandLogRepository commandRepository;
     private final ReconnectCommandHandlingLogRepository handlingRepository;
+    private final ReconnectCommandLogRetentionProperties retentionProperties;
     private final boolean enabled;
     private final boolean commandTraceEnabled;
 
     public ReconnectCommandLogService(ReconnectCommandLogRepository commandRepository,
                                       ReconnectCommandHandlingLogRepository handlingRepository,
+                                      ReconnectCommandLogRetentionProperties retentionProperties,
                                       @Value("${app.room-partition.control.command-log.enabled:false}") boolean enabled,
                                       @Value("${app.room-partition.control.command-trace-enabled:false}") boolean commandTraceEnabled) {
         this.commandRepository = commandRepository;
         this.handlingRepository = handlingRepository;
+        this.retentionProperties = retentionProperties;
         this.enabled = enabled;
         this.commandTraceEnabled = commandTraceEnabled;
     }
@@ -47,6 +50,31 @@ public class ReconnectCommandLogService {
 
     public boolean enabled() {
         return enabled;
+    }
+
+    @Transactional
+    public CleanupResult cleanupExpired(long nowMillis) {
+        if (!enabled || !retentionProperties.enabled()) {
+            return CleanupResult.skipped(enabled, retentionProperties.enabled());
+        }
+        long cutoffCreatedAt = nowMillis - retentionProperties.retentionMs();
+        List<String> expiredCommandIds = commandRepository.findExpiredCommandIds(
+                cutoffCreatedAt,
+                retentionProperties.cleanupLimit()
+        );
+        if (expiredCommandIds.isEmpty()) {
+            return new CleanupResult(true, true, cutoffCreatedAt, 0, 0, 0);
+        }
+        int deletedHandlingRows = handlingRepository.deleteByCommandIds(expiredCommandIds);
+        int deletedCommandRows = commandRepository.deleteByCommandIds(expiredCommandIds);
+        return new CleanupResult(
+                true,
+                true,
+                cutoffCreatedAt,
+                expiredCommandIds.size(),
+                deletedHandlingRows,
+                deletedCommandRows
+        );
     }
 
     public void recordPublishAttempt(RoomPartitionControlCommand command, String operationId, String publisherNodeId) {
@@ -206,6 +234,19 @@ public class ReconnectCommandLogService {
     ) {
         static Summary disabled(List<String> expectedCommandIds) {
             return new Summary(false, "audit_only", CONTRACT_VERSION, expectedCommandIds == null ? List.of() : expectedCommandIds, List.of(), List.of(), List.of(), 0, null, List.of(), DeliveryEvidence.disabled());
+        }
+    }
+
+    public record CleanupResult(
+            boolean enabled,
+            boolean retentionEnabled,
+            Long cutoffCreatedAt,
+            int candidateCommandCount,
+            int deletedHandlingRows,
+            int deletedCommandRows
+    ) {
+        static CleanupResult skipped(boolean enabled, boolean retentionEnabled) {
+            return new CleanupResult(enabled, retentionEnabled, null, 0, 0, 0);
         }
     }
 

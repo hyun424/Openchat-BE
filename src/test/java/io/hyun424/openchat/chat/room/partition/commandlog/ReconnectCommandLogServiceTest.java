@@ -13,7 +13,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentCaptor.forClass;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -21,9 +23,11 @@ class ReconnectCommandLogServiceTest {
 
     private final ReconnectCommandLogRepository commandRepository = mock(ReconnectCommandLogRepository.class);
     private final ReconnectCommandHandlingLogRepository handlingRepository = mock(ReconnectCommandHandlingLogRepository.class);
+    private final ReconnectCommandLogRetentionProperties retentionProperties = new ReconnectCommandLogRetentionProperties();
     private final ReconnectCommandLogService service = new ReconnectCommandLogService(
             commandRepository,
             handlingRepository,
+            retentionProperties,
             true,
             true
     );
@@ -137,6 +141,7 @@ class ReconnectCommandLogServiceTest {
         ReconnectCommandLogService misconfigured = new ReconnectCommandLogService(
                 commandRepository,
                 handlingRepository,
+                retentionProperties,
                 true,
                 false
         );
@@ -451,5 +456,88 @@ class ReconnectCommandLogServiceTest {
 
         assertFalse(summary.records().get(0).deliveryEvidence().complete());
         assertFalse(summary.deliveryEvidence().complete());
+    }
+
+    @Test
+    @DisplayName("command log가 disabled면 cleanup을 skip한다")
+    void cleanupExpired_skipsWhenCommandLogDisabled() {
+        ReconnectCommandLogService disabled = new ReconnectCommandLogService(
+                commandRepository,
+                handlingRepository,
+                retentionProperties,
+                false,
+                false
+        );
+        retentionProperties.setEnabled(true);
+
+        ReconnectCommandLogService.CleanupResult result = disabled.cleanupExpired(10_000L);
+
+        assertFalse(result.enabled());
+        assertTrue(result.retentionEnabled());
+        assertEquals(0, result.deletedCommandRows());
+        verify(commandRepository, never()).findExpiredCommandIds(org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyInt());
+    }
+
+    @Test
+    @DisplayName("retention이 disabled면 cleanup을 skip한다")
+    void cleanupExpired_skipsWhenRetentionDisabled() {
+        retentionProperties.setEnabled(false);
+
+        ReconnectCommandLogService.CleanupResult result = service.cleanupExpired(10_000L);
+
+        assertTrue(result.enabled());
+        assertFalse(result.retentionEnabled());
+        assertEquals(0, result.deletedCommandRows());
+        verify(commandRepository, never()).findExpiredCommandIds(org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyInt());
+    }
+
+    @Test
+    @DisplayName("expired command가 없으면 delete를 호출하지 않는다")
+    void cleanupExpired_doesNotDeleteWhenNoExpiredCommands() {
+        retentionProperties.setEnabled(true);
+        retentionProperties.setRetentionMs(3_600_000L);
+        retentionProperties.setCleanupLimit(100);
+        when(commandRepository.findExpiredCommandIds(6_400_000L, 100)).thenReturn(List.of());
+
+        ReconnectCommandLogService.CleanupResult result = service.cleanupExpired(10_000_000L);
+
+        assertEquals(6_400_000L, result.cutoffCreatedAt());
+        assertEquals(0, result.candidateCommandCount());
+        assertEquals(0, result.deletedHandlingRows());
+        assertEquals(0, result.deletedCommandRows());
+        verify(handlingRepository, never()).deleteByCommandIds(org.mockito.ArgumentMatchers.anyCollection());
+        verify(commandRepository, never()).deleteByCommandIds(org.mockito.ArgumentMatchers.anyCollection());
+    }
+
+    @Test
+    @DisplayName("cleanup은 handling log를 먼저 삭제한 뒤 command log를 삭제한다")
+    void cleanupExpired_deletesHandlingBeforeCommandRows() {
+        retentionProperties.setEnabled(true);
+        retentionProperties.setRetentionMs(3_600_000L);
+        retentionProperties.setCleanupLimit(2);
+        List<String> expired = List.of("reconnect-a", "reconnect-b");
+        when(commandRepository.findExpiredCommandIds(6_400_000L, 2)).thenReturn(expired);
+        when(handlingRepository.deleteByCommandIds(expired)).thenReturn(3);
+        when(commandRepository.deleteByCommandIds(expired)).thenReturn(2);
+
+        ReconnectCommandLogService.CleanupResult result = service.cleanupExpired(10_000_000L);
+
+        assertEquals(2, result.candidateCommandCount());
+        assertEquals(3, result.deletedHandlingRows());
+        assertEquals(2, result.deletedCommandRows());
+        org.mockito.InOrder inOrder = inOrder(handlingRepository, commandRepository);
+        inOrder.verify(handlingRepository).deleteByCommandIds(expired);
+        inOrder.verify(commandRepository).deleteByCommandIds(expired);
+    }
+
+    @Test
+    @DisplayName("retention properties는 최소값을 보정한다")
+    void retentionProperties_normalizesMinimums() {
+        ReconnectCommandLogRetentionProperties properties = new ReconnectCommandLogRetentionProperties();
+        properties.setRetentionMs(1L);
+        properties.setCleanupLimit(0);
+
+        assertEquals(3_600_000L, properties.retentionMs());
+        assertEquals(1, properties.cleanupLimit());
     }
 }
