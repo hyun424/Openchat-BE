@@ -5,7 +5,7 @@ import {
   wsConnectDuration, wsMessageRoundtrip, wsConnectSuccess,
   wsConnectFailure, wsConnectFailures, wsMsgSent, wsMsgReceived,
   wsFramesReceived, chatAckRoundtrip, wsVisibleFreshness, wsLatestVisibleFreshness,
-  wsVisibleGapMessages, wsAcksReceived,
+  wsLatestVisibleSamples, wsLatestVisibleSloSamples, wsVisibleGapMessages, wsAcksReceived,
   wsRealtimeIncompleteFrames, wsRealtimeOmittedMessages,
   wsMessageHandlerDuration, wsJsonParseDuration, wsBatchMessagesPerFrame,
   wsObserverVisibleSamples, wsControlMessagesSent, wsActiveHeartbeatSent,
@@ -371,6 +371,10 @@ export function connectAndChat(opts) {
         }
         if (shouldRecordVisible && latestCreatedAt > 0) {
           wsLatestVisibleFreshness.add(Date.now() - latestCreatedAt, metricTags);
+          wsLatestVisibleSamples.add(1, metricTags);
+          if (resolvedPresenceMode === 'active' && resolvedClientMode === 'observer' && metricTags.roomType === 'hot') {
+            wsLatestVisibleSloSamples.add(1, metricTags);
+          }
         }
       } catch (e) {
         // non-JSON 메시지 무시

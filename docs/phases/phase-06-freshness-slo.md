@@ -186,3 +186,104 @@ Acceptance 후보:
 - [Current Work](../OPENCHAT-CURRENT-WORK.md)
 - [Decision Log](../OPENCHAT-BRANCH-DECISION-LOG.md)
 - [GCP rolling restart gate split result](../results/gcp/GCP-load-결과-20260509-rolling-restart-gate-split.md)
+
+## Update: Phase 6 SLO 기준 확정
+
+작성일: 2026-05-11
+
+이번 업데이트는 Phase 6 실행 전 기준을 고정하기 위한 문서화 작업이다. 코드, k6 scenario, Terraform profile은 아직 수정하지 않는다.
+
+Phase 6의 핵심 판단은 "모든 visible message를 빠짐없이 낮은 latency로 받았는가"가 아니라, rolling restart와 drain이 있는 상황에서도 "observer가 방의 최신 상태를 충분히 빠르게 따라잡는가"로 둔다. 따라서 primary SLO는 `ws_visible_latest_freshness_ms`로 정의한다.
+
+### Primary SLO
+
+- primary metric: `ws_visible_latest_freshness_ms`
+- 대상: active observer hot-room traffic
+- hard gate: p95 `<= 1000ms`
+- 의미:
+  - observer가 수신한 batch 안에서 가장 최신 message의 `createdAt` 기준 freshness를 본다.
+  - 사용자가 현재 방 상태를 따라잡고 있는지 판단하는 주 지표다.
+  - live fanout cap 때문에 오래된 중간 message가 생략되더라도, 최신 상태 추적이 정상인지 분리해서 볼 수 있다.
+
+### Supporting Metrics
+
+다음 지표는 Phase 6에서 반드시 수집하고 결과 문서에 남기지만, v1 hard gate로는 사용하지 않는다.
+
+- `ws_visible_latest_freshness_ms` p99
+  - p95가 정상이어도 tail이 반복적으로 높으면 후속 개선 대상으로 본다.
+- `ws_visible_freshness_ms` p95/p99
+  - 수신한 visible message 각각의 freshness다.
+  - backlog나 오래된 message가 batch에 섞이는 상황을 해석하기 위한 diagnostic metric이다.
+- `ws_visible_gap_messages` p95/p99/max
+  - live fanout cap으로 omitted된 message 수를 해석한다.
+  - latest freshness가 낮더라도 gap이 너무 크면 사용자가 중간 흐름을 많이 놓치는 UX 문제가 남을 수 있다.
+- ACK p95/p99
+  - sender가 서버 처리 결과를 받는 round-trip 품질을 본다.
+  - latest freshness와 함께 보면 send path와 observer path 중 어느 쪽 tail인지 분리할 수 있다.
+- WebSocket handler/parse duration
+  - k6 client 쪽 receive/parse pressure를 확인한다.
+  - server-side freshness 병목과 load generator 병목을 구분하기 위한 supporting evidence다.
+
+### Post-stop Freshness Policy
+
+post-stop probe는 main rolling restart freshness SLO와 분리한다.
+
+- main rolling restart freshness 검증에서는 post-stop freshness를 hard gate로 넣지 않는다.
+- post-stop correctness hard gate는 유지한다.
+  - stopped node로 신규 route되지 않아야 한다.
+  - WebSocket connect가 성공해야 한다.
+  - route failure/fallback/mismatch는 `0/0/0`이어야 한다.
+  - sent == ack == DB rows가 유지되어야 한다.
+- post-stop freshness는 settle delay가 있는 별도 profile에서 평가한다.
+- settle window를 쓰는 경우, stop 직후 구간을 숨기지 않기 위해 "during stop"과 "after settle" freshness를 별도 기록한다.
+
+### GCP Validation Plan
+
+Phase 6 GCP 검증은 다음 순서로 진행한다.
+
+1. Baseline
+   - run id: `20260511-freshness-slo-baseline`
+   - 목적: 현재 throttled drain 기본 정책에서 latest freshness p95가 `<= 1000ms`를 만족하는지 확인한다.
+   - correctness gate는 Phase 5와 동일하게 유지한다.
+
+2. Generator isolation
+   - run id: `20260511-freshness-generator-isolation`
+   - baseline이 freshness SLO를 만족하지 못하거나 k6 pressure가 의심될 때만 실행한다.
+   - reconnect pacing, post-stop 설정, workload shape은 baseline과 맞추고, k6 VM capacity만 바꾼다.
+   - 기존 `generator-check` 결과처럼 reconnect pacing까지 달라진 profile은 k6 pressure 격리 근거로 쓰지 않는다.
+
+3. Improvement validation
+   - run id: `20260511-freshness-slo-improvement`
+   - baseline 또는 isolation 결과로 원인이 좁혀진 뒤, 최소 정책 변경 1개만 적용해 검증한다.
+   - correctness, drain termination, cleanup gate는 완화하지 않는다.
+
+### Decision Rationale
+
+`ws_visible_freshness_ms`만 hard gate로 쓰면 live fanout cap, omitted message, backlog replay가 섞여 "최신 상태를 따라가는 능력"과 "모든 중간 message를 낮은 latency로 보는 능력"이 같은 실패로 합쳐진다. Phase 5에서 이미 correctness와 freshness를 분리한 것처럼, Phase 6에서도 freshness 내부의 의미를 분리한다.
+
+`ws_visible_latest_freshness_ms`를 primary SLO로 둔 이유는 다음이다.
+
+- 채팅방 observer에게 가장 중요한 1차 경험은 현재 대화 상태를 따라잡는 것이다.
+- rolling restart/drain 중에도 최신 message가 빠르게 보이면 routing, reconnect, subscriber ownership은 사용자 관점에서 기본 동작을 유지한다.
+- full visible freshness와 gap을 supporting metric으로 남기면, 최신 상태는 정상이어도 중간 흐름을 많이 놓치는 문제를 별도로 추적할 수 있다.
+
+이번 결정의 trade-off는 명확하다.
+
+- 장점:
+  - 운영 correctness, 최신 상태 freshness, backlog/gap 문제를 분리해서 판단할 수 있다.
+  - k6 exit code 하나로 서로 다른 문제를 섞어 실패시키지 않는다.
+  - Phase 6에서 먼저 다룰 tail latency 범위가 명확해진다.
+- 비용:
+  - latest p95만 통과해도 p99나 visible gap 문제가 남을 수 있다.
+  - full visible freshness를 hard gate에서 빼면, 중간 message 연속성 문제를 별도 후속 과제로 관리해야 한다.
+  - post-stop freshness를 별도 profile로 분리하므로 GCP 검증 run이 추가될 수 있다.
+
+### Plan Review Notes
+
+계획 리뷰에서 지적된 보완점은 다음과 같다.
+
+- 현재 k6 hard threshold는 `ws_visible_latest_freshness_ms`가 아니라 기존 `ws_visible_freshness_ms`를 보고 있어 Phase 6 의도와 충돌한다.
+- 현재 `freshness-check` profile의 `k6_visible_freshness_p95_threshold_ms = 1000`은 full freshness threshold로 해석될 수 있으므로, 구현 단계에서 latest freshness 전용 threshold로 분리해야 한다.
+- p99와 `ws_visible_gap_messages`를 숨기면 실제 UX tail을 과소평가할 수 있다. 따라서 v1 hard gate는 p95로 두더라도 p99/gap은 결과 문서에 반드시 남긴다.
+- 기존 `generator-check` profile은 k6 VM capacity뿐 아니라 reconnect pacing과 post-stop 설정도 달라져 load generator pressure만 격리하지 못한다. Phase 6 isolation profile은 baseline과 동일한 조건에서 k6 capacity만 바꾸는 방식으로 다시 설계한다.
+- post-stop freshness는 correctness probe와 섞지 않는다. 다만 settle window를 사용할 경우, stop 직후 지연이 감춰지지 않도록 during-stop metric과 after-settle metric을 모두 기록한다.
