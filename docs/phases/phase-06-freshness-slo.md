@@ -185,4 +185,4 @@ Acceptance 후보:
 - [Phase 5 Node Drain / Rolling Restart](phase-05-node-drain-rolling-restart.md)
 - [Current Work](../OPENCHAT-CURRENT-WORK.md)
 - [Decision Log](../OPENCHAT-BRANCH-DECISION-LOG.md)
-- [GCP rolling restart gate split result](../GCP-load-결과-20260509-rolling-restart-gate-split.md)
+- [GCP rolling restart gate split result](../results/gcp/GCP-load-결과-20260509-rolling-restart-gate-split.md)

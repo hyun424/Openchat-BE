@@ -273,7 +273,7 @@ k6 WebSocket 클라이언트를 `sender / observer / validator` 역할로 분리
 
 부하테스트 결과가 나빠졌을 때 곧바로 서버 튜닝으로 들어가면 잘못된 병목을 최적화할 수 있다. 특히 WebSocket fan-out처럼 수신량이 큰 테스트에서는 입력 TPS, DB TPS, logical delivery TPS, physical frame TPS, visible freshness, 부하 생성기 처리 비용을 분리해야 한다. 성능 개선만큼 측정 신뢰도 개선도 중요한 엔지니어링 작업이라는 점을 배웠다.
 
-상세 문서: [k6 측정 신뢰도 개선과 1800명 단일방 재검증](./role-aware-k6-measurement-reliability-20260504.md)
+상세 문서: [k6 측정 신뢰도 개선과 1800명 단일방 재검증](./load-tests/role-aware-k6-measurement-reliability-20260504.md)
 
 ---
 
@@ -305,7 +305,7 @@ BE 단위 테스트로 control message가 DB 저장, ack, publish 경로를 타�
 
 실시간 채팅의 확장성은 서버를 더 띄우는 것만으로 설명하기 어렵다. 사용자가 실제로 보고 있지 않은 세션에 full payload를 계속 보내는 구조라면, 먼저 delivery work 자체를 줄일 수 있는지 봐야 한다. 또한 최적화는 사용자 경험을 깨뜨리면 안 되므로, passive 전환과 visible 복구를 브라우저 E2E로 확인하는 과정이 중요하다는 점을 배웠다.
 
-상세 문서: [Active Room Fan-out v1과 브라우저 E2E 검증](./active-room-fanout-e2e-20260505.md)
+상세 문서: [Active Room Fan-out v1과 브라우저 E2E 검증](./load-tests/active-room-fanout-e2e-20260505.md)
 
 ---
 
@@ -337,7 +337,7 @@ Realtime pod의 기본 단위를 `4 vCPU / 8GB`로 두고, pod work budget을 `1
 
 확장성은 서버 수를 늘리는 이야기만으로 부족하다. 작은 방은 하나의 shard에 효율적으로 묶고, hot room은 단일 pod budget을 넘는 순간 fan-out partition으로 나누는 기준이 필요하다. 특히 실시간 채팅에서는 입력 TPS, active sessions, delivery work를 분리해서 봐야 리소스 사용량과 확장 전략을 설득력 있게 설명할 수 있다는 점을 배웠다.
 
-상세 문서: [4 vCPU 기준 Room Work Sharding 설계](./room-work-sharding-plan-20260505.md)
+상세 문서: [4 vCPU 기준 Room Work Sharding 설계](./plans/room-work-sharding-plan-20260505.md)
 
 ---
 
@@ -387,7 +387,7 @@ GCP node drain smoke에서 WebSocket connect success `145/145`, route failure/fa
 
 운영 가능한 구조는 성공 여부만 반환하는 것에서 끝나지 않는다. 장애 후 어떤 command가 발행됐고 어떤 evidence가 남았는지 설명할 수 있어야 한다. Durable Reconnect Command Log v1을 통해 "자동 종료를 실행했다"보다 "종료 판단과 reconnect command 증거를 분리해 사후 진단 가능한 구조로 만들었다"는 점을 배웠다.
 
-상세 문서: [Dynamic Realtime Partition Ownership와 Node Drain STAR 기록](./2026-05-08-dynamic-realtime-partition-ownership-star.md)
+상세 문서: [Dynamic Realtime Partition Ownership와 Node Drain STAR 기록](./portfolio-star/dynamic-realtime-partition-ownership-20260508.md)
 보강 문서: [Reconnect Command Traceability STAR 기록](./portfolio-star/reconnect-command-traceability/README.md)
 
 ---
