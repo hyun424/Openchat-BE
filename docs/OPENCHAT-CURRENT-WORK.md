@@ -915,3 +915,25 @@ Interpretation:
 - ACK/freshness는 canonical rolling restart mini-soak에서 hard fail이 아니라 `COLLECTED` gate로 분리됐다.
 - 이전 `throttled-default` 실패는 운영 correctness 실패가 아니라 성능/freshness SLO와 post-stop probe 목적이 단일 k6 exit code에 섞인 검증 기준 문제였다.
 - 다음 성능 작업은 rolling restart correctness가 아니라 별도 freshness SLO profile에서 다룬다.
+
+## Progress Update: Realtime Ops Docs Structure
+
+- 상태: 문서 구조 정리 완료
+- 이유:
+  - Phase 5 이후 Phase 6를 찾기 어려웠고, freshness SLO 내용이 `OPENCHAT-CURRENT-WORK.md`, `phase5-rolling-restart-soak-plan.md`, decision log에 흩어져 있었다.
+  - `OPENCHAT-REALTIME-OPS-ROADMAP.md`의 Phase 6가 예전 `Optional Infra Lifecycle Integration`으로 남아 있어 현재 대화에서 말한 Phase 6와 맞지 않았다.
+- 변경:
+  - `docs/phases/` 디렉토리를 추가했다.
+  - Phase별 색인 문서 `docs/phases/README.md`를 추가했다.
+  - 기존 `docs/phase5-rolling-restart-soak-plan.md`를 `docs/phases/phase-05-node-drain-rolling-restart.md`로 이동했다.
+  - 새 Phase 6 문서 `docs/phases/phase-06-freshness-slo.md`를 추가했다.
+  - `docs/OPENCHAT-REALTIME-OPS-ROADMAP.md`를 현재 기준으로 정리했다.
+    - 현재 위치: Phase 5 완료, Phase 6 준비
+    - Phase 6: Freshness SLO / Tail Latency
+    - 기존 Optional Infra Lifecycle Integration은 Phase 7로 이동
+  - `.gitignore`의 `docs/*` 전체 ignore를 제거하고, GCP 실행 결과 파일만 `docs/GCP-*-결과-*.md`로 무시하게 정리했다.
+- 원칙:
+  - 기존 결과와 run id는 삭제하지 않았다.
+  - Phase 5 상세 기록은 이동만 했고 내용은 유지했다.
+  - 할일/로드맵/phase 문서는 기본적으로 Git에 올릴 수 있게 했다.
+  - 앞으로 "Phase 6 뭐였지?"는 `docs/phases/phase-06-freshness-slo.md`를 보면 된다.
