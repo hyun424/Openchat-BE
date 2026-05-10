@@ -135,15 +135,15 @@ partial state가 있어도 먼저 삭제하지 않는다. 기존 state에 stable
 권장 위치:
 
 ```text
-docs/GCP-smoke-결과-{YYYYMMDD}-{runId}.md
-docs/GCP-load-결과-{YYYYMMDD}-{runId}.md
-docs/GCP-soak-결과-{YYYYMMDD}-{runId}.md
+docs/results/gcp/GCP-smoke-결과-{YYYYMMDD}-{runId}.md
+docs/results/gcp/GCP-load-결과-{YYYYMMDD}-{runId}.md
+docs/results/gcp/GCP-soak-결과-{YYYYMMDD}-{runId}.md
 ```
 
 예:
 
 ```text
-docs/GCP-smoke-결과-20260508-dynamic-ownership-smoke.md
+docs/results/gcp/GCP-smoke-결과-20260508-dynamic-ownership-smoke.md
 ```
 
 ## 결과 문서 필수 항목
@@ -277,7 +277,7 @@ Dynamic Realtime Partition Ownership v1을 검증할 때는 아래 값을 사용
 TEST_TYPE=smoke
 RUN_ID=20260508-dynamic-ownership-smoke
 EXPECTED_HEAD=$(git rev-parse HEAD)
-RESULT_DOC=docs/GCP-smoke-결과-20260508-dynamic-ownership-smoke.md
+RESULT_DOC=docs/results/gcp/GCP-smoke-결과-20260508-dynamic-ownership-smoke.md
 AUTO_RECOVERY=true
 MAX_RECOVERY_ATTEMPTS=2
 COMMAND=cd infra/gcp-loadtest && terraform apply -auto-approve \
@@ -306,7 +306,7 @@ load/soak test도 같은 방식으로 실행한다. 차이는 profile, 예상 �
 ```text
 TEST_TYPE=load
 RUN_ID=20260508-dynamic-ownership-load-500
-RESULT_DOC=docs/GCP-load-결과-20260508-dynamic-ownership-load-500.md
+RESULT_DOC=docs/results/gcp/GCP-load-결과-20260508-dynamic-ownership-load-500.md
 AUTO_RECOVERY=true
 MAX_RECOVERY_ATTEMPTS=2
 COMMAND=cd infra/gcp-loadtest && terraform apply -auto-approve \

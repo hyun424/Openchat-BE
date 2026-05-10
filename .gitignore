@@ -1,5 +1,5 @@
 HELP.md
-docs/GCP-*-결과-*.md
+docs/**/GCP-*-결과-*.md
 data/
 k6/results/
 infra/gcp-loadtest/.terraform/

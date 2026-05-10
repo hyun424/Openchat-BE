@@ -642,5 +642,5 @@ GCP mini-soak에서 main workload `110379/110379/110379`, post-stop probe `3026/
 ## 관련 문서
 
 - `docs/overnight-reconnect-command-traceability-spike.md`
-- `docs/GCP-smoke-결과-20260509-reconnect-traceability-smoke.md`
-- `docs/GCP-soak-결과-20260509-reconnect-traceability-mini-soak3.md`
+- `docs/results/gcp/GCP-smoke-결과-20260509-reconnect-traceability-smoke.md`
+- `docs/results/gcp/GCP-soak-결과-20260509-reconnect-traceability-mini-soak3.md`

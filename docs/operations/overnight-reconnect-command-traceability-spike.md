@@ -74,7 +74,7 @@ DB durable log는 다음 조건이 명확해졌을 때 별도 작업으로 승�
 - GCP smoke:
   - run id: `20260509-reconnect-traceability-smoke`
   - status: PASS
-  - result doc: `docs/GCP-smoke-결과-20260509-reconnect-traceability-smoke.md`
+  - result doc: `docs/results/gcp/GCP-smoke-결과-20260509-reconnect-traceability-smoke.md`
   - purpose: command trace가 orchestrator artifact, termination decision, GCP VM stop smoke까지 유지되는지 확인.
   - result: main/post-stop k6 exit `0`, route failure/fallback/mismatch `0/0/0`, sent/ack/DB rows `22290/22290/22290` and `624/624/624`, reconnect command ids `3`, GCP stop adapter `stopped`, RUN_ID VM cleanup `0`.
 - Review 2:

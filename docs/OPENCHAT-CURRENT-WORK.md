@@ -580,7 +580,7 @@ GCP 실패 후 바로 재실행하지 않는 조건:
 
 - 상태: GCP 실행 결과 확인 및 cleanup 완료
 - run id: `20260509-rolling-restart-visibility-load2`
-- 결과 문서: `docs/GCP-load-결과-20260509-rolling-restart-visibility-load2.md`
+- 결과 문서: `docs/results/gcp/GCP-load-결과-20260509-rolling-restart-visibility-load2.md`
 - 결론:
   - 이번 실행은 OpenChat application correctness/performance 결과가 아니다.
   - k6 VM bootstrap 중 Debian security mirror sync flake로 `apt-get update`가 실패했고, k6 workload는 시작되지 않았다.
@@ -648,13 +648,13 @@ GCP 실패 후 바로 재실행하지 않는 조건:
   - `git diff --check` PASS
 - GCP run:
   - run id: `20260509-rolling-restart-generator-check`
-  - 결과 문서: `docs/GCP-load-결과-20260509-rolling-restart-generator-check.md`
+  - 결과 문서: `docs/results/gcp/GCP-load-결과-20260509-rolling-restart-generator-check.md`
 
 ## Progress Update: Rolling Restart Generator Check Result
 
 - 상태: GCP 실행 완료, FAIL
 - run id: `20260509-rolling-restart-generator-check`
-- 결과 문서: `docs/GCP-load-결과-20260509-rolling-restart-generator-check.md`
+- 결과 문서: `docs/results/gcp/GCP-load-결과-20260509-rolling-restart-generator-check.md`
 - 목적:
   - `20260509-rolling-restart-visibility-load3`에서 발생한 ACK/visibility tail이 k6 generator 병목인지 확인한다.
   - app/realtime/mysql/redis/rolling/reconnect 조건은 유지하고, k6 VM만 `e2-standard-2`에서 `e2-standard-4`로 키웠다.
@@ -707,13 +707,13 @@ GCP 실패 후 바로 재실행하지 않는 조건:
   - `git diff --check` PASS
 - GCP run:
   - run id: `20260509-rolling-restart-throttled`
-  - 결과 문서: `docs/GCP-load-결과-20260509-rolling-restart-throttled.md`
+  - 결과 문서: `docs/results/gcp/GCP-load-결과-20260509-rolling-restart-throttled.md`
 
 ## Progress Update: Throttled Rolling Restart Result
 
 - 상태: GCP 실행 완료, PASS
 - run id: `20260509-rolling-restart-throttled`
-- 결과 문서: `docs/GCP-load-결과-20260509-rolling-restart-throttled.md`
+- 결과 문서: `docs/results/gcp/GCP-load-결과-20260509-rolling-restart-throttled.md`
 - 목적:
   - rolling restart 중 reconnect burst가 ACK tail, visibility freshness tail, sent/ack/DB 불일치의 주 원인인지 확인한다.
   - 기존 200 VU rolling restart 조건은 유지하고 reconnect pacing만 늦췄다.
@@ -885,7 +885,7 @@ Next:
 
 - runner: `openchat-gcp-test-runner` subagent
 - run id: `20260509-rolling-restart-gate-split`
-- result doc: `docs/GCP-load-결과-20260509-rolling-restart-gate-split.md`
+- result doc: `docs/results/gcp/GCP-load-결과-20260509-rolling-restart-gate-split.md`
 - status: PASS
 - GCS prefix: `gs://openchat-loadtest-openchat-495102/runs/20260509-rolling-restart-gate-split/`
 
@@ -931,9 +931,38 @@ Interpretation:
     - 현재 위치: Phase 5 완료, Phase 6 준비
     - Phase 6: Freshness SLO / Tail Latency
     - 기존 Optional Infra Lifecycle Integration은 Phase 7로 이동
-  - `.gitignore`의 `docs/*` 전체 ignore를 제거하고, GCP 실행 결과 파일만 `docs/GCP-*-결과-*.md`로 무시하게 정리했다.
+  - `.gitignore`의 `docs/*` 전체 ignore를 제거하고, GCP 실행 결과 파일만 `docs/results/gcp/GCP-*-결과-*.md`로 무시하게 정리했다.
 - 원칙:
   - 기존 결과와 run id는 삭제하지 않았다.
   - Phase 5 상세 기록은 이동만 했고 내용은 유지했다.
   - 할일/로드맵/phase 문서는 기본적으로 Git에 올릴 수 있게 했다.
   - 앞으로 "Phase 6 뭐였지?"는 `docs/phases/phase-06-freshness-slo.md`를 보면 된다.
+
+### Follow-up: Docs Directory Cleanup
+
+- 상태: 정리 완료
+- 이유:
+  - `docs/` top-level에 설계, 리포트, GCP 결과, PR 초안, 아이디어 문서가 모두 섞여 있어 필요한 문서를 찾기 어려웠다.
+- 변경:
+  - `docs/README.md`를 추가해 문서 시작점을 만들었다.
+  - top-level에는 자주 보는 핵심 문서만 남겼다.
+    - `OPENCHAT-REALTIME-OPS-ROADMAP.md`
+    - `OPENCHAT-CURRENT-WORK.md`
+    - `OPENCHAT-BRANCH-DECISION-LOG.md`
+    - `OPENCHAT-EXPERIENCE-BANK.md`
+    - `LLM-WORKFLOW-RULES.md`
+  - 나머지는 목적별 디렉토리로 이동했다.
+    - `architecture/`
+    - `load-tests/`
+    - `plans/`
+    - `reports/`
+    - `operations/`
+    - `portfolio-star/`
+    - `ideas/`
+    - `pr/`
+    - `mobile/`
+  - 로컬 GCP 결과 문서는 `docs/results/gcp/`로 이동했다.
+  - `.gitignore`는 `docs/**/GCP-*-결과-*.md`만 무시하도록 조정했다.
+- 검증:
+  - tracked markdown local link check PASS
+  - `git diff --check` PASS

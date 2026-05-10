@@ -53,8 +53,8 @@ OpenChat의 확장성 작업은 다음 순서로 진행됐다.
 
 - 작업 단위: GCP loadtest infrastructure
 - 관련 문서:
-  - [포트폴리오용 부하테스트/아키텍처 스토리](./portfolio-loadtest-architecture-story.md)
-  - [초기 hot-room 부하테스트 요약](./hot-room-loadtest-summary-for-portfolio.md)
+  - [포트폴리오용 부하테스트/아키텍처 스토리](./architecture/portfolio-loadtest-architecture-story.md)
+  - [초기 hot-room 부하테스트 요약](./load-tests/hot-room-loadtest-summary-for-portfolio.md)
 
 ### Situation
 
@@ -102,7 +102,7 @@ GCP에서 분리형 loadtest 환경을 만들고, 이후 모든 주요 WebSocket
 
 - 작업 단위: role-aware k6 measurement reliability
 - 관련 문서:
-  - [k6 측정 신뢰도 개선과 1800명 단일방 재검증](./role-aware-k6-measurement-reliability-20260504.md)
+  - [k6 측정 신뢰도 개선과 1800명 단일방 재검증](./load-tests/role-aware-k6-measurement-reliability-20260504.md)
 
 ### Situation
 
@@ -156,7 +156,7 @@ C를 선택했다. 결과가 나빠졌을 때 바로 서버 튜닝으로 들어�
   - BE commit `49a495c`
   - FE E2E commit `83ef519`
 - 관련 문서:
-  - [Active Room Fan-out v1과 브라우저 E2E 검증](./active-room-fanout-e2e-20260505.md)
+  - [Active Room Fan-out v1과 브라우저 E2E 검증](./load-tests/active-room-fanout-e2e-20260505.md)
 
 ### Situation
 
@@ -204,8 +204,8 @@ C를 선택했다. 서버가 브라우저 화면 상태를 정확히 알 수 없
 
 - 작업 단위: room work sharding model
 - 관련 문서:
-  - [4 vCPU 기준 Room Work Sharding 설계](./room-work-sharding-plan-20260505.md)
-  - [Realtime Chat Scalability Roadmap](./realtime-chat-scalability-roadmap-20260507.md)
+  - [4 vCPU 기준 Room Work Sharding 설계](./plans/room-work-sharding-plan-20260505.md)
+  - [Realtime Chat Scalability Roadmap](./architecture/realtime-chat-scalability-roadmap-20260507.md)
 
 ### Situation
 
@@ -253,7 +253,7 @@ C를 선택했다. 실시간 채팅의 핵심 비용은 입력 TPS보다 fan-out
 
 - 작업 단위: hot-room fan-out partition v3
 - 관련 문서:
-  - [Hot Room Fan-out Partition v3](./hot-room-fanout-partition-v3-20260506.md)
+  - [Hot Room Fan-out Partition v3](./plans/hot-room-fanout-partition-v3-20260506.md)
 
 ### Situation
 
@@ -303,7 +303,7 @@ GCP 검증에서 DB rows와 k6 ack count는 small smoke `853`, 1500명 active/pa
 
 - 작업 단위: hot-room partition autoscaling-aware v3.1/v3.2
 - 관련 문서:
-  - [Hot Room Partition Autoscaling v3.1 설계](./hot-room-partition-autoscaling-v31-20260507.md)
+  - [Hot Room Partition Autoscaling v3.1 설계](./plans/hot-room-partition-autoscaling-v31-20260507.md)
 
 ### Situation
 
@@ -357,9 +357,9 @@ B와 D를 선택했다. partition count와 drain 상태는 DB state로 관리하
 
 - 작업 단위: mixed-room workload observer, workload signal delta
 - 관련 문서:
-  - [Room Workload Observer와 Rebalance Policy](./room-workload-observer-and-rebalance-policy-20260507.md)
-  - [Realtime Workload Cluster Summary](./realtime-workload-cluster-summary-20260507.md)
-  - [Mixed Room Service Workload](./mixed-room-service-workload-20260507.md)
+  - [Room Workload Observer와 Rebalance Policy](./plans/room-workload-observer-and-rebalance-policy-20260507.md)
+  - [Realtime Workload Cluster Summary](./plans/realtime-workload-cluster-summary-20260507.md)
+  - [Mixed Room Service Workload](./load-tests/mixed-room-service-workload-20260507.md)
 
 ### Situation
 
@@ -409,7 +409,7 @@ C를 선택했다. 자동화 전에 사람이 검토 가능한 recommendation �
 
 - 작업 단위: auto partition lifecycle scaling
 - 관련 문서:
-  - [Dynamic Realtime Partition Ownership와 Node Drain STAR 기록](./2026-05-08-dynamic-realtime-partition-ownership-star.md)
+  - [Dynamic Realtime Partition Ownership와 Node Drain STAR 기록](./portfolio-star/dynamic-realtime-partition-ownership-20260508.md)
   - 관련 GCP 결과 문서는 local ignored 결과 파일 기준으로 유지
 
 ### Situation
@@ -459,7 +459,7 @@ GCP lifecycle smoke에서 `1 -> 4` scale-up, reconnect redistribution, `4 -> 2` 
 - branch: `feat-dynamic-realtime-partition-ownership`
 - 대표 commit: `62ed5f0 feat: complete realtime node drain`
 - 관련 문서:
-  - [Dynamic Realtime Partition Ownership와 Node Drain STAR 기록](./2026-05-08-dynamic-realtime-partition-ownership-star.md)
+  - [Dynamic Realtime Partition Ownership와 Node Drain STAR 기록](./portfolio-star/dynamic-realtime-partition-ownership-20260508.md)
 
 ### Situation
 
@@ -660,7 +660,7 @@ reconnect command traceability와 GCP VM termination adapter까지 검증한 뒤
 관련 상세 문서:
 
 - [Reconnect Command Traceability STAR 기록](./portfolio-star/reconnect-command-traceability/README.md)
-- [GCP smoke 결과: Durable Reconnect Command Log](./GCP-smoke-결과-20260509-durable-reconnect-command-log-smoke.md)
+- [GCP smoke 결과: Durable Reconnect Command Log](./results/gcp/GCP-smoke-결과-20260509-durable-reconnect-command-log-smoke.md)
 
 #### Update: Reconnect Delivery Evidence Hardening
 
