@@ -15,7 +15,10 @@ import { login, authHeaders, BASE_URL } from '../lib/auth.js';
 import { enterRoom } from '../lib/http-helpers.js';
 import { makeNickname, makeChatMessage } from '../lib/data-factory.js';
 import { connectAndChat } from '../lib/ws.js';
-import { restCreateRoom, restWsRoute, httpErrorRate, wsPresenceAssigned, wsRouteFailuresTotal } from '../lib/metrics.js';
+import {
+  restCreateRoom, restWsRoute, httpErrorRate, wsPresenceAssigned, wsRouteFailuresTotal,
+  wsInitialRouteNodeTotal, wsInitialRoutePartitionId,
+} from '../lib/metrics.js';
 
 const TARGET_VUS = Number(__ENV.TARGET_VUS || '100');
 const CONNECT_RAMP_SECONDS = Number(__ENV.CONNECT_RAMP_SECONDS || '30');
@@ -414,6 +417,15 @@ function enterAndResolveRoute(token, roomId, roomType) {
 
     const route = getWebSocketRoute(token, roomId, roomType, 'initial');
     if (route && route.partitionId !== null && route.partitionId !== undefined) {
+      const routeTags = { roomType };
+      wsInitialRoutePartitionId.add(Number(route.partitionId), routeTags);
+      if (route.nodeId) {
+        wsInitialRouteNodeTotal.add(1, {
+          ...routeTags,
+          nodeId: String(route.nodeId),
+          partitionId: String(route.partitionId),
+        });
+      }
       return route;
     }
   }

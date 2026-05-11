@@ -10,7 +10,8 @@ import {
   wsMessageHandlerDuration, wsJsonParseDuration, wsBatchMessagesPerFrame,
   wsObserverVisibleSamples, wsControlMessagesSent, wsActiveHeartbeatSent,
   wsPassiveUnexpectedMessages, wsReconnectControlsReceived, wsRoutePartitionCount,
-  wsRoutePartitionId, wsRouteNodeTotal, wsConnectedNodeTotal, wsRouteFallbackTotal,
+  wsRoutePartitionId, wsRouteNodeTotal, wsReconnectRoutePartitionId,
+  wsReconnectRouteNodeTotal, wsConnectedNodeTotal, wsRouteFallbackTotal,
   wsRouteAssignmentMismatchTotal, wsRouteFailuresTotal,
 } from './metrics.js';
 
@@ -476,6 +477,14 @@ export function connectAndChat(opts) {
   }
   if (nextRoute.partitionId !== undefined && nextRoute.partitionId !== null) {
     wsRoutePartitionId.add(Number(nextRoute.partitionId), metricTags);
+    wsReconnectRoutePartitionId.add(Number(nextRoute.partitionId), metricTags);
+  }
+  if (nextRoute.nodeId) {
+    wsReconnectRouteNodeTotal.add(1, {
+      ...metricTags,
+      nodeId: String(nextRoute.nodeId),
+      partitionId: String(nextRoute.partitionId ?? 'none'),
+    });
   }
   console.log(`WS reconnect route roomId=${roomId} partitionCount=${nextRoute.partitionCount} partitionId=${nextRoute.partitionId} routeVersion=${nextRoute.routeVersion} nodeId=${nextRoute.nodeId || ''} fallbackReason=${nextRoute.fallbackReason || ''}`);
   remainingDuration = Math.floor((reconnectDeadline - Date.now()) / 1000);
