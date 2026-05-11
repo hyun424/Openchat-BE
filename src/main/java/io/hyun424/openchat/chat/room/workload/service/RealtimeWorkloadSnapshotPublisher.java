@@ -1,16 +1,19 @@
 package io.hyun424.openchat.chat.room.workload.service;
 
 import io.hyun424.openchat.chat.room.workload.infra.RealtimeWorkloadSnapshotRepository;
+import io.hyun424.openchat.global.role.ConditionalOnRuntimeRole;
+import io.hyun424.openchat.global.role.RuntimeCapability;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 @Slf4j
 @Component
+@ConditionalOnRuntimeRole(capabilities = RuntimeCapability.REALTIME)
 @ConditionalOnBean(RealtimeWorkloadSnapshotRepository.class)
-@ConditionalOnExpression("'${app.role:combined}'.toLowerCase() != 'api' && '${app.realtime-workload.publish-enabled:true}'.toLowerCase() == 'true'")
+@ConditionalOnProperty(name = "app.realtime-workload.publish-enabled", havingValue = "true", matchIfMissing = true)
 public class RealtimeWorkloadSnapshotPublisher {
 
     private final LocalRealtimeWorkloadSnapshotFactory snapshotFactory;

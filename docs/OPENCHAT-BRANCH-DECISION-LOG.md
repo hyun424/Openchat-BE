@@ -812,3 +812,43 @@ Phase 6는 v1 기준으로 닫을 수 있다. 다만 full freshness와 visible g
 - K8s/EKS는 아직 도입하지 않았다. 대신 K8s가 맡을 node lifecycle 이전에 앱이 맡아야 할 route, ownership, reconnect, drain contract를 먼저 증명했다.
 - 일부 결과는 성능 개선 수치가 아니라 측정 신뢰도 개선 또는 안전성 검증 수치다.
 - Durable Reconnect Command Log v1은 audit/diagnosis evidence이지 delivery guarantee가 아니다. Redis Streams, reconnect outbox, client ack, force-drain 정책은 후속 hardening이다.
+
+#### Update: Phase 6.9 Runtime Role Contract
+
+Phase 6 freshness SLO 이후 다음 고민은 AI/RAG 기능을 붙일 때 API/Realtime 운영 경계를 어떻게 지킬 것인가였다. 채팅방 요약, embedding, 중요 메시지 판정은 수정 빈도와 의존성이 높고, 잘못 섞이면 WebSocket realtime process의 rolling restart나 subscriber ownership 안정성을 흔들 수 있다.
+
+검토한 선택지는 다음과 같았다.
+
+- A. 지금 바로 API/Realtime/AI worker Docker image를 물리적으로 분리한다.
+- B. 하나의 image를 유지하되 `APP_ROLE` 기반 runtime role contract를 명확히 만든다.
+- C. AI 기능을 API process 내부 job으로 먼저 넣고, 문제가 생기면 나중에 분리한다.
+- D. Gradle multi-module까지 먼저 나눠서 compile-time boundary를 만든다.
+
+이번에는 B를 선택했다. image split은 보안 경계, 의존성 분리, 독립 배포에는 유리하지만 지금 시점에는 build/push/test matrix와 GCP 검증 비용을 크게 늘린다. 반대로 AI 기능을 API process에 바로 섞는 C는 빠르지만, 나중에 realtime 안정성과 AI 실험 배포가 충돌할 수 있다. 따라서 single image를 유지하면서 role별 side effect를 코드와 GCP startup contract로 먼저 고정했다.
+
+구현한 변경은 다음이다.
+
+- `RuntimeRole`, `RuntimeCapability`, `@ConditionalOnRuntimeRole`을 추가해 string expression 기반 condition을 capability 기반으로 정리했다.
+- WebSocket, Redis subscriber, dynamic partition subscriber, realtime heartbeat, lifecycle scheduler, node drain, realtime Kafka consumer를 realtime capability에 묶었다.
+- `api`와 `ai-worker` role에서는 realtime side-effect bean이 뜨지 않도록 Spring context 테스트를 추가했다.
+- non-realtime role에서 의존성 때문에 `RoomSessionRegistry`가 필요하더라도 broadcast executor를 만들지 않는 disabled mode로 동작하게 했다.
+- disabled registry에서 실수로 broadcast가 호출돼도 lane modulo 실패 없이 no-op 처리하도록 `WebSocketBroadcaster`를 보강했다.
+- GCP startup script가 `APP_ROLE`을 normalize하고, `api`, `realtime`, `ai-worker`별 env override를 명시하도록 했다. invalid role은 startup fail-fast로 처리한다.
+
+GCP 검증은 `20260511-runtime-role-contract-smoke`로 수행했다.
+
+- API VM startup role: `api`
+- Realtime VM startup role: `realtime` 2대
+- assignment preflight: `activeNodes=2/2`, `readyAssignments=4/4`, `distinctOwners=2/2`
+- k6 exit code: `0`
+- HTTP error rate: `0%`
+- WebSocket connect success: `100%`
+- `/ws-route` success: `100/100`
+- route failure/fallback/mismatch: `0/0/0`
+- route node와 connected node mismatch: `0`
+- sent/ack/DB rows: `16826 / 16826 / 16826`
+- ACK p95/p99: `22ms / 35ms`
+- latest freshness p95/p99: `43ms / 108ms`
+- cleanup 후 RUN_ID VM/disk/network/firewall: `0/0/0/0`
+
+이 결과로 Phase 7 RAG/room summary 작업 전에 필요한 runtime boundary는 준비됐다고 볼 수 있다. 다만 아직 AI worker VM을 실제로 GCP에서 띄우거나 RAG queue를 처리한 것은 아니다. 다음 AI 기능 구현 때는 `ai-worker` role smoke와 queue/idempotency 검증을 별도로 추가한다.

@@ -1,15 +1,15 @@
 package io.hyun424.openchat;
 
+import io.hyun424.openchat.chat.fanout.ChatFanoutService;
 import io.hyun424.openchat.chat.outbox.OutboxEventWorker;
 import io.hyun424.openchat.chat.outbox.OutboxPublishedMarker;
 import io.hyun424.openchat.chat.outbox.PostCommitLivePublishService;
-import io.hyun424.openchat.chat.fanout.ChatFanoutService;
 import io.hyun424.openchat.chat.room.metadata.RoomMetadataUpdateBuffer;
 import io.hyun424.openchat.chat.room.partition.assignment.DynamicRoomPartitionSubscriber;
 import io.hyun424.openchat.chat.room.partition.assignment.RealtimeNodeHeartbeatScheduler;
 import io.hyun424.openchat.chat.room.partition.lifecycle.RoomPartitionLifecycleScheduler;
-import io.hyun424.openchat.chat.room.workload.service.RealtimeWorkloadSnapshotPublisher;
 import io.hyun424.openchat.chat.room.lifecycle.RoomLifecycleConsumer;
+import io.hyun424.openchat.chat.room.workload.service.RealtimeWorkloadSnapshotPublisher;
 import io.hyun424.openchat.chat.subscribe.ChatKafkaConsumer;
 import io.hyun424.openchat.chat.subscribe.ChatRedisSubscriber;
 import io.hyun424.openchat.chat.websocket.config.WebSocketConfig;
@@ -29,7 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 @SpringBootTest(properties = {
-        "app.role=api",
+        "app.role=ai-worker",
         "app.kafka.enabled=true",
         "app.websocket.enabled=true",
         "app.redis.subscriber.enabled=true",
@@ -39,7 +39,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
         "app.realtime-workload.publish-enabled=true",
         "app.outbox.enabled=true",
         "spring.task.scheduling.enabled=false",
-        "spring.datasource.url=jdbc:h2:mem:openchat-api-role-test;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=false",
+        "spring.datasource.url=jdbc:h2:mem:openchat-ai-worker-role-test;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=false",
         "spring.datasource.driver-class-name=org.h2.Driver",
         "spring.datasource.username=sa",
         "spring.datasource.password=",
@@ -47,10 +47,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
         "spring.jpa.hibernate.ddl-auto=create-drop",
         "spring.kafka.bootstrap-servers=false"
 })
-class OpenchatApiRoleApplicationTests {
+class OpenchatAiWorkerRoleApplicationTests {
 
     @Test
-    void apiRoleDoesNotStartRealtimeOnlyBeans(ApplicationContext context) {
+    void aiWorkerRoleDoesNotStartRealtimeSideEffects(ApplicationContext context) {
         assertMissingBean(context, WebSocketConfig.class);
         assertMissingBean(context, ChatWebSocketHandler.class);
         assertMissingBean(context, WebSocketEventListener.class);
@@ -59,11 +59,11 @@ class OpenchatApiRoleApplicationTests {
         assertMissingBean(context, RoomLifecycleConsumer.class);
         assertMissingBean(context, ChatRedisSubscriber.class);
         assertMissingBean(context, RedisChatMessageDispatcher.class);
+        assertMissingBean(context, RedisMessageListenerContainer.class);
         assertMissingBean(context, PostCommitLivePublishService.class);
         assertMissingBean(context, OutboxPublishedMarker.class);
-        assertMissingBean(context, RoomMetadataUpdateBuffer.class);
-        assertMissingBean(context, RedisMessageListenerContainer.class);
         assertMissingBean(context, OutboxEventWorker.class);
+        assertMissingBean(context, RoomMetadataUpdateBuffer.class);
         assertMissingBean(context, RealtimeWorkloadSnapshotPublisher.class);
         assertMissingBean(context, DynamicRoomPartitionSubscriber.class);
         assertMissingBean(context, RealtimeNodeHeartbeatScheduler.class);

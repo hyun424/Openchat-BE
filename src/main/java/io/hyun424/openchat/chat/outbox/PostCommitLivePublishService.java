@@ -3,10 +3,11 @@ package io.hyun424.openchat.chat.outbox;
 import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
 import io.hyun424.openchat.chat.metrics.ChatPipelineMetrics;
 import io.hyun424.openchat.chat.publish.ChatMessagePublisher;
+import io.hyun424.openchat.global.role.ConditionalOnRuntimeRole;
+import io.hyun424.openchat.global.role.RuntimeCapability;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.stereotype.Service;
 
 import java.util.concurrent.ArrayBlockingQueue;
@@ -16,7 +17,7 @@ import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Service
-@ConditionalOnExpression("'${app.role:combined}'.toLowerCase() != 'api'")
+@ConditionalOnRuntimeRole(capabilities = RuntimeCapability.REALTIME)
 public class PostCommitLivePublishService {
 
     private final boolean enabled;

@@ -1,5 +1,7 @@
 package io.hyun424.openchat.chat.room.lifecycle;
 
+import io.hyun424.openchat.global.role.ConditionalOnRuntimeRole;
+import io.hyun424.openchat.global.role.RuntimeCapability;
 import io.hyun424.openchat.infra.websocket.session.RoomSessionRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -11,6 +13,7 @@ import org.springframework.stereotype.Component;
 @Slf4j
 @Component
 @RequiredArgsConstructor
+@ConditionalOnRuntimeRole(capabilities = RuntimeCapability.REALTIME)
 @ConditionalOnProperty(name = "app.kafka.enabled", havingValue = "true", matchIfMissing = true)
 public class RoomLifecycleConsumer {
 

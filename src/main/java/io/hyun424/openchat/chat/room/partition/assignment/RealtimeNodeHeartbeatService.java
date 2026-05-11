@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.util.Set;
 
 import io.hyun424.openchat.chat.room.partition.config.RoomPartitionProperties;
+import io.hyun424.openchat.global.role.RuntimeRole;
 import io.hyun424.openchat.infra.websocket.session.RoomSessionRegistry;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
@@ -35,7 +36,7 @@ public class RealtimeNodeHeartbeatService {
         this.partitionProperties = partitionProperties;
         this.roomSessionRegistry = roomSessionRegistry;
         this.nodeId = nodeId;
-        this.role = role;
+        this.role = RuntimeRole.canonical(role);
     }
 
     public void publishHeartbeat() {

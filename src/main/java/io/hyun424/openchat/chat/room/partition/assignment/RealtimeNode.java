@@ -3,6 +3,9 @@ package io.hyun424.openchat.chat.room.partition.assignment;
 import java.time.Instant;
 import java.util.Set;
 
+import io.hyun424.openchat.global.role.RuntimeCapability;
+import io.hyun424.openchat.global.role.RuntimeRole;
+
 public record RealtimeNode(
         String nodeId,
         String role,
@@ -33,6 +36,14 @@ public record RealtimeNode(
                 && expiresAt != null
                 && expiresAt.isAfter(now)
                 && !draining
-                && ("realtime".equalsIgnoreCase(role) || "combined".equalsIgnoreCase(role));
+                && hasRealtimeCapability(role);
+    }
+
+    private static boolean hasRealtimeCapability(String role) {
+        try {
+            return RuntimeRole.parse(role).hasCapability(RuntimeCapability.REALTIME);
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
     }
 }

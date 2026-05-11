@@ -14,6 +14,7 @@ import io.hyun424.openchat.chat.room.workload.config.RealtimeWorkloadProperties;
 import io.hyun424.openchat.chat.room.workload.dto.RealtimeNodeWorkloadSnapshot;
 import io.hyun424.openchat.chat.room.workload.dto.RoomPartitionDrainProgress;
 import io.hyun424.openchat.chat.room.workload.dto.RoomWorkloadCandidate;
+import io.hyun424.openchat.global.role.RuntimeRole;
 import io.hyun424.openchat.infra.websocket.session.RoomSessionRegistry;
 import io.hyun424.openchat.infra.websocket.session.RoomSessionWorkloadSnapshot;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -63,7 +64,7 @@ public class LocalRealtimeWorkloadSnapshotFactory {
         this.roomPartitionPolicy = roomPartitionPolicy;
         this.signalDeltaTracker = signalDeltaTracker;
         this.nodeId = nodeId == null || nodeId.isBlank() ? "local" : nodeId;
-        this.role = role == null || role.isBlank() ? "combined" : role;
+        this.role = RuntimeRole.canonical(role == null || role.isBlank() ? "combined" : role);
     }
 
     public LocalRealtimeWorkloadSnapshotFactory(RoomTrafficMonitor roomTrafficMonitor,

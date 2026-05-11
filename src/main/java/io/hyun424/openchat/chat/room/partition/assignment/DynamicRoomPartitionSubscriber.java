@@ -10,11 +10,12 @@ import java.util.stream.Collectors;
 
 import io.hyun424.openchat.chat.room.partition.config.RoomPartitionProperties;
 import io.hyun424.openchat.chat.room.shard.ChatRedisChannelResolver;
+import io.hyun424.openchat.global.role.ConditionalOnRuntimeRole;
+import io.hyun424.openchat.global.role.RuntimeCapability;
 import io.hyun424.openchat.infra.redis.config.RedisChatMessageDispatcher;
 import io.hyun424.openchat.infra.websocket.session.RoomSessionRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.listener.PatternTopic;
 import org.springframework.data.redis.listener.RedisMessageListenerContainer;
@@ -23,7 +24,7 @@ import org.springframework.stereotype.Component;
 
 @Slf4j
 @Component
-@ConditionalOnExpression("'${app.role:combined}'.toLowerCase() != 'api'")
+@ConditionalOnRuntimeRole(capabilities = RuntimeCapability.REALTIME)
 @ConditionalOnProperty(name = "app.room-partition.assignment.dynamic-subscribe-enabled", havingValue = "true")
 public class DynamicRoomPartitionSubscriber {
 

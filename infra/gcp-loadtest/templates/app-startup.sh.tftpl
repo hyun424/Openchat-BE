@@ -153,6 +153,15 @@ LIMIT 0;
 SQL
 }
 
+APP_ROLE="$(printf '%s' "$APP_ROLE" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+
+ROOM_PARTITION_ENABLED_VALUE="${room_partition_enabled}"
+ROOM_PARTITION_ASSIGNMENT_ENABLED_VALUE="${room_partition_assignment_enabled}"
+ROOM_PARTITION_ASSIGNMENT_DYNAMIC_SUBSCRIBE_ENABLED_VALUE="${room_partition_assignment_dynamic_subscribe_enabled}"
+ROOM_PARTITION_ASSIGNMENT_NODE_DRAIN_ENABLED_VALUE="${room_partition_assignment_node_drain_enabled}"
+ROOM_PARTITION_LIFECYCLE_ENABLED_VALUE="${room_partition_lifecycle_enabled}"
+REALTIME_WORKLOAD_PUBLISH_ENABLED_VALUE="${realtime_workload_publish_enabled}"
+
 case "$APP_ROLE" in
   api)
     WEBSOCKET_ENABLED=false
@@ -169,6 +178,20 @@ case "$APP_ROLE" in
     OUTBOX_PUBLISHED_MARKER_ENABLED=true
     OUTBOX_ENABLED=true
     ROOM_METADATA_ENABLED=true
+    ;;
+  ai-worker)
+    WEBSOCKET_ENABLED=false
+    REDIS_SUBSCRIBER_ENABLED=false
+    LIVE_PUBLISH_ENABLED=false
+    OUTBOX_PUBLISHED_MARKER_ENABLED=false
+    OUTBOX_ENABLED=false
+    ROOM_METADATA_ENABLED=false
+    ROOM_PARTITION_ENABLED_VALUE=false
+    ROOM_PARTITION_ASSIGNMENT_ENABLED_VALUE=false
+    ROOM_PARTITION_ASSIGNMENT_DYNAMIC_SUBSCRIBE_ENABLED_VALUE=false
+    ROOM_PARTITION_ASSIGNMENT_NODE_DRAIN_ENABLED_VALUE=false
+    ROOM_PARTITION_LIFECYCLE_ENABLED_VALUE=false
+    REALTIME_WORKLOAD_PUBLISH_ENABLED_VALUE=false
     ;;
   *)
     echo "[app] unsupported app_role=$APP_ROLE" >&2
@@ -305,20 +328,20 @@ docker run -d \
   -e ROOM_SHARD_COUNT="${room_shard_shard_count}" \
   -e ROOM_SHARD_OWNED_SHARDS="${room_shard_owned_shards}" \
   -e ROOM_SHARD_LEGACY_SUBSCRIBE_ENABLED="${room_shard_legacy_subscribe_enabled}" \
-  -e ROOM_PARTITION_ENABLED="${room_partition_enabled}" \
+  -e ROOM_PARTITION_ENABLED="$ROOM_PARTITION_ENABLED_VALUE" \
   -e ROOM_PARTITION_COUNT="${room_partition_partition_count}" \
   -e ROOM_PARTITION_OWNED_PARTITIONS="${room_partition_owned_partitions}" \
   -e ROOM_PARTITION_HOT_TIER_THRESHOLD="${room_partition_hot_tier_threshold}" \
   -e ROOM_PARTITION_MAX_PARTITIONS_PER_ROOM="${room_partition_max_partitions_per_room}" \
   -e ROOM_PARTITION_ADMIN_API_ENABLED="${room_partition_admin_api_enabled}" \
-  -e ROOM_PARTITION_ASSIGNMENT_ENABLED="${room_partition_assignment_enabled}" \
-  -e ROOM_PARTITION_ASSIGNMENT_DYNAMIC_SUBSCRIBE_ENABLED="${room_partition_assignment_dynamic_subscribe_enabled}" \
+  -e ROOM_PARTITION_ASSIGNMENT_ENABLED="$ROOM_PARTITION_ASSIGNMENT_ENABLED_VALUE" \
+  -e ROOM_PARTITION_ASSIGNMENT_DYNAMIC_SUBSCRIBE_ENABLED="$ROOM_PARTITION_ASSIGNMENT_DYNAMIC_SUBSCRIBE_ENABLED_VALUE" \
   -e ROOM_PARTITION_CONTROL_COMMAND_TRACE_ENABLED="${room_partition_control_command_trace_enabled}" \
   -e ROOM_PARTITION_CONTROL_COMMAND_LOG_ENABLED="${room_partition_control_command_log_enabled}" \
   -e ROOM_PARTITION_ASSIGNMENT_WS_URL="ws://$APP_INTERNAL_IP:8080" \
-  -e ROOM_PARTITION_ASSIGNMENT_NODE_DRAIN_ENABLED="${room_partition_assignment_node_drain_enabled}" \
+  -e ROOM_PARTITION_ASSIGNMENT_NODE_DRAIN_ENABLED="$ROOM_PARTITION_ASSIGNMENT_NODE_DRAIN_ENABLED_VALUE" \
   -e ROOM_PARTITION_ASSIGNMENT_NODE_DRAIN_READINESS_TIMEOUT_MS="${room_partition_assignment_node_drain_readiness_timeout_ms}" \
-  -e ROOM_PARTITION_LIFECYCLE_ENABLED="${room_partition_lifecycle_enabled}" \
+  -e ROOM_PARTITION_LIFECYCLE_ENABLED="$ROOM_PARTITION_LIFECYCLE_ENABLED_VALUE" \
   -e ROOM_PARTITION_LIFECYCLE_INTERVAL_MS="${room_partition_lifecycle_interval_ms}" \
   -e ROOM_PARTITION_LIFECYCLE_SCALE_UP_STABLE_WINDOW_MS="${room_partition_lifecycle_scale_up_stable_window_ms}" \
   -e ROOM_PARTITION_LIFECYCLE_SCALE_UP_MIN_OBSERVATIONS="${room_partition_lifecycle_scale_up_min_observations}" \
@@ -330,7 +353,7 @@ docker run -d \
   -e ROOM_PARTITION_LIFECYCLE_DRAIN_COMPLETE_EMPTY_OBSERVATIONS="${room_partition_lifecycle_drain_complete_empty_observations}" \
   -e ROOM_PARTITION_LIFECYCLE_DRAIN_RECONNECT_RETRY_AFTER_MS="${room_partition_lifecycle_drain_reconnect_retry_after_ms}" \
   -e ROOM_SCALE_POD_WORK_BUDGET_DELIVERY_PER_SEC="${room_scale_pod_work_budget_delivery_per_sec}" \
-  -e REALTIME_WORKLOAD_PUBLISH_ENABLED="${realtime_workload_publish_enabled}" \
+  -e REALTIME_WORKLOAD_PUBLISH_ENABLED="$REALTIME_WORKLOAD_PUBLISH_ENABLED_VALUE" \
   -e REALTIME_WORKLOAD_SUMMARY_ENABLED="${realtime_workload_summary_enabled}" \
   -e REALTIME_WORKLOAD_PUBLISH_INTERVAL_MS="${realtime_workload_publish_interval_ms}" \
   -e REALTIME_WORKLOAD_SNAPSHOT_TTL_MS="${realtime_workload_snapshot_ttl_ms}" \

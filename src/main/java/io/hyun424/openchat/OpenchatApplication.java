@@ -1,5 +1,6 @@
 package io.hyun424.openchat;
 
+import io.hyun424.openchat.global.role.RuntimeRole;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.SpringApplication;
@@ -24,6 +25,7 @@ public class OpenchatApplication {
         return args -> {
             log.info("===== APPLICATION PROPERTIES =====");
             log.info("app.instance-id = {}", env.getProperty("app.instance-id"));
+            log.info("app.role        = {}", RuntimeRole.canonical(env.getProperty("app.role", "combined")));
             log.info("server.port     = {}", env.getProperty("server.port"));
             log.info("active profiles = {}", Arrays.toString(env.getActiveProfiles()));
             log.info("==================================");

@@ -1,6 +1,8 @@
 package io.hyun424.openchat.infra.lifecycle;
 
 import io.hyun424.openchat.infra.websocket.session.RoomSessionRegistry;
+import io.hyun424.openchat.global.role.ConditionalOnRuntimeRole;
+import io.hyun424.openchat.global.role.RuntimeCapability;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationListener;
@@ -19,6 +21,7 @@ import org.springframework.stereotype.Component;
  */
 @Slf4j
 @Component
+@ConditionalOnRuntimeRole(capabilities = RuntimeCapability.REALTIME)
 @RequiredArgsConstructor
 public class GracefulShutdownListener implements ApplicationListener<ContextClosedEvent> {
 

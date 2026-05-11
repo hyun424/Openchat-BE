@@ -26,15 +26,33 @@ public class BroadcastLaneExecutor {
                                  int shutdownTimeoutMillis,
                                  ChatPipelineMetrics metrics) {
         int laneCount = resolveBroadcastLaneCount(configuredLaneCount);
-        int boundedQueueCapacity = Math.max(1, queueCapacityPerLane);
+        this.laneExecutors = createLaneExecutors(laneCount, queueCapacityPerLane);
         this.shutdownTimeoutMillis = Math.max(1, shutdownTimeoutMillis);
         this.metrics = metrics;
-        this.laneExecutors = new ThreadPoolExecutor[laneCount];
+    }
+
+    private BroadcastLaneExecutor(ThreadPoolExecutor[] laneExecutors,
+                                  int shutdownTimeoutMillis,
+                                  ChatPipelineMetrics metrics) {
+        this.laneExecutors = laneExecutors;
+        this.shutdownTimeoutMillis = Math.max(1, shutdownTimeoutMillis);
+        this.metrics = metrics;
+    }
+
+    public static BroadcastLaneExecutor disabled(int shutdownTimeoutMillis,
+                                                 ChatPipelineMetrics metrics) {
+        return new BroadcastLaneExecutor(new ThreadPoolExecutor[0], shutdownTimeoutMillis, metrics);
+    }
+
+    private ThreadPoolExecutor[] createLaneExecutors(int laneCount,
+                                                     int queueCapacityPerLane) {
+        int boundedQueueCapacity = Math.max(1, queueCapacityPerLane);
+        ThreadPoolExecutor[] executors = new ThreadPoolExecutor[laneCount];
 
         AtomicInteger threadCounter = new AtomicInteger(0);
         for (int i = 0; i < laneCount; i++) {
             int laneIndex = i;
-            this.laneExecutors[i] = new ThreadPoolExecutor(
+            executors[i] = new ThreadPoolExecutor(
                     1, 1,
                     60L, TimeUnit.SECONDS,
                     new ArrayBlockingQueue<>(boundedQueueCapacity),
@@ -46,6 +64,7 @@ public class BroadcastLaneExecutor {
                     new ThreadPoolExecutor.AbortPolicy()
             );
         }
+        return executors;
     }
 
     public int laneCount() {
@@ -61,6 +80,10 @@ public class BroadcastLaneExecutor {
     }
 
     public boolean enqueue(BroadcastTask task, Consumer<BroadcastTask> taskRunner) {
+        if (laneExecutors.length == 0) {
+            metrics.incrementCounter("ws.broadcast.lane.disabled");
+            return false;
+        }
         ThreadPoolExecutor executor = laneExecutors[task.laneIndex()];
         long enqueueStartNanos = System.nanoTime();
         try {

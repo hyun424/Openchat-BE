@@ -90,6 +90,34 @@ class RoomSessionRegistryTest {
     }
 
     @Test
+    @DisplayName("disabled registry는 세션이 있어도 broadcast를 no-op 처리한다")
+    void sendToRoom_disabledRegistry_noOpsWithoutLaneDivision() throws Exception {
+        SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+        ChatPipelineMetrics metrics = new ChatPipelineMetrics(meterRegistry);
+        RoomSessionRegistry registry = new RoomSessionRegistry(
+                new ObjectMapper(),
+                new RoomTrafficMonitor(),
+                metrics,
+                1,
+                0,
+                16,
+                5000,
+                60_000,
+                false
+        );
+        WebSocketSession session = mockOpenSession("session-1");
+        registry.add(1L, session);
+
+        registry.sendToRoom(1L, message());
+
+        verify(session, never()).sendMessage(any(TextMessage.class));
+        assertEquals(1, registry.count(1L));
+        assertCounter(meterRegistry, "ws.broadcast.disabled", 1);
+        registry.shutdownExecutor();
+        metrics.shutdown();
+    }
+
+    @Test
     @DisplayName("닫힌 세션 전송 실패는 closed_before_send로 기록한다")
     void sendToRoom_closedSession_recordsClosedBeforeSendReason() throws Exception {
         SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();

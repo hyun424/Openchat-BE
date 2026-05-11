@@ -10,11 +10,13 @@ import io.hyun424.openchat.chat.room.metadata.RoomMetadataUpdateBuffer;
 import io.hyun424.openchat.chat.room.partition.metrics.RoomPartitionMetrics;
 import io.hyun424.openchat.chat.room.partition.service.RoomPartitionRoutingService;
 import io.hyun424.openchat.chat.room.service.RoomService;
+import io.hyun424.openchat.global.role.ConditionalOnRuntimeRole;
+import io.hyun424.openchat.global.role.RuntimeCapability;
 import io.hyun424.openchat.global.ratelimit.RateLimiter;
 import io.hyun424.openchat.infra.websocket.session.RoomSessionRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -27,7 +29,8 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
  */
 @Slf4j
 @Component
-@ConditionalOnExpression("'${app.role:combined}'.toLowerCase() != 'api' && '${app.websocket.enabled:true}'.toLowerCase() == 'true'")
+@ConditionalOnRuntimeRole(capabilities = RuntimeCapability.REALTIME)
+@ConditionalOnProperty(name = "app.websocket.enabled", havingValue = "true", matchIfMissing = true)
 public class ChatWebSocketHandler extends TextWebSocketHandler {
 
     private final WebSocketConnectionService connectionService;

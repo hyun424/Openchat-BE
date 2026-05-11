@@ -1028,3 +1028,32 @@ Interpretation:
 - reconnect 집중은 drain 대상 `gcp-realtime-2`의 partition `1` 세션이 replacement owner `gcp-realtime-3`로 이동한 결과다.
 - 이전 `ws_route_partition_id=1` 집중은 서버 route hashing 실패가 아니라 initial/reconnect phase metric이 분리되지 않아 생긴 해석 혼동이었다.
 - Phase 6 primary SLO인 hot active observer latest freshness p95 `<= 1000ms`는 `97ms`로 통과했다.
+
+## Progress Update: Phase 6.9 Runtime Role Contract
+
+- 상태: 구현 및 GCP smoke PASS
+- 브랜치: `feat-phase6-9-runtime-role-contract`
+- 배경:
+  - Phase 7 이후 room summary/RAG/embedding worker를 추가하려면 API/Realtime process에 AI worker side effect가 섞이지 않아야 한다.
+  - Docker image를 바로 분리하면 build/push/test matrix와 GCP 검증 비용이 커진다.
+  - 따라서 먼저 single image 안에서 `api`, `realtime`, `ai-worker`, `combined` runtime role contract를 명확히 고정했다.
+- 구현:
+  - `RuntimeRole`, `RuntimeCapability`, `@ConditionalOnRuntimeRole` 추가.
+  - WebSocket/subscriber/fanout/heartbeat/drain/lifecycle/realtime Kafka consumer를 realtime capability에 묶었다.
+  - `api`, `ai-worker` role에서는 realtime side-effect bean이 뜨지 않도록 테스트로 고정했다.
+  - non-realtime role의 `RoomSessionRegistry`는 disabled broadcast lane으로 동작하고, 실수로 broadcast가 호출돼도 no-op 처리한다.
+  - GCP `app-startup.sh.tftpl`에서 role normalize와 role별 env override를 명시했다.
+- 검증:
+  - `./gradlew test` PASS
+  - `bash scripts/test-runtime-role-startup-contract.sh` PASS
+  - `terraform -chdir=infra/gcp-loadtest validate` PASS
+  - GCP run id: `20260511-runtime-role-contract-smoke`
+  - k6 exit code: `0`
+  - route failure/fallback/mismatch: `0/0/0`
+  - sent/ack/DB rows: `16826 / 16826 / 16826`
+  - API VM role: `api`
+  - Realtime VM role: `realtime` 2대
+  - cleanup RUN_ID VM/disk/network/firewall: `0/0/0/0`
+- 해석:
+  - 지금은 image split이 아니라 role boundary를 완료한 단계다.
+  - Phase 7 RAG/room summary는 `ai-worker` role을 기준으로 추가하고, 실제 의존성/배포 주기가 갈라질 때 image split을 판단한다.

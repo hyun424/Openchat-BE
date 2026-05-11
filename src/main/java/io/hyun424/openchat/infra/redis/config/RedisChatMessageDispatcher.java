@@ -1,6 +1,8 @@
 package io.hyun424.openchat.infra.redis.config;
 
 import io.hyun424.openchat.chat.subscribe.ChatRedisSubscriber;
+import io.hyun424.openchat.global.role.ConditionalOnRuntimeRole;
+import io.hyun424.openchat.global.role.RuntimeCapability;
 import io.hyun424.openchat.infra.redis.health.RedisHealthState;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -11,6 +13,7 @@ import org.springframework.stereotype.Component;
 @Slf4j
 @Component
 @RequiredArgsConstructor
+@ConditionalOnRuntimeRole(capabilities = RuntimeCapability.REALTIME)
 public class RedisChatMessageDispatcher {
 
     private final ChatRedisSubscriber subscriber;

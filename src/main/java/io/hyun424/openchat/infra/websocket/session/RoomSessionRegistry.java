@@ -5,6 +5,8 @@ import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
 import io.hyun424.openchat.chat.metrics.ChatPipelineMetrics;
 import io.hyun424.openchat.chat.room.hot.RoomTrafficMonitor;
 import io.hyun424.openchat.chat.room.partition.metrics.RoomPartitionMetrics;
+import io.hyun424.openchat.global.role.RuntimeCapability;
+import io.hyun424.openchat.global.role.RuntimeRole;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -74,13 +76,15 @@ public class RoomSessionRegistry {
                                @Value("${app.websocket.broadcast.pool-size:0}") int legacyPoolSize,
                                @Value("${app.websocket.broadcast.queue-capacity-per-lane:${app.websocket.broadcast.queue-capacity:4096}}") int queueCapacityPerLane,
                                @Value("${app.websocket.broadcast.shutdown-timeout-ms:5000}") int shutdownTimeoutMillis,
-                               @Value("${app.websocket.active-ttl-ms:60000}") long activeTtlMillis) {
+                               @Value("${app.websocket.active-ttl-ms:60000}") long activeTtlMillis,
+                               @Value("${app.role:combined}") String role) {
         this(objectMapper, roomTrafficMonitor, chatPipelineMetrics,
                 roomPartitionMetrics,
                 configuredLaneCount > 0 ? configuredLaneCount : legacyPoolSize,
                 queueCapacityPerLane,
                 shutdownTimeoutMillis,
-                activeTtlMillis);
+                activeTtlMillis,
+                RuntimeRole.parse(role).hasCapability(RuntimeCapability.REALTIME));
     }
 
     public RoomSessionRegistry(ObjectMapper objectMapper,
@@ -114,6 +118,24 @@ public class RoomSessionRegistry {
                 activeTtlMillis);
     }
 
+    RoomSessionRegistry(ObjectMapper objectMapper,
+                        RoomTrafficMonitor roomTrafficMonitor,
+                        ChatPipelineMetrics chatPipelineMetrics,
+                        int configuredLaneCount,
+                        int legacyPoolSize,
+                        int queueCapacityPerLane,
+                        int shutdownTimeoutMillis,
+                        long activeTtlMillis,
+                        boolean realtimeEnabled) {
+        this(objectMapper, roomTrafficMonitor, chatPipelineMetrics,
+                null,
+                configuredLaneCount > 0 ? configuredLaneCount : legacyPoolSize,
+                queueCapacityPerLane,
+                shutdownTimeoutMillis,
+                activeTtlMillis,
+                realtimeEnabled);
+    }
+
     private RoomSessionRegistry(ObjectMapper objectMapper,
                                 RoomTrafficMonitor roomTrafficMonitor,
                                 ChatPipelineMetrics chatPipelineMetrics,
@@ -122,15 +144,30 @@ public class RoomSessionRegistry {
                                 int queueCapacityPerLane,
                                 int shutdownTimeoutMillis,
                                 long activeTtlMillis) {
+        this(objectMapper, roomTrafficMonitor, chatPipelineMetrics, roomPartitionMetrics,
+                configuredLaneCount, queueCapacityPerLane, shutdownTimeoutMillis, activeTtlMillis, true);
+    }
+
+    private RoomSessionRegistry(ObjectMapper objectMapper,
+                                RoomTrafficMonitor roomTrafficMonitor,
+                                ChatPipelineMetrics chatPipelineMetrics,
+                                RoomPartitionMetrics roomPartitionMetrics,
+                                int configuredLaneCount,
+                                int queueCapacityPerLane,
+                                int shutdownTimeoutMillis,
+                                long activeTtlMillis,
+                                boolean realtimeEnabled) {
         this.roomTrafficMonitor = roomTrafficMonitor;
         this.sessionStore = new RoomSessionStore();
         this.stateTracker = new SessionStateTracker(activeTtlMillis);
-        this.laneExecutor = new BroadcastLaneExecutor(
+        this.laneExecutor = realtimeEnabled
+                ? new BroadcastLaneExecutor(
                 configuredLaneCount,
                 queueCapacityPerLane,
                 shutdownTimeoutMillis,
                 chatPipelineMetrics
-        );
+        )
+                : BroadcastLaneExecutor.disabled(shutdownTimeoutMillis, chatPipelineMetrics);
         WebSocketPayloadSerializer serializer = new WebSocketPayloadSerializer(objectMapper, chatPipelineMetrics);
         this.broadcaster = new WebSocketBroadcaster(
                 sessionStore,
@@ -208,6 +245,10 @@ public class RoomSessionRegistry {
 
     public int totalBroadcastQueueDepth() {
         return laneExecutor.totalQueueDepth();
+    }
+
+    public int broadcastLaneCount() {
+        return laneExecutor.laneCount();
     }
 
     public RoomSessionWorkloadSnapshot workloadSnapshot() {
