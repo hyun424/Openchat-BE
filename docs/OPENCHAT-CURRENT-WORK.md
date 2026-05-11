@@ -992,3 +992,39 @@ Interpretation:
   - `bash scripts/test-k6-visible-freshness-metrics.sh` PASS
   - `bash scripts/test-rolling-restart-validation-gates.sh` PASS
   - `git diff --check` PASS
+
+### GCP Verification Complete: Freshness Route Phase Metrics
+
+- runner: `openchat-gcp-test-runner` subagent
+- run id: `20260511-freshness-route-phase-metrics`
+- result doc: `docs/results/gcp/GCP-load-결과-20260511-freshness-route-phase-metrics.md`
+- status: PASS
+- GCS prefix: `gs://openchat-loadtest-openchat-495102/runs/20260511-freshness-route-phase-metrics/`
+
+Result:
+
+- k6 exit code: `0`
+- validation/correctness/drain/performance gate: `PASS`
+- route failure/fallback/mismatch: `0/0/0`
+- sent/ack/DB rows: `110233 / 110233 / 110233`
+- rolling restart: `complete`
+- terminationAllowed: `true`
+- latest freshness p95/p99: `97ms / 612.84ms`
+- ACK p95/p99: `107ms / 1547.68ms`
+- full freshness p95/p99: `2245.65ms / 10251ms`
+- visible gap p95/p99/max: `336 / 432 / 514`
+- cleanup: RUN_ID VM/disk/network `0/0/0`
+
+Route phase interpretation:
+
+- initial route partition: `0=100`, `1=100`
+- initial route node: `gcp-realtime-1=100`, `gcp-realtime-2=100`
+- reconnect route partition: `1=100`
+- reconnect route node: `gcp-realtime-3=100`
+
+Interpretation:
+
+- 초기 route 분산은 정상이다.
+- reconnect 집중은 drain 대상 `gcp-realtime-2`의 partition `1` 세션이 replacement owner `gcp-realtime-3`로 이동한 결과다.
+- 이전 `ws_route_partition_id=1` 집중은 서버 route hashing 실패가 아니라 initial/reconnect phase metric이 분리되지 않아 생긴 해석 혼동이었다.
+- Phase 6 primary SLO인 hot active observer latest freshness p95 `<= 1000ms`는 `97ms`로 통과했다.

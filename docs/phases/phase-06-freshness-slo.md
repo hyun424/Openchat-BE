@@ -287,3 +287,50 @@ Phase 6 GCP 검증은 다음 순서로 진행한다.
 - p99와 `ws_visible_gap_messages`를 숨기면 실제 UX tail을 과소평가할 수 있다. 따라서 v1 hard gate는 p95로 두더라도 p99/gap은 결과 문서에 반드시 남긴다.
 - 기존 `generator-check` profile은 k6 VM capacity뿐 아니라 reconnect pacing과 post-stop 설정도 달라져 load generator pressure만 격리하지 못한다. Phase 6 isolation profile은 baseline과 동일한 조건에서 k6 capacity만 바꾸는 방식으로 다시 설계한다.
 - post-stop freshness는 correctness probe와 섞지 않는다. 다만 settle window를 사용할 경우, stop 직후 지연이 감춰지지 않도록 during-stop metric과 after-settle metric을 모두 기록한다.
+
+## Update: Phase 6 GCP PASS 및 Route Phase 해석 확정
+
+작성일: 2026-05-11
+
+`20260511-freshness-route-phase-metrics` GCP load run으로 Phase 6 primary SLO와 route phase 관측성을 검증했다.
+
+결과:
+
+- 최종 상태: `PASS`
+- k6 exit code: `0`
+- validation/correctness/drain/performance gate: `PASS`
+- route failure/fallback/mismatch: `0 / 0 / 0`
+- sent/ack/DB rows: `110233 / 110233 / 110233`
+- rolling restart: `complete`
+- `terminationAllowed=true`
+- latest freshness p95/p99: `97ms / 612.84ms`
+- ACK p95/p99: `107ms / 1547.68ms`
+- full freshness p95/p99: `2245.65ms / 10251ms`
+- visible gap p95/p99/max: `336 / 432 / 514`
+- cleanup 후 RUN_ID VM/disk/network: `0 / 0 / 0`
+
+이번 run의 핵심은 freshness 수치뿐 아니라 route 관측 해석을 바로잡은 것이다. 이전 `20260511-freshness-slo-baseline2`에서는 `ws_route_partition_id`가 모두 `1`로 보여 초기 route가 한 partition으로 몰린 것처럼 보였다. 확인 결과 기존 metric은 initial route가 아니라 reconnect route 위주로 기록되고 있었다. 이를 분리하기 위해 initial/reconnect route phase metric을 추가했고, 이번 GCP run에서 다음을 확인했다.
+
+- initial route:
+  - partition `0=100`, `1=100`
+  - node `gcp-realtime-1=100`, `gcp-realtime-2=100`
+- reconnect route:
+  - partition `1=100`
+  - node `gcp-realtime-3=100`
+
+해석:
+
+- 초기 연결은 partition/node 기준으로 균등 분산됐다.
+- reconnect 집중은 drain 대상 `gcp-realtime-2`의 partition `1` 세션들이 replacement owner `gcp-realtime-3`로 이동한 결과다.
+- 따라서 이전 `partitionId=1` 집중은 route hashing 실패가 아니라 관측 metric의 phase 구분 부족 때문에 생긴 해석 혼동이었다.
+
+Phase 6 기준 판단:
+
+- primary SLO인 hot active observer latest freshness p95 `<= 1000ms`는 `97ms`로 통과했다.
+- latest p99도 `612.84ms`로 이번 run에서는 안정적이었다.
+- full freshness와 visible gap은 아직 UX/stream continuity 관점에서 추적할 supporting metric이다. 다만 v1 hard gate는 latest freshness이므로 Phase 6 primary SLO는 통과로 본다.
+- ACK p99 `1547.68ms`는 p95 `107ms` 대비 tail이 남아 있으므로 후속 성능 관찰 대상으로 둔다.
+
+관련 결과 문서:
+
+- [GCP freshness route phase metrics result](../results/gcp/GCP-load-결과-20260511-freshness-route-phase-metrics.md)
