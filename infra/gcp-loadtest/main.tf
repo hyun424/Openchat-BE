@@ -721,6 +721,7 @@ resource "google_compute_instance" "k6" {
       k6_ws_send_stop_after_seconds                            = var.k6_ws_send_stop_after_seconds > 0 ? var.k6_ws_send_stop_after_seconds : var.chat_duration_seconds
       k6_chat_ack_p95_threshold_ms                             = var.k6_chat_ack_p95_threshold_ms
       k6_visible_freshness_p95_threshold_ms                    = var.k6_visible_freshness_p95_threshold_ms
+      k6_visible_latest_freshness_p95_threshold_ms             = var.k6_visible_latest_freshness_p95_threshold_ms >= 0 ? var.k6_visible_latest_freshness_p95_threshold_ms : var.k6_visible_freshness_p95_threshold_ms
       k6_assignment_preflight_enabled                          = var.k6_assignment_preflight_enabled ? "true" : "false"
       k6_assignment_preflight_partition_count                  = var.room_partition_partition_count
       k6_assignment_preflight_expected_nodes                   = var.k6_assignment_preflight_expected_nodes

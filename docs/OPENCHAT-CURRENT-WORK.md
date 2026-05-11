@@ -966,3 +966,65 @@ Interpretation:
 - 검증:
   - tracked markdown local link check PASS
   - `git diff --check` PASS
+
+## Progress Update: Phase 6 Route Phase Metrics
+
+- 상태: 구현 완료
+- 배경:
+  - `20260511-freshness-slo-baseline2`에서 `ws_route_partition_id`가 모두 `1`로 보여 hot room route가 한 partition에 몰린 것처럼 보였다.
+  - 코드 확인 결과 기존 `ws_route_partition_id`는 초기 route가 아니라 reconnect route 처리 시점에만 기록되고 있었다.
+  - 해당 run은 `gcp-realtime-2` drain 대상 partition이 `1`이었으므로 reconnect route partition이 모두 `1`로 보인 것은 정상 해석이다.
+- 변경:
+  - 초기 route 관측 metric을 추가했다.
+    - `ws_initial_route_partition_id`
+    - `ws_initial_route_node_total`
+  - reconnect route 관측 metric을 추가했다.
+    - `ws_reconnect_route_partition_id`
+    - `ws_reconnect_route_node_total`
+  - 기존 `ws_route_partition_id`, `ws_route_node_total`은 호환성 때문에 유지했다.
+  - `scripts/test-k6-route-phase-metrics.sh`를 추가해 phase-specific route metric 정의와 기록 위치를 고정했다.
+- 기대 효과:
+  - 다음 GCP run부터 초기 분산 문제와 drain 이후 재배치 문제를 summary artifact에서 분리해서 볼 수 있다.
+  - replacement node backlog가 route 분산 문제인지, drain/reconnect 이후 특정 owner로 트래픽이 이동한 결과인지 더 빠르게 구분할 수 있다.
+- 검증:
+  - `node --check k6/scenarios/11-mixed-room-workload-ramped.js` PASS
+  - `bash scripts/test-k6-route-phase-metrics.sh` PASS
+  - `bash scripts/test-k6-visible-freshness-metrics.sh` PASS
+  - `bash scripts/test-rolling-restart-validation-gates.sh` PASS
+  - `git diff --check` PASS
+
+### GCP Verification Complete: Freshness Route Phase Metrics
+
+- runner: `openchat-gcp-test-runner` subagent
+- run id: `20260511-freshness-route-phase-metrics`
+- result doc: `docs/results/gcp/GCP-load-결과-20260511-freshness-route-phase-metrics.md`
+- status: PASS
+- GCS prefix: `gs://openchat-loadtest-openchat-495102/runs/20260511-freshness-route-phase-metrics/`
+
+Result:
+
+- k6 exit code: `0`
+- validation/correctness/drain/performance gate: `PASS`
+- route failure/fallback/mismatch: `0/0/0`
+- sent/ack/DB rows: `110233 / 110233 / 110233`
+- rolling restart: `complete`
+- terminationAllowed: `true`
+- latest freshness p95/p99: `97ms / 612.84ms`
+- ACK p95/p99: `107ms / 1547.68ms`
+- full freshness p95/p99: `2245.65ms / 10251ms`
+- visible gap p95/p99/max: `336 / 432 / 514`
+- cleanup: RUN_ID VM/disk/network `0/0/0`
+
+Route phase interpretation:
+
+- initial route partition: `0=100`, `1=100`
+- initial route node: `gcp-realtime-1=100`, `gcp-realtime-2=100`
+- reconnect route partition: `1=100`
+- reconnect route node: `gcp-realtime-3=100`
+
+Interpretation:
+
+- 초기 route 분산은 정상이다.
+- reconnect 집중은 drain 대상 `gcp-realtime-2`의 partition `1` 세션이 replacement owner `gcp-realtime-3`로 이동한 결과다.
+- 이전 `ws_route_partition_id=1` 집중은 서버 route hashing 실패가 아니라 initial/reconnect phase metric이 분리되지 않아 생긴 해석 혼동이었다.
+- Phase 6 primary SLO인 hot active observer latest freshness p95 `<= 1000ms`는 `97ms`로 통과했다.

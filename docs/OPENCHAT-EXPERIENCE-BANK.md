@@ -392,6 +392,45 @@ GCP node drain smoke에서 WebSocket connect success `145/145`, route failure/fa
 
 ---
 
+## [EXP-OC-13]
+
+- 프로젝트: OpenChat
+- 유형: Freshness SLO 정의와 관측 지표 해석 개선
+- 역할: k6 freshness metric 설계, GCP load 검증, route phase 관측성 보강, 결과 해석
+- 사용 문항: 성능 개선 / 문제해결 / 포트폴리오 설명 / 운영 관측성
+- 키워드: `[WebSocket, freshness SLO, k6, p95/p99, observability, rolling restart, GCP]`
+
+### 상황
+
+Phase 5에서 rolling restart, node drain, termination safety는 통과했다. route failure/fallback/mismatch는 `0/0/0`이었고, sent/ack/DB rows도 일치했다. 하지만 운영 안전성과 별개로 사용자가 최신 채팅 상태를 얼마나 빠르게 따라잡는지는 아직 별도 SLO로 정의되지 않았다.
+
+### 문제
+
+기존에는 `ws_visible_freshness_ms` 같은 full visible freshness 지표와 ACK/freshness threshold가 하나의 k6 exit code에 섞여 있었다. 이 방식은 live fanout cap으로 오래된 중간 메시지가 batch에 섞이는 상황과, 사용자가 최신 상태를 따라잡는 상황을 같은 실패로 취급했다. 또한 `20260511-freshness-slo-baseline2`에서는 `ws_route_partition_id`가 모두 `1`로 보여 초기 route가 한 partition으로 몰린 것처럼 보였지만, 실제로는 initial route와 reconnect route가 분리되어 기록되지 않아 생긴 해석 혼동이었다.
+
+### 행동
+
+Phase 6에서는 primary SLO를 hot active observer의 `ws_visible_latest_freshness_ms` p95 `<= 1000ms`로 정의했다. latest freshness는 observer가 수신한 batch 안에서 가장 최신 메시지 기준으로 계산해, "현재 방 상태를 따라잡는가"를 보는 지표다. full freshness, visible gap, ACK p95/p99는 hard gate가 아니라 supporting metric으로 남겨 UX tail을 계속 추적하도록 했다.
+
+또한 SLO sample count가 없는 상태에서 false PASS가 나지 않도록 `ws_visible_latest_slo_samples_total` evidence counter를 추가했다. 이후 initial route와 reconnect route를 분리하기 위해 `ws_initial_route_partition_id`, `ws_initial_route_node_total`, `ws_reconnect_route_partition_id`, `ws_reconnect_route_node_total`을 추가했다.
+
+### 결과
+
+`20260511-freshness-route-phase-metrics` GCP load run에서 최종 상태 `PASS`를 확인했다. k6 exit code는 `0`, validation/correctness/drain/performance gate는 `PASS`, route failure/fallback/mismatch는 `0/0/0`, sent/ack/DB rows는 `110233/110233/110233`으로 일치했다. rolling restart는 `complete`, `terminationAllowed=true`, cleanup 후 RUN_ID VM/disk/network는 `0/0/0`이었다.
+
+성능 지표는 latest freshness p95/p99 `97ms / 612.84ms`, ACK p95/p99 `107ms / 1547.68ms`, full freshness p95/p99 `2245.65ms / 10251ms`, visible gap p95/p99/max `336 / 432 / 514`였다. Phase 6 primary SLO인 latest freshness p95는 기준 `1000ms` 대비 충분히 낮았다.
+
+route phase metric으로도 원인을 분리했다. initial route는 partition `0=100`, `1=100`, node `gcp-realtime-1=100`, `gcp-realtime-2=100`으로 균등했다. reconnect route는 partition `1=100`, node `gcp-realtime-3=100`이었다. 즉 이전에 보인 `partitionId=1` 집중은 routing hash 실패가 아니라, drain 대상 `gcp-realtime-2`의 partition 1 세션이 replacement owner `gcp-realtime-3`로 이동한 결과였다.
+
+### 배운 점
+
+성능 검증에서 중요한 것은 숫자를 낮추는 것뿐 아니라, 그 숫자가 정확히 무엇을 의미하는지 정의하는 것이다. 같은 WebSocket freshness라도 "모든 메시지의 낮은 지연"과 "최신 상태를 따라잡는 능력"은 다른 SLO다. 또한 관측 metric이 phase를 구분하지 못하면 정상 동작도 병목처럼 보일 수 있다. 이번 작업을 통해 운영 correctness, freshness SLO, route phase observability를 분리해 잘못된 원인 분석을 줄이는 방법을 배웠다.
+
+상세 문서: [Phase 6 Freshness SLO](./phases/phase-06-freshness-slo.md)
+결과 문서: [GCP load 결과: Freshness Route Phase Metrics](./results/gcp/GCP-load-결과-20260511-freshness-route-phase-metrics.md)
+
+---
+
 ## 활용 가이드
 
 ### 자소서에서 강하게 쓰기 좋은 경험
@@ -401,6 +440,7 @@ GCP node drain smoke에서 WebSocket connect success `145/145`, route failure/fa
 3. `EXP-OC-09` 부하 생성기 병목 분리와 측정 신뢰도 개선
 4. `EXP-OC-10` Active Room Fan-out과 브라우저 E2E 검증
 5. `EXP-OC-12` Dynamic Realtime Partition Ownership, Node Drain, 운영 증거 계약 검증
+6. `EXP-OC-13` Freshness SLO 정의와 관측 지표 해석 개선
 
 ### 면접에서 기술적으로 풀기 좋은 경험
 
@@ -409,6 +449,7 @@ GCP node drain smoke에서 WebSocket connect success `145/145`, route failure/fa
 3. `EXP-OC-07` 부하 테스트 기반 병목 분석과 성능 개선
 4. `EXP-OC-10` Active Room Fan-out과 브라우저 E2E 검증
 5. `EXP-OC-12` Dynamic Realtime Partition Ownership, Node Drain, 운영 증거 계약 검증
+6. `EXP-OC-13` Freshness SLO 정의와 관측 지표 해석 개선
 
 ### 협업/서비스 이해 관점으로 풀기 좋은 경험
 

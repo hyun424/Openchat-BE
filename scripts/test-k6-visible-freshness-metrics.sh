@@ -7,10 +7,17 @@ WS_FILE="$ROOT_DIR/k6/lib/ws.js"
 
 grep -q "wsLatestVisibleFreshness" "$METRICS_FILE"
 grep -q "ws_visible_latest_freshness_ms" "$METRICS_FILE"
+grep -q "wsLatestVisibleSamples" "$METRICS_FILE"
+grep -q "ws_visible_latest_samples_total" "$METRICS_FILE"
+grep -q "wsLatestVisibleSloSamples" "$METRICS_FILE"
+grep -q "ws_visible_latest_slo_samples_total" "$METRICS_FILE"
 grep -q "wsVisibleGapMessages" "$METRICS_FILE"
 grep -q "ws_visible_gap_messages" "$METRICS_FILE"
 
 grep -q "wsLatestVisibleFreshness.add" "$WS_FILE"
+grep -q "wsLatestVisibleSamples.add" "$WS_FILE"
+grep -q "wsLatestVisibleSloSamples.add" "$WS_FILE"
+grep -q "resolvedPresenceMode === 'active' && resolvedClientMode === 'observer' && metricTags.roomType === 'hot'" "$WS_FILE"
 grep -q "wsVisibleGapMessages.add" "$WS_FILE"
 grep -q "latestCreatedAt" "$WS_FILE"
 

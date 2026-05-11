@@ -15,7 +15,10 @@ import { login, authHeaders, BASE_URL } from '../lib/auth.js';
 import { enterRoom } from '../lib/http-helpers.js';
 import { makeNickname, makeChatMessage } from '../lib/data-factory.js';
 import { connectAndChat } from '../lib/ws.js';
-import { restCreateRoom, restWsRoute, httpErrorRate, wsPresenceAssigned, wsRouteFailuresTotal } from '../lib/metrics.js';
+import {
+  restCreateRoom, restWsRoute, httpErrorRate, wsPresenceAssigned, wsRouteFailuresTotal,
+  wsInitialRouteNodeTotal, wsInitialRoutePartitionId,
+} from '../lib/metrics.js';
 
 const TARGET_VUS = Number(__ENV.TARGET_VUS || '100');
 const CONNECT_RAMP_SECONDS = Number(__ENV.CONNECT_RAMP_SECONDS || '30');
@@ -154,7 +157,11 @@ function buildRoomSpecs() {
 const ROOM_SPECS = buildRoomSpecs();
 const CONFIGURED_VUS = ROOM_SPECS.reduce((sum, room) => sum + room.vusPerRoom, 0);
 const CHAT_ACK_P95_THRESHOLD_MS = Number(__ENV.K6_CHAT_ACK_P95_THRESHOLD_MS || '300');
-const VISIBLE_FRESHNESS_P95_THRESHOLD_MS = Number(__ENV.K6_VISIBLE_FRESHNESS_P95_THRESHOLD_MS || '500');
+const VISIBLE_LATEST_FRESHNESS_P95_THRESHOLD_MS = Number(
+  __ENV.K6_VISIBLE_LATEST_FRESHNESS_P95_THRESHOLD_MS
+  || __ENV.K6_VISIBLE_FRESHNESS_P95_THRESHOLD_MS
+  || '500',
+);
 
 function buildThresholds() {
   const thresholds = {
@@ -172,8 +179,8 @@ function buildThresholds() {
   if (CHAT_ACK_P95_THRESHOLD_MS > 0) {
     thresholds['chat_ack_roundtrip_ms{presenceMode:active,clientMode:sender}'] = [`p(95)<${CHAT_ACK_P95_THRESHOLD_MS}`];
   }
-  if (VISIBLE_FRESHNESS_P95_THRESHOLD_MS > 0) {
-    thresholds['ws_visible_freshness_ms{presenceMode:active,clientMode:observer}'] = [`p(95)<${VISIBLE_FRESHNESS_P95_THRESHOLD_MS}`];
+  if (VISIBLE_LATEST_FRESHNESS_P95_THRESHOLD_MS > 0) {
+    thresholds['ws_visible_latest_freshness_ms{presenceMode:active,clientMode:observer,roomType:hot}'] = [`p(95)<${VISIBLE_LATEST_FRESHNESS_P95_THRESHOLD_MS}`];
   }
   return thresholds;
 }
@@ -410,6 +417,15 @@ function enterAndResolveRoute(token, roomId, roomType) {
 
     const route = getWebSocketRoute(token, roomId, roomType, 'initial');
     if (route && route.partitionId !== null && route.partitionId !== undefined) {
+      const routeTags = { roomType };
+      wsInitialRoutePartitionId.add(Number(route.partitionId), routeTags);
+      if (route.nodeId) {
+        wsInitialRouteNodeTotal.add(1, {
+          ...routeTags,
+          nodeId: String(route.nodeId),
+          partitionId: String(route.partitionId),
+        });
+      }
       return route;
     }
   }

@@ -758,6 +758,50 @@ OpenChat의 확장성 작업은 "몇 명을 처리했다"가 아니라 다음 �
 8. 마지막으로 dynamic ownership과 node drain을 검증해, 특정 realtime node를 안전하게 비운 뒤 종료 가능한 상태까지 증명했다.
 9. reconnect commandId를 DB durable audit log와 GCP artifact로 연결해, drain/termination 과정의 사후 진단 근거를 남겼다.
 
+#### Update: Phase 6 Freshness SLO 및 Route Phase Metrics
+
+Phase 5 이후 남은 문제는 rolling restart와 node drain의 correctness가 아니라, 사용자가 최신 채팅 상태를 얼마나 빠르게 따라잡는지였다. 이전 run에서는 route/data consistency는 정상인데 freshness tail이 높거나, `ws_route_partition_id`가 모두 `1`로 보여 초기 route가 한 partition에 몰린 것처럼 해석될 여지가 있었다.
+
+검토한 선택지는 다음과 같았다.
+
+- A. 기존 full visible freshness를 그대로 hard gate로 유지한다.
+- B. ACK/freshness threshold를 완화해 단일 k6 PASS만 만든다.
+- C. latest freshness를 primary SLO로 두고, full freshness/gap/ACK tail은 supporting metric으로 분리한다.
+- D. route 분산 문제로 보고 앱 routing/hash 로직을 먼저 수정한다.
+
+이번에는 C를 선택하고, D는 로그와 metric을 보강해 검증한 뒤 판단하기로 했다. 사용자가 체감하는 1차 품질은 "모든 중간 메시지를 낮은 latency로 받는가"보다 "현재 방의 최신 상태를 빠르게 따라잡는가"에 가깝기 때문이다. 동시에 full freshness와 gap을 숨기면 UX tail을 과소평가할 수 있으므로, hard gate는 latest p95로 두되 p99/full/gap/ACK는 결과 문서에 반드시 남기는 방식으로 정했다.
+
+구현한 변경은 다음이다.
+
+- `K6_VISIBLE_LATEST_FRESHNESS_P95_THRESHOLD_MS`를 추가하고, hot active observer `ws_visible_latest_freshness_ms` p95를 Phase 6 primary gate로 사용했다.
+- SLO sample count false-pass를 막기 위해 `ws_visible_latest_slo_samples_total` evidence counter를 추가했다.
+- initial route와 reconnect route를 분리하기 위해 `ws_initial_route_partition_id`, `ws_initial_route_node_total`, `ws_reconnect_route_partition_id`, `ws_reconnect_route_node_total`을 추가했다.
+- 기존 route/freshness metric은 backward compatibility와 diagnostic 용도로 유지했다.
+
+GCP 검증은 `20260511-freshness-route-phase-metrics`로 수행했다.
+
+- final status `PASS`
+- k6 exit code `0`
+- validation/correctness/drain/performance gate `PASS`
+- route failure/fallback/mismatch `0/0/0`
+- sent/ack/DB rows `110233 / 110233 / 110233`
+- rolling restart `complete`
+- terminationAllowed `true`
+- latest freshness p95/p99 `97ms / 612.84ms`
+- ACK p95/p99 `107ms / 1547.68ms`
+- full freshness p95/p99 `2245.65ms / 10251ms`
+- visible gap p95/p99/max `336 / 432 / 514`
+- cleanup 후 RUN_ID VM/disk/network `0/0/0`
+
+route phase metric으로 확인한 분포는 다음이다.
+
+- initial route: partition `0=100`, `1=100`; node `gcp-realtime-1=100`, `gcp-realtime-2=100`
+- reconnect route: partition `1=100`; node `gcp-realtime-3=100`
+
+이 결과의 의미는 명확하다. 초기 route는 균등하게 분산됐고, reconnect 집중은 drain 대상 `gcp-realtime-2`의 partition `1` 세션이 replacement owner `gcp-realtime-3`로 이동한 결과였다. 따라서 이전 `partitionId=1` 집중은 routing hash 실패가 아니라 관측 metric의 phase 구분 부족으로 생긴 해석 혼동이었다.
+
+Phase 6는 v1 기준으로 닫을 수 있다. 다만 full freshness와 visible gap은 여전히 UX/stream continuity 관점의 후속 관찰 대상이다. 포트폴리오에서는 "성능 수치가 우연히 좋아졌다"가 아니라, correctness와 freshness SLO를 분리하고 관측 metric의 의미를 검증해 잘못된 병목 해석을 제거한 작업으로 설명한다.
+
 ## 자기소개서용 압축 문장
 
 > 대규모 WebSocket 채팅에서 성능 문제를 단순 서버 증설로 해결하지 않고, 부하 생성기 관측 비용, active fan-out 대상, room work, partition ownership, reconnect/resync 경로를 단계적으로 분리했습니다. GCP 기반 검증에서 1800명 단일방 ack/DB `201,538`건 일치, 1500명 active/passive fan-out passive unexpected `0`, dynamic node drain route mismatch `0`, ack/DB `22,300`건 일치와 drained node session `0`을 확인했습니다. 이후 reconnect commandId를 DB audit log와 GCP artifact로 연결해 drain/termination 과정의 사후 진단 근거까지 남기며, 측정 신뢰도와 운영 가능한 scale-out 구조를 함께 검증했습니다.

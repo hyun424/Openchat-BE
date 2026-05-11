@@ -29,6 +29,7 @@ SEND_INTERVAL_MS="${send_interval_ms}"
 K6_WS_SEND_STOP_AFTER_SECONDS="${k6_ws_send_stop_after_seconds}"
 K6_CHAT_ACK_P95_THRESHOLD_MS="${k6_chat_ack_p95_threshold_ms}"
 K6_VISIBLE_FRESHNESS_P95_THRESHOLD_MS="${k6_visible_freshness_p95_threshold_ms}"
+K6_VISIBLE_LATEST_FRESHNESS_P95_THRESHOLD_MS="${k6_visible_latest_freshness_p95_threshold_ms}"
 K6_ASSIGNMENT_PREFLIGHT_ENABLED="${k6_assignment_preflight_enabled}"
 K6_ASSIGNMENT_PREFLIGHT_PARTITION_COUNT="${k6_assignment_preflight_partition_count}"
 K6_ASSIGNMENT_PREFLIGHT_EXPECTED_NODES="${k6_assignment_preflight_expected_nodes}"
@@ -212,6 +213,70 @@ json_metric_value() {
   ' "$summary_file" 2>/dev/null || echo 0
 }
 
+json_metric_value_by_tags() {
+  local summary_file="$1"
+  local metric="$2"
+  local field="$3"
+  shift 3
+  if [ ! -f "$summary_file" ]; then
+    echo 0
+    return 0
+  fi
+  jq -r --arg metric "$metric" --arg field "$field" --argjson tags_json "$(printf '%s\n' "$@" | jq -R 'split("=") | {(.[0]): .[1]}' | jq -s add)" '
+    def key_tags:
+      capture("^[^{]+\\{(?<tags>.*)\\}$").tags
+      | split(",")
+      | map(select(length > 0) | split(":") | {(.[0]): .[1]})
+      | add // {};
+    def metric_value($m; $field):
+      if $m == null then 0
+      elif (($m.values // {})[$field] != null) then ($m.values // {})[$field]
+      elif ($m[$field] != null) then $m[$field]
+      elif ($field == "rate" and $m.value != null) then $m.value
+      else 0
+      end;
+    .metrics as $metrics
+    | ($metrics
+      | to_entries
+      | map(select(.key | startswith($metric + "{")))
+      | map(select((.key | key_tags) as $tags | ($tags_json | to_entries | all($tags[.key] == .value))))
+      | .[0].value) as $m
+    | metric_value($m; $field)
+  ' "$summary_file" 2>/dev/null || echo 0
+}
+
+json_metric_present() {
+  local summary_file="$1"
+  local metric="$2"
+  if [ ! -f "$summary_file" ]; then
+    echo "false"
+    return 0
+  fi
+  jq -r --arg metric "$metric" 'if .metrics[$metric] == null then "false" else "true" end' "$summary_file" 2>/dev/null || echo "false"
+}
+
+json_metric_present_by_tags() {
+  local summary_file="$1"
+  local metric="$2"
+  shift 2
+  if [ ! -f "$summary_file" ]; then
+    echo "false"
+    return 0
+  fi
+  jq -r --arg metric "$metric" --argjson tags_json "$(printf '%s\n' "$@" | jq -R 'split("=") | {(.[0]): .[1]}' | jq -s add)" '
+    def key_tags:
+      capture("^[^{]+\\{(?<tags>.*)\\}$").tags
+      | split(",")
+      | map(select(length > 0) | split(":") | {(.[0]): .[1]})
+      | add // {};
+    .metrics
+    | to_entries
+    | map(select(.key | startswith($metric + "{")))
+    | map(select((.key | key_tags) as $tags | ($tags_json | to_entries | all($tags[.key] == .value))))
+    | if length > 0 then "true" else "false" end
+  ' "$summary_file" 2>/dev/null || echo "false"
+}
+
 number_as_int() {
   local value="$1"
   awk -v value="$value" 'BEGIN { printf "%.0f", value + 0 }'
@@ -240,6 +305,22 @@ metric_gate_status() {
   fi
 }
 
+metric_gate_status_with_data() {
+  local value="$1"
+  local threshold="$2"
+  local metric_present="$3"
+  local sample_count="$4"
+  if awk -v threshold="$threshold" 'BEGIN { exit !(threshold <= 0) }'; then
+    echo "COLLECTED"
+    return 0
+  fi
+  if [ "$metric_present" != "true" ] || [ "$sample_count" -le 0 ]; then
+    echo "NO_DATA"
+    return 0
+  fi
+  metric_gate_status "$value" "$threshold"
+}
+
 write_post_stop_probe_result() {
   local label="$1"
   local target_node="$2"
@@ -256,6 +337,8 @@ write_post_stop_probe_result() {
   local route_mismatches
   local latest_p95
   local latest_p99
+  local latest_present
+  local visible_samples
   local visible_p95
   local visible_p99
   local freshness_status
@@ -265,11 +348,13 @@ write_post_stop_probe_result() {
   route_failures="$(number_as_int "$(json_metric_value "$summary_file" "ws_route_failures_total" "count")")"
   route_fallbacks="$(number_as_int "$(json_metric_value "$summary_file" "ws_route_fallback_total" "count")")"
   route_mismatches="$(number_as_int "$(json_metric_value "$summary_file" "ws_route_assignment_mismatch_total" "count")")"
-  latest_p95="$(json_metric_value "$summary_file" "ws_visible_latest_freshness_ms" "p(95)")"
-  latest_p99="$(json_metric_value "$summary_file" "ws_visible_latest_freshness_ms" "p(99)")"
+  latest_p95="$(json_metric_value_by_tags "$summary_file" "ws_visible_latest_freshness_ms" "p(95)" "presenceMode=active" "clientMode=observer" "roomType=hot")"
+  latest_p99="$(json_metric_value_by_tags "$summary_file" "ws_visible_latest_freshness_ms" "p(99)" "presenceMode=active" "clientMode=observer" "roomType=hot")"
+  latest_present="$(json_metric_present_by_tags "$summary_file" "ws_visible_latest_freshness_ms" "presenceMode=active" "clientMode=observer" "roomType=hot")"
+  visible_samples="$(number_as_int "$(json_metric_value "$summary_file" "ws_visible_latest_slo_samples_total" "count")")"
   visible_p95="$(json_metric_value "$summary_file" "ws_visible_freshness_ms" "p(95)")"
   visible_p99="$(json_metric_value "$summary_file" "ws_visible_freshness_ms" "p(99)")"
-  freshness_status="$(metric_gate_status "$latest_p95" "$K6_VISIBLE_FRESHNESS_P95_THRESHOLD_MS")"
+  freshness_status="$(metric_gate_status_with_data "$latest_p95" "$K6_VISIBLE_LATEST_FRESHNESS_P95_THRESHOLD_MS" "$latest_present" "$visible_samples")"
 
   local correctness_status="PASS"
   if [ "$probe_status" -ne 0 ] || [ "$route_failures" -ne 0 ] || [ "$route_fallbacks" -ne 0 ] || [ "$route_mismatches" -ne 0 ] || [ "$sent" -ne "$ack" ] || [ "$sent" -ne "$db_rows" ]; then
@@ -291,6 +376,7 @@ write_post_stop_probe_result() {
     --argjson routeMismatches "$route_mismatches" \
     --argjson latestP95 "$latest_p95" \
     --argjson latestP99 "$latest_p99" \
+    --argjson visibleSamples "$visible_samples" \
     --argjson visibleP95 "$visible_p95" \
     --argjson visibleP99 "$visible_p99" \
     '{
@@ -308,6 +394,7 @@ write_post_stop_probe_result() {
       "routeMismatches": $routeMismatches,
       "latestFreshnessP95": $latestP95,
       "latestFreshnessP99": $latestP99,
+      "observerVisibleSamples": $visibleSamples,
       "visibleFreshnessP95": $visibleP95,
       "visibleFreshnessP99": $visibleP99
     }' > "$output_file"
@@ -338,8 +425,19 @@ write_validation_gates() {
   local ack_p99
   local latest_p95
   local latest_p99
+  local latest_present
+  local visible_samples
   local visible_p95
   local visible_p99
+  local visible_gap_p95
+  local visible_gap_p99
+  local visible_gap_max
+  local handler_duration_p95
+  local handler_duration_p99
+  local json_parse_duration_p95
+  local json_parse_duration_p99
+  local batch_messages_p95
+  local batch_messages_p99
   sent="$(number_as_int "$(json_metric_value "$summary_file" "ws_messages_sent_total" "count")")"
   ack="$(number_as_int "$(json_metric_value "$summary_file" "ws_acks_received_total" "count")")"
   db_rows="$(jq -r '.dbMessageRows // 0' "$db_file" 2>/dev/null || echo 0)"
@@ -351,10 +449,21 @@ write_validation_gates() {
   connect_failure_rate="$(json_metric_value "$summary_file" "ws_connect_failure_rate" "rate")"
   ack_p95="$(json_metric_value "$summary_file" "chat_ack_roundtrip_ms" "p(95)")"
   ack_p99="$(json_metric_value "$summary_file" "chat_ack_roundtrip_ms" "p(99)")"
-  latest_p95="$(json_metric_value "$summary_file" "ws_visible_latest_freshness_ms" "p(95)")"
-  latest_p99="$(json_metric_value "$summary_file" "ws_visible_latest_freshness_ms" "p(99)")"
+  latest_p95="$(json_metric_value_by_tags "$summary_file" "ws_visible_latest_freshness_ms" "p(95)" "presenceMode=active" "clientMode=observer" "roomType=hot")"
+  latest_p99="$(json_metric_value_by_tags "$summary_file" "ws_visible_latest_freshness_ms" "p(99)" "presenceMode=active" "clientMode=observer" "roomType=hot")"
+  latest_present="$(json_metric_present_by_tags "$summary_file" "ws_visible_latest_freshness_ms" "presenceMode=active" "clientMode=observer" "roomType=hot")"
+  visible_samples="$(number_as_int "$(json_metric_value "$summary_file" "ws_visible_latest_slo_samples_total" "count")")"
   visible_p95="$(json_metric_value "$summary_file" "ws_visible_freshness_ms" "p(95)")"
   visible_p99="$(json_metric_value "$summary_file" "ws_visible_freshness_ms" "p(99)")"
+  visible_gap_p95="$(json_metric_value "$summary_file" "ws_visible_gap_messages" "p(95)")"
+  visible_gap_p99="$(json_metric_value "$summary_file" "ws_visible_gap_messages" "p(99)")"
+  visible_gap_max="$(json_metric_value "$summary_file" "ws_visible_gap_messages" "max")"
+  handler_duration_p95="$(json_metric_value "$summary_file" "ws_message_handler_duration_ms" "p(95)")"
+  handler_duration_p99="$(json_metric_value "$summary_file" "ws_message_handler_duration_ms" "p(99)")"
+  json_parse_duration_p95="$(json_metric_value "$summary_file" "ws_json_parse_duration_ms" "p(95)")"
+  json_parse_duration_p99="$(json_metric_value "$summary_file" "ws_json_parse_duration_ms" "p(99)")"
+  batch_messages_p95="$(json_metric_value "$summary_file" "ws_batch_messages_per_frame" "p(95)")"
+  batch_messages_p99="$(json_metric_value "$summary_file" "ws_batch_messages_per_frame" "p(99)")"
 
   local correctness_status="PASS"
   if [ ! -f "$summary_file" ] || [ "$route_failures" -ne 0 ] || [ "$route_fallbacks" -ne 0 ] || [ "$route_mismatches" -ne 0 ] || [ "$preflight_failures" -ne 0 ] || [ "$sent" -ne "$ack" ] || [ "$sent" -ne "$db_rows" ]; then
@@ -405,9 +514,11 @@ write_validation_gates() {
   local ack_status
   local latest_status
   ack_status="$(metric_gate_status "$ack_p95" "$K6_CHAT_ACK_P95_THRESHOLD_MS")"
-  latest_status="$(metric_gate_status "$latest_p95" "$K6_VISIBLE_FRESHNESS_P95_THRESHOLD_MS")"
+  latest_status="$(metric_gate_status_with_data "$latest_p95" "$K6_VISIBLE_LATEST_FRESHNESS_P95_THRESHOLD_MS" "$latest_present" "$visible_samples")"
   performance_status="PASS"
-  if [ "$ack_status" = "PARTIAL" ] || [ "$latest_status" = "PARTIAL" ]; then
+  if [ "$latest_status" = "NO_DATA" ]; then
+    performance_status="FAIL"
+  elif [ "$ack_status" = "PARTIAL" ] || [ "$latest_status" = "PARTIAL" ]; then
     performance_status="PARTIAL"
   elif [ "$ack_status" = "COLLECTED" ] || [ "$latest_status" = "COLLECTED" ]; then
     performance_status="COLLECTED"
@@ -438,8 +549,18 @@ write_validation_gates() {
     --argjson ackP99 "$ack_p99" \
     --argjson latestP95 "$latest_p95" \
     --argjson latestP99 "$latest_p99" \
+    --argjson visibleSamples "$visible_samples" \
     --argjson visibleP95 "$visible_p95" \
     --argjson visibleP99 "$visible_p99" \
+    --argjson visibleGapP95 "$visible_gap_p95" \
+    --argjson visibleGapP99 "$visible_gap_p99" \
+    --argjson visibleGapMax "$visible_gap_max" \
+    --argjson handlerDurationP95 "$handler_duration_p95" \
+    --argjson handlerDurationP99 "$handler_duration_p99" \
+    --argjson jsonParseDurationP95 "$json_parse_duration_p95" \
+    --argjson jsonParseDurationP99 "$json_parse_duration_p99" \
+    --argjson batchMessagesP95 "$batch_messages_p95" \
+    --argjson batchMessagesP99 "$batch_messages_p99" \
     --argjson gcpStoppedCount "$gcp_stopped_count" \
     --argjson postStopExitCode "$post_stop_exit_code" \
     --arg terminationAllowed "$termination_allowed" \
@@ -474,7 +595,8 @@ write_validation_gates() {
         "ackP95": $ackP95,
         "ackP99": $ackP99,
         "latestFreshnessP95": $latestP95,
-        "latestFreshnessP99": $latestP99
+        "latestFreshnessP99": $latestP99,
+        "observerVisibleSamples": $visibleSamples
       },
       "postStopFreshness": {
         "status": $postStopFreshness,
@@ -483,8 +605,26 @@ write_validation_gates() {
       "cleanup": {
         "status": "DEFERRED_TO_RUNNER"
       },
+      "diagnostics": {
+        "visibleFreshnessP95": $visibleP95,
+        "visibleFreshnessP99": $visibleP99,
+        "visibleGapP95": $visibleGapP95,
+        "visibleGapP99": $visibleGapP99,
+        "visibleGapMax": $visibleGapMax,
+        "handlerDurationP95": $handlerDurationP95,
+        "handlerDurationP99": $handlerDurationP99,
+        "jsonParseDurationP95": $jsonParseDurationP95,
+        "jsonParseDurationP99": $jsonParseDurationP99,
+        "batchMessagesP95": $batchMessagesP95,
+        "batchMessagesP99": $batchMessagesP99
+      },
       "visibleFreshnessP95": $visibleP95,
-      "visibleFreshnessP99": $visibleP99
+      "visibleFreshnessP99": $visibleP99,
+      "visibleGapP95": $visibleGapP95,
+      "visibleGapP99": $visibleGapP99,
+      "handlerDurationP95": $handlerDurationP95,
+      "jsonParseDurationP95": $jsonParseDurationP95,
+      "batchMessagesP95": $batchMessagesP95
     }' > "$gate_file"
 }
 
@@ -881,8 +1021,9 @@ run_gcp_node_termination_post_stop_probe() {
     -e SEND_INTERVAL_MS="500" \
     -e CHAT_DURATION_SECONDS="$probe_duration" \
     -e K6_WS_SEND_STOP_AFTER_SECONDS="$probe_duration" \
-    -e K6_CHAT_ACK_P95_THRESHOLD_MS="$K6_CHAT_ACK_P95_THRESHOLD_MS" \
+    -e K6_CHAT_ACK_P95_THRESHOLD_MS="0" \
     -e K6_VISIBLE_FRESHNESS_P95_THRESHOLD_MS="$K6_VISIBLE_FRESHNESS_P95_THRESHOLD_MS" \
+    -e K6_VISIBLE_LATEST_FRESHNESS_P95_THRESHOLD_MS="0" \
     -e K6_ASSIGNMENT_PREFLIGHT_ENABLED="true" \
     -e K6_ASSIGNMENT_PREFLIGHT_PARTITION_COUNT="$K6_ASSIGNMENT_PREFLIGHT_PARTITION_COUNT" \
     -e K6_ASSIGNMENT_PREFLIGHT_EXPECTED_NODES="1" \
@@ -1757,6 +1898,7 @@ for vus in $VUS_LIST; do
     -e K6_WS_SEND_STOP_AFTER_SECONDS="$K6_WS_SEND_STOP_AFTER_SECONDS" \
     -e K6_CHAT_ACK_P95_THRESHOLD_MS="$K6_CHAT_ACK_P95_THRESHOLD_MS" \
     -e K6_VISIBLE_FRESHNESS_P95_THRESHOLD_MS="$K6_VISIBLE_FRESHNESS_P95_THRESHOLD_MS" \
+    -e K6_VISIBLE_LATEST_FRESHNESS_P95_THRESHOLD_MS="$K6_VISIBLE_LATEST_FRESHNESS_P95_THRESHOLD_MS" \
     -e K6_ASSIGNMENT_PREFLIGHT_ENABLED="$K6_ASSIGNMENT_PREFLIGHT_ENABLED" \
     -e K6_ASSIGNMENT_PREFLIGHT_PARTITION_COUNT="$K6_ASSIGNMENT_PREFLIGHT_PARTITION_COUNT" \
     -e K6_ASSIGNMENT_PREFLIGHT_EXPECTED_NODES="$K6_ASSIGNMENT_PREFLIGHT_EXPECTED_NODES" \

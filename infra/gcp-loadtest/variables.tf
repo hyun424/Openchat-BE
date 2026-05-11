@@ -63,9 +63,15 @@ variable "k6_chat_ack_p95_threshold_ms" {
 }
 
 variable "k6_visible_freshness_p95_threshold_ms" {
-  description = "k6 observer visible freshness p95 threshold in milliseconds. Set to 0 to collect the metric without failing the run."
+  description = "Deprecated compatibility threshold for k6 observer visible freshness p95. Set to 0 to collect the metric without failing the run."
   type        = number
   default     = 500
+}
+
+variable "k6_visible_latest_freshness_p95_threshold_ms" {
+  description = "k6 observer latest visible freshness p95 threshold in milliseconds. Set to -1 to inherit k6_visible_freshness_p95_threshold_ms, or 0 to collect without failing the run."
+  type        = number
+  default     = -1
 }
 
 variable "k6_assignment_preflight_enabled" {
