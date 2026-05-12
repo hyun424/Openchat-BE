@@ -7,12 +7,15 @@ import io.hyun424.openchat.chat.metrics.ChatPipelineMetrics;
 import io.hyun424.openchat.chat.room.partition.metrics.RoomPartitionMetrics;
 import io.hyun424.openchat.chat.room.shard.ChatRedisChannelResolver;
 import io.hyun424.openchat.chat.room.shard.RoomShardMetrics;
+import io.hyun424.openchat.global.role.ConditionalOnRuntimeRole;
+import io.hyun424.openchat.global.role.RuntimeCapability;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
 @Slf4j
 @Component
+@ConditionalOnRuntimeRole(capabilities = RuntimeCapability.REALTIME)
 public class ChatRedisSubscriber {
 
     private final ObjectMapper redisObjectMapper;

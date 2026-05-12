@@ -13,6 +13,24 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
 
     Optional<Message> findByRoomIdAndSenderIdAndClientMessageId(Long roomId, String senderId, String clientMessageId);
 
+    Optional<Message> findByIdAndRoomId(Long id, Long roomId);
+
+    long countByRoomIdAndIdGreaterThan(Long roomId, Long id);
+
+    List<Message> findByRoomIdAndIdBetweenOrderByIdAsc(Long roomId, Long startId, Long endId);
+
+    @Query("SELECT m.roomId FROM Message m WHERE m.createdAt >= :sinceMillis GROUP BY m.roomId HAVING COUNT(m) >= :minMessages")
+    List<Long> findActiveRoomIdsSince(
+            @Param("sinceMillis") Long sinceMillis,
+            @Param("minMessages") long minMessages
+    );
+
+    @Query("SELECT m FROM Message m WHERE m.roomId = :roomId ORDER BY m.id DESC")
+    List<Message> findLatestRoomMessages(
+            @Param("roomId") Long roomId,
+            Pageable pageable
+    );
+
     /**
      * Initial load: Latest N messages (newest first by id, then reversed for display)
      * Uses id as primary sort key for consistent ordering across real-time and refresh

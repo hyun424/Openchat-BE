@@ -3,12 +3,13 @@ package io.hyun424.openchat.chat.room.metadata;
 import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
 import io.hyun424.openchat.chat.metrics.ChatPipelineMetrics;
 import io.hyun424.openchat.chat.room.service.RoomService;
+import io.hyun424.openchat.global.role.ConditionalOnRuntimeRole;
+import io.hyun424.openchat.global.role.RuntimeCapability;
 import io.hyun424.openchat.hotchat.HotChatService;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -20,7 +21,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-@ConditionalOnExpression("'${app.role:combined}'.toLowerCase() != 'api'")
+@ConditionalOnRuntimeRole(capabilities = RuntimeCapability.REALTIME)
 public class RoomMetadataUpdateBuffer {
 
     private final RoomService roomService;

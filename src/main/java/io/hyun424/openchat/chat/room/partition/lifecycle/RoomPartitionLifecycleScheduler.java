@@ -1,6 +1,8 @@
 package io.hyun424.openchat.chat.room.partition.lifecycle;
 
 import io.hyun424.openchat.chat.room.workload.service.RealtimeWorkloadClusterSummaryService;
+import io.hyun424.openchat.global.role.ConditionalOnRuntimeRole;
+import io.hyun424.openchat.global.role.RuntimeCapability;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -13,6 +15,7 @@ import java.util.UUID;
 
 @Slf4j
 @Component
+@ConditionalOnRuntimeRole(capabilities = RuntimeCapability.REALTIME)
 @ConditionalOnProperty(name = "app.room-partition.lifecycle.enabled", havingValue = "true")
 public class RoomPartitionLifecycleScheduler {
 

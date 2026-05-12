@@ -64,6 +64,11 @@ public class WebSocketBroadcaster {
         if (sessionSnapshot.isEmpty()) {
             return;
         }
+        if (laneExecutor.laneCount() == 0) {
+            chatPipelineMetrics.incrementCounter("ws.broadcast.disabled");
+            log.debug("[WS BROADCAST DISABLED] roomId={} sessions={}", roomId, sessionSnapshot.size());
+            return;
+        }
 
         TextMessage textMessage = serializer.serializeMessage(roomId, message);
         if (textMessage == null) {
@@ -121,6 +126,12 @@ public class WebSocketBroadcaster {
 
         List<WebSocketSession> sessionSnapshot = activeSessionSnapshot(roomId, partitionId, sessions, messages.size());
         if (sessionSnapshot.isEmpty()) {
+            return;
+        }
+        if (laneExecutor.laneCount() == 0) {
+            chatPipelineMetrics.incrementCounter("ws.broadcast.disabled");
+            log.debug("[WS BATCH BROADCAST DISABLED] roomId={} count={} sessions={}",
+                    roomId, messages.size(), sessionSnapshot.size());
             return;
         }
 

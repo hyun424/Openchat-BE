@@ -4,6 +4,8 @@ import io.hyun424.openchat.chat.message.dto.ChatMessageDto;
 import io.hyun424.openchat.chat.metrics.ChatPipelineMetrics;
 import io.hyun424.openchat.chat.room.hot.RoomHotState;
 import io.hyun424.openchat.chat.room.hot.RoomTrafficMonitor;
+import io.hyun424.openchat.global.role.ConditionalOnRuntimeRole;
+import io.hyun424.openchat.global.role.RuntimeCapability;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -15,6 +17,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @Service
+@ConditionalOnRuntimeRole(capabilities = RuntimeCapability.REALTIME)
 public class ChatFanoutService {
 
     private final ChatOutboundSender outboundSender;

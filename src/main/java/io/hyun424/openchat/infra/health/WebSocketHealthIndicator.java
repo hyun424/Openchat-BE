@@ -1,15 +1,18 @@
 package io.hyun424.openchat.infra.health;
 
+import io.hyun424.openchat.global.role.ConditionalOnRuntimeRole;
+import io.hyun424.openchat.global.role.RuntimeCapability;
 import io.hyun424.openchat.infra.websocket.session.RoomSessionRegistry;
 import lombok.RequiredArgsConstructor;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.boot.actuate.health.Health;
 import org.springframework.boot.actuate.health.HealthIndicator;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 @Component("websocket")
 @RequiredArgsConstructor
-@ConditionalOnExpression("'${app.role:combined}'.toLowerCase() != 'api' && '${app.websocket.enabled:true}'.toLowerCase() == 'true'")
+@ConditionalOnRuntimeRole(capabilities = RuntimeCapability.REALTIME)
+@ConditionalOnProperty(name = "app.websocket.enabled", havingValue = "true", matchIfMissing = true)
 public class WebSocketHealthIndicator implements HealthIndicator {
 
     private final RoomSessionRegistry roomSessionRegistry;

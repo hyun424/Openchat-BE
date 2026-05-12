@@ -1,10 +1,11 @@
 package io.hyun424.openchat.chat.outbox;
 
 import io.hyun424.openchat.chat.metrics.ChatPipelineMetrics;
+import io.hyun424.openchat.global.role.ConditionalOnRuntimeRole;
+import io.hyun424.openchat.global.role.RuntimeCapability;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -19,7 +20,7 @@ import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Component
-@ConditionalOnExpression("'${app.role:combined}'.toLowerCase() != 'api'")
+@ConditionalOnRuntimeRole(capabilities = RuntimeCapability.REALTIME)
 public class OutboxPublishedMarker {
 
     private final boolean enabled;

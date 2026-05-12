@@ -16,6 +16,7 @@
 | phase별 상세 문서 | [phases/README.md](phases/README.md) |
 | Phase 5 상세 | [phases/phase-05-node-drain-rolling-restart.md](phases/phase-05-node-drain-rolling-restart.md) |
 | Phase 6 상세 | [phases/phase-06-freshness-slo.md](phases/phase-06-freshness-slo.md) |
+| Phase 6.9 상세 | [phases/phase-06-9-runtime-role-contract.md](phases/phase-06-9-runtime-role-contract.md) |
 
 ## Current Phase Index
 
@@ -27,7 +28,9 @@
 | Phase 4 | Done | Reconnect delivery evidence hardening, strict termination guard | Roadmap summary |
 | Phase 5 | Done | Rolling restart, mini-soak, validation gate split | [Phase 5](phases/phase-05-node-drain-rolling-restart.md) |
 | Phase 6 | Planned | Freshness SLO, tail latency, user-facing delivery quality | [Phase 6](phases/phase-06-freshness-slo.md) |
-| Phase 7 | Later | Optional infra lifecycle integration | Roadmap summary |
+| Phase 6.9 | Planned | Runtime role contract, AI worker readiness | [Phase 6.9](phases/phase-06-9-runtime-role-contract.md) |
+| Phase 7 | Planned | Active room rolling AI memory, unread recent summary | [Phase 7](phases/phase-07-active-room-ai-memory.md) |
+| Phase 8 | Later | Optional infra lifecycle integration | Roadmap summary |
 
 ## Goal
 
@@ -285,7 +288,57 @@ Status: Planned
 - full visible freshness와 gap metric은 별도 표로 해석
 - cleanup RUN_ID VM/disk/network `0 / 0 / 0`
 
-### Phase 7. Optional Infra Lifecycle Integration
+### Phase 6.9. Runtime Role Contract / AI Worker Readiness
+
+Status: Planned
+
+상세 문서: [Phase 6.9 Runtime Role Contract](phases/phase-06-9-runtime-role-contract.md)
+
+목표:
+
+- Phase 7 이후 AI/RAG worker를 붙이기 전에 runtime role 경계를 고정한다.
+- single image + explicit runtime role 구조를 유지하면서 `api`, `realtime`, `ai-worker`, `combined`의 책임을 명확히 한다.
+- WebSocket/subscriber/fanout 같은 realtime capability가 AI worker에 섞이지 않도록 Spring context test와 GCP startup contract로 검증한다.
+- Docker image 분리는 지금 하지 않고, AI worker의 배포 주기/의존성/보안 경계가 실제로 갈라진 뒤 판단한다.
+
+성공 기준 후보:
+
+- `api` role에서 realtime-only bean이 뜨지 않는다.
+- `realtime` role에서 WebSocket/subscriber/heartbeat가 정상 동작한다.
+- `ai-worker` role에서 WebSocket/subscriber/fanout/outbox polling이 비활성화된다.
+- invalid role은 startup fail-fast 된다.
+- 기존 API/Realtime GCP smoke가 회귀 없이 통과한다.
+
+### Phase 7. Active Room AI Memory / Unread Recent Summary
+
+Status: Planned
+
+상세 문서: [Phase 7 Active Room AI Memory](phases/phase-07-active-room-ai-memory.md)
+
+목표:
+
+- 모든 사용자 요청마다 LLM을 호출하지 않고, active room 단위로 rolling room memory를 유지한다.
+- 사용자에게는 `읽지 않은 최근 메시지를 요약했어요.`라는 UX로 최근 unread 흐름을 빠르게 보여준다.
+- AI 비용을 사용자 수가 아니라 active room/message segment 수에 비례하도록 만든다.
+- Realtime 서버는 AI/RAG를 몰라야 하며, 요약 실패가 WebSocket fanout, ACK, drain/reconnect 안정성에 영향을 주면 안 된다.
+
+v1 정책:
+
+- active room: 최근 1시간 메시지 수 `>= 100`
+- segment size: `100 messages`
+- rolling memory: 최근 `3 segments`
+- 노출 조건: `unreadCount >= 100` and rolling memory exists
+- API: 요약 가능 여부와 결과 조회
+- AI worker: active room detection, segment summary build, rolling memory update
+- Python RAG server: signal extraction, topic segmentation, evidence selection, summary generation
+
+남은 결정:
+
+- scheduler polling vs message count threshold event
+- 실제 Python RAG server를 바로 만들지, mock adapter로 contract를 먼저 고정할지
+- summary signal type enum과 평가 fixture 범위
+
+### Phase 8. Optional Infra Lifecycle Integration
 
 Status: Later
 

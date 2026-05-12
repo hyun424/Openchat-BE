@@ -14,7 +14,9 @@
 | Phase 4 | Done | Roadmap summary | Delivery evidence hardening, strict termination guard |
 | Phase 5 | Done | [phase-05-node-drain-rolling-restart.md](phase-05-node-drain-rolling-restart.md) | Rolling restart, mini-soak, gate-based validation |
 | Phase 6 | Planned | [phase-06-freshness-slo.md](phase-06-freshness-slo.md) | Freshness SLO and tail latency 개선 |
-| Phase 7 | Later | Roadmap summary | Optional infra lifecycle integration |
+| Phase 6.9 | Planned | [phase-06-9-runtime-role-contract.md](phase-06-9-runtime-role-contract.md) | AI/RAG worker 도입 전 runtime role contract 고정 |
+| Phase 7 | Planned | [phase-07-active-room-ai-memory.md](phase-07-active-room-ai-memory.md) | Active room rolling AI memory and unread recent summary |
+| Phase 8 | Later | Roadmap summary | Optional infra lifecycle integration |
 
 ## Update Rule
 
