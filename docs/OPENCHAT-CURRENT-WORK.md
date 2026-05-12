@@ -1057,3 +1057,23 @@ Interpretation:
 - 해석:
   - 지금은 image split이 아니라 role boundary를 완료한 단계다.
   - Phase 7 RAG/room summary는 `ai-worker` role을 기준으로 추가하고, 실제 의존성/배포 주기가 갈라질 때 image split을 판단한다.
+
+## Progress Update: Phase 7-1 Read Position + Summary Worker Contract
+
+- 상태: 구현 진행
+- 브랜치: `feat-phase7-read-position-summary-contract`
+- 배경:
+  - 채팅방 요약/RAG를 붙이려면 사용자별 마지막 읽음 위치와 방 단위 rolling memory 계약이 먼저 필요하다.
+  - Python RAG 서버를 먼저 만들면 API/worker/DB contract가 흔들릴 수 있으므로 Java 쪽 read position, availability, job/segment/memory 테이블을 먼저 고정한다.
+- 구현:
+  - `room_read_position` entity/repository/service/API 추가.
+  - read position은 `chat_message.id` Long cursor 기준이며 monotonic max update로 처리한다.
+  - 없는 메시지, 다른 방 메시지, join 이전 메시지, non-member 요청은 거부한다.
+  - `room_summary_job`, `room_summary_segment`, `room_rolling_memory` 계약 추가.
+  - summary availability는 `unreadCount >= 100 AND rolling memory exists`일 때만 available로 응답한다.
+  - `ai-worker` role 전용 `RoomSummaryJobPlanner`, `RoomSummaryWorker`, mock summarizer를 추가했다.
+  - API role은 read position/summary 조회 API를 담당하고, realtime role은 summary worker/controller를 띄우지 않는다.
+- 남은 작업:
+  - 전체 테스트와 diff check 확인.
+  - 코드 리뷰 후 필요 시 API controller 테스트 또는 repository integration test 보강.
+  - Python RAG HTTP adapter, vector DB, 실제 summary quality 평가는 Phase 7-2로 분리한다.

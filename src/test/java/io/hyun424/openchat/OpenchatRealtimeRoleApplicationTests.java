@@ -1,14 +1,18 @@
 package io.hyun424.openchat;
 
 import io.hyun424.openchat.chat.websocket.config.WebSocketConfig;
+import io.hyun424.openchat.chat.room.summary.RoomSummaryController;
+import io.hyun424.openchat.chat.room.summary.RoomSummaryWorker;
 import io.hyun424.openchat.infra.lifecycle.GracefulShutdownListener;
 import io.hyun424.openchat.infra.websocket.handler.ChatWebSocketHandler;
 import io.hyun424.openchat.infra.websocket.session.RoomSessionRegistry;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.NoSuchBeanDefinitionException;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationContext;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @SpringBootTest(properties = {
@@ -34,5 +38,11 @@ class OpenchatRealtimeRoleApplicationTests {
         assertNotNull(context.getBean(ChatWebSocketHandler.class));
         assertNotNull(context.getBean(GracefulShutdownListener.class));
         assertTrue(context.getBean(RoomSessionRegistry.class).broadcastLaneCount() > 0);
+        assertMissingBean(context, RoomSummaryController.class);
+        assertMissingBean(context, RoomSummaryWorker.class);
+    }
+
+    private static void assertMissingBean(ApplicationContext context, Class<?> beanType) {
+        assertThrows(NoSuchBeanDefinitionException.class, () -> context.getBean(beanType));
     }
 }

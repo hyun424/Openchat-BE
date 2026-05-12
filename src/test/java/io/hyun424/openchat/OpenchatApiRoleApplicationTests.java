@@ -8,6 +8,7 @@ import io.hyun424.openchat.chat.room.metadata.RoomMetadataUpdateBuffer;
 import io.hyun424.openchat.chat.room.partition.assignment.DynamicRoomPartitionSubscriber;
 import io.hyun424.openchat.chat.room.partition.assignment.RealtimeNodeHeartbeatScheduler;
 import io.hyun424.openchat.chat.room.partition.lifecycle.RoomPartitionLifecycleScheduler;
+import io.hyun424.openchat.chat.room.summary.RoomSummaryWorker;
 import io.hyun424.openchat.chat.room.workload.service.RealtimeWorkloadSnapshotPublisher;
 import io.hyun424.openchat.chat.room.lifecycle.RoomLifecycleConsumer;
 import io.hyun424.openchat.chat.subscribe.ChatKafkaConsumer;
@@ -68,6 +69,7 @@ class OpenchatApiRoleApplicationTests {
         assertMissingBean(context, DynamicRoomPartitionSubscriber.class);
         assertMissingBean(context, RealtimeNodeHeartbeatScheduler.class);
         assertMissingBean(context, RoomPartitionLifecycleScheduler.class);
+        assertMissingBean(context, RoomSummaryWorker.class);
         assertMissingBean(context, GracefulShutdownListener.class);
         assertMissingBean(context, HealthIndicator.class, "websocket");
         assertEquals(0, context.getBean(RoomSessionRegistry.class).broadcastLaneCount());
