@@ -22,15 +22,15 @@ role-aware k6 재측정 결과, 1800명 단일방 shared room에서 DB rows와 a
 
 이제 다음 확장 기준은 단순 방 인원수가 아니라 `room_work = input_msg_tps * active_sessions`로 잡는다. Realtime pod의 기본 단위를 `4 vCPU / 8GB`, pod budget을 `10,000 delivery/s`로 두고, 작은 방은 여러 개를 하나의 room shard에 묶고, 단일 pod budget을 넘는 hot room은 fan-out partition 대상으로 분류한다. v1에서는 라우팅을 바꾸지 않고 room tier와 partition 추천 수만 계측한다.
 
-상세 정리: [k6 측정 신뢰도 개선과 1800명 단일방 재검증](./role-aware-k6-measurement-reliability-20260504.md)
+상세 정리: [k6 측정 신뢰도 개선과 1800명 단일방 재검증](../load-tests/role-aware-k6-measurement-reliability-20260504.md)
 
-Active Room Fan-out 정리: [Active Room Fan-out v1과 브라우저 E2E 검증](./active-room-fanout-e2e-20260505.md)
+Active Room Fan-out 정리: [Active Room Fan-out v1과 브라우저 E2E 검증](../load-tests/active-room-fanout-e2e-20260505.md)
 
-Active/Passive 부하테스트 결과: [1500명 Active/Passive Hot Room 측정 결과](../infra/gcp-loadtest/results/2026-05-05-active-passive-hot-room-1500.md)
+Active/Passive 부하테스트 결과: [1500명 Active/Passive Hot Room 측정 결과](../../infra/gcp-loadtest/results/2026-05-05-active-passive-hot-room-1500.md)
 
-Room Work Sharding 설계: [4 vCPU 기준 Room Work Sharding 설계](./room-work-sharding-plan-20260505.md)
+Room Work Sharding 설계: [4 vCPU 기준 Room Work Sharding 설계](../plans/room-work-sharding-plan-20260505.md)
 
-관련 설계 메모: [Discord MaxJourney 사례에서 OpenChat에 가져갈 아이디어](./discord-maxjourney-openchat-ideas.md)
+관련 설계 메모: [Discord MaxJourney 사례에서 OpenChat에 가져갈 아이디어](../ideas/discord-maxjourney-openchat-ideas.md)
 
 ## 문제 상황
 
