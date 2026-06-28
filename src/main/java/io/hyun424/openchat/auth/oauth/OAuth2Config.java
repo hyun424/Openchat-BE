@@ -10,7 +10,6 @@ import org.springframework.security.oauth2.client.registration.InMemoryClientReg
 import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.core.ClientAuthenticationMethod;
 import org.springframework.security.oauth2.core.AuthenticationMethod;
-import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -67,7 +66,7 @@ public class OAuth2Config {
     }
 
     private boolean hasCredentials(String clientId, String clientSecret) {
-        return StringUtils.hasText(clientId) && StringUtils.hasText(clientSecret);
+        return OAuthProviderAvailability.enabled(clientId, clientSecret);
     }
 
     private ClientRegistration googleClientRegistration() {

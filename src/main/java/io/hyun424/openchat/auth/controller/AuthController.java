@@ -5,10 +5,12 @@ import io.hyun424.openchat.auth.dto.TokenResponse;
 import io.hyun424.openchat.auth.entity.User;
 import io.hyun424.openchat.auth.jwt.JwtProvider;
 import io.hyun424.openchat.auth.service.UserService;
+import io.hyun424.openchat.auth.oauth.OAuthProviderAvailability;
 import io.hyun424.openchat.global.exception.ApiException;
 import io.hyun424.openchat.global.exception.ErrorCode;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -18,6 +20,33 @@ public class AuthController {
 
     private final JwtProvider jwtProvider;
     private final UserService userService;
+
+    @Value("${spring.security.oauth2.client.registration.google.client-id:}")
+    private String googleClientId;
+
+    @Value("${spring.security.oauth2.client.registration.google.client-secret:}")
+    private String googleClientSecret;
+
+    @Value("${spring.security.oauth2.client.registration.kakao.client-id:}")
+    private String kakaoClientId;
+
+    @Value("${spring.security.oauth2.client.registration.kakao.client-secret:}")
+    private String kakaoClientSecret;
+
+    @Value("${spring.security.oauth2.client.registration.naver.client-id:}")
+    private String naverClientId;
+
+    @Value("${spring.security.oauth2.client.registration.naver.client-secret:}")
+    private String naverClientSecret;
+
+    @GetMapping("/oauth/providers")
+    public OAuthProviderStatus oauthProviders() {
+        return new OAuthProviderStatus(
+                OAuthProviderAvailability.enabled(googleClientId, googleClientSecret),
+                OAuthProviderAvailability.enabled(kakaoClientId, kakaoClientSecret),
+                OAuthProviderAvailability.enabled(naverClientId, naverClientSecret)
+        );
+    }
 
     /**
      * 닉네임 중복 체크
@@ -60,6 +89,8 @@ public class AuthController {
 
         return new TokenResponse(token, user.getNickname());
     }
+
+    public record OAuthProviderStatus(boolean google, boolean kakao, boolean naver) {}
 
     private String extractToken(String authHeader) {
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
