@@ -8,6 +8,7 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Positive;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.core.Authentication;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
@@ -28,11 +29,13 @@ public class MessageController {
      */
     @GetMapping("/{roomId}/messages")
     public MessagePageResponse getMessages(
-            @RequestHeader("Authorization") String authorization,
+            Authentication authentication,
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @RequestHeader(value = AuthUserResolver.ANONYMOUS_ID_HEADER, required = false) String anonymousId,
             @PathVariable @Positive Long roomId,
             @RequestParam(defaultValue = "30") @Min(1) @Max(100) int limit
     ) {
-        String userId = authUserResolver.extractUserId(authorization);
+        String userId = authUserResolver.resolveUserId(authentication, authorization, anonymousId);
         return messageService.getInitialMessages(roomId, userId, limit);
     }
 
@@ -42,12 +45,14 @@ public class MessageController {
      */
     @GetMapping("/{roomId}/messages/before")
     public MessagePageResponse getMessagesBefore(
-            @RequestHeader("Authorization") String authorization,
+            Authentication authentication,
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @RequestHeader(value = AuthUserResolver.ANONYMOUS_ID_HEADER, required = false) String anonymousId,
             @PathVariable @Positive Long roomId,
             @RequestParam @Min(0) Long cursor,
             @RequestParam(defaultValue = "30") @Min(1) @Max(100) int limit
     ) {
-        String userId = authUserResolver.extractUserId(authorization);
+        String userId = authUserResolver.resolveUserId(authentication, authorization, anonymousId);
         return messageService.getMessagesBeforeCursor(roomId, userId, cursor, limit);
     }
 
@@ -57,12 +62,14 @@ public class MessageController {
      */
     @GetMapping("/{roomId}/messages/after")
     public MessagePageResponse getMessagesAfter(
-            @RequestHeader("Authorization") String authorization,
+            Authentication authentication,
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @RequestHeader(value = AuthUserResolver.ANONYMOUS_ID_HEADER, required = false) String anonymousId,
             @PathVariable @Positive Long roomId,
             @RequestParam @Positive Long cursor,
             @RequestParam(defaultValue = "100") @Min(1) @Max(500) int limit
     ) {
-        String userId = authUserResolver.extractUserId(authorization);
+        String userId = authUserResolver.resolveUserId(authentication, authorization, anonymousId);
         return messageService.getMessagesAfterCursor(roomId, userId, cursor, limit);
     }
 
@@ -72,10 +79,12 @@ public class MessageController {
      */
     @GetMapping("/{roomId}/messages/all")
     public List<ChatMessageDto> getAllMessages(
-            @RequestHeader("Authorization") String authorization,
+            Authentication authentication,
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @RequestHeader(value = AuthUserResolver.ANONYMOUS_ID_HEADER, required = false) String anonymousId,
             @PathVariable @Positive Long roomId
     ) {
-        String userId = authUserResolver.extractUserId(authorization);
+        String userId = authUserResolver.resolveUserId(authentication, authorization, anonymousId);
         return messageService.getMessagesForUser(roomId, userId);
     }
 }

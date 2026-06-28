@@ -77,6 +77,13 @@ public class SecurityConfig {
                         ).permitAll()
                         .requestMatchers("/api/rooms/my").authenticated()
                         .requestMatchers(HttpMethod.GET, "/api/rooms", "/api/rooms/map", "/api/rooms/*").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/rooms", "/api/rooms/*/enter", "/api/rooms/*/join", "/api/rooms/*/leave").permitAll()
+                        .requestMatchers(HttpMethod.GET,
+                                "/api/rooms/*/ws-route",
+                                "/api/rooms/*/messages",
+                                "/api/rooms/*/messages/before",
+                                "/api/rooms/*/messages/after",
+                                "/api/rooms/*/messages/all").permitAll()
 
                         // 인증 필요
                         .requestMatchers("/api/**").authenticated()

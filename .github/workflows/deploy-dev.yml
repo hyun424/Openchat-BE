@@ -1,0 +1,77 @@
+name: Deploy dev to Cloud Run
+
+on:
+  push:
+    branches:
+      - dev
+      - feat/phase7-rag-ai-worker
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: spatia-platform-kdh
+  PROJECT_NUMBER: "19173210223"
+  REGION: asia-northeast1
+  AR_REPOSITORY: openchat-dev
+  SERVICE: openchat-be-dev
+  IMAGE_NAME: openchat-be-dev
+  CLOUDSQL_INSTANCE: spatia-platform-kdh:asia-northeast1:openchat-dev-mysql
+  VPC_CONNECTOR: openchat-dev-conn
+  RUNTIME_SERVICE_ACCOUNT: 19173210223-compute@developer.gserviceaccount.com
+  REDIS_HOST: 10.188.119.131
+  CORS_ORIGINS: https://openchat-dev.spatia.site,http://localhost:3000
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Test
+        run: ./gradlew test --no-daemon
+
+      - name: Configure Artifact Registry Docker auth
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Build and push image
+        run: |
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPOSITORY}/${IMAGE_NAME}:${GITHUB_SHA}"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Deploy Cloud Run
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --project="$PROJECT_ID" \
+            --region="$REGION" \
+            --image="$IMAGE" \
+            --platform=managed \
+            --port=8080 \
+            --service-account="$RUNTIME_SERVICE_ACCOUNT" \
+            --allow-unauthenticated \
+            --add-cloudsql-instances="$CLOUDSQL_INSTANCE" \
+            --vpc-connector="$VPC_CONNECTOR" \
+            --vpc-egress=private-ranges-only \
+            --set-env-vars="^@^SPRING_PROFILES_ACTIVE=dev@APP_ROLE=combined@APP_KAFKA_ENABLED=false@ROOM_SUMMARY_WORKER_ENABLED=false@AI_CHAT_ENABLED=false@CORS_ALLOWED_ORIGINS=${CORS_ORIGINS}@SPRING_DATASOURCE_URL=jdbc:mysql:///openchat_dev?cloudSqlInstance=${CLOUDSQL_INSTANCE}&socketFactory=com.google.cloud.sql.mysql.SocketFactory&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=UTF-8@SPRING_DATASOURCE_USERNAME=openchat@SPRING_DATA_REDIS_HOST=${REDIS_HOST}@SPRING_DATA_REDIS_PORT=6379@SPRING_JPA_HIBERNATE_DDL_AUTO=update" \
+            --set-secrets="SPRING_DATASOURCE_PASSWORD=openchat-dev-db-password:latest,JWT_SECRET=openchat-dev-jwt-secret:latest" \
+            --quiet

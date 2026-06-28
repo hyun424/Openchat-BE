@@ -1,5 +1,6 @@
 package io.hyun424.openchat.chat.member.controller;
 
+import io.hyun424.openchat.auth.resolver.AuthUserResolver;
 import io.hyun424.openchat.chat.member.service.RoomMemberService;
 import io.hyun424.openchat.chat.member.service.RoomMemberService.JoinResult;
 import io.hyun424.openchat.global.response.ApiResponse;
@@ -19,6 +20,7 @@ import java.util.List;
 public class RoomMemberController {
 
     private final RoomMemberService roomMemberService;
+    private final AuthUserResolver authUserResolver;
 
     /**
      * 방 입장
@@ -27,9 +29,11 @@ public class RoomMemberController {
     @PostMapping("/{roomId}/join")
     public ApiResponse<JoinResponse> join(
             @PathVariable @Positive Long roomId,
-            Authentication authentication
+            Authentication authentication,
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @RequestHeader(value = AuthUserResolver.ANONYMOUS_ID_HEADER, required = false) String anonymousId
     ) {
-        String userId = authentication.getName();
+        String userId = authUserResolver.resolveUserId(authentication, authorization, anonymousId);
         JoinResult result = roomMemberService.join(roomId, userId);
         return ApiResponse.ok(JoinResponse.from(result));
     }
@@ -38,9 +42,11 @@ public class RoomMemberController {
     @PostMapping("/{roomId}/leave")
     public ApiResponse<Void> leave(
             @PathVariable @Positive Long roomId,
-            Authentication authentication
+            Authentication authentication,
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @RequestHeader(value = AuthUserResolver.ANONYMOUS_ID_HEADER, required = false) String anonymousId
     ) {
-        String userId = authentication.getName();
+        String userId = authUserResolver.resolveUserId(authentication, authorization, anonymousId);
         roomMemberService.leave(roomId, userId);
         return ApiResponse.ok();
     }

@@ -82,6 +82,7 @@ class ChatWebSocketHandlerTest {
 
         when(jwtProvider.validateToken("valid-token")).thenReturn(true);
         when(rateLimiter.tryAcquire(eq("ws:user1"), anyInt(), anyInt())).thenReturn(true);
+        when(rateLimiter.tryAcquire(eq("ws:anon:browser-123"), anyInt(), anyInt())).thenReturn(true);
 
         ReflectionTestUtils.setField(handler, "wsMessageLimit", 10);
         ReflectionTestUtils.setField(handler, "wsWindowSeconds", 1);
@@ -113,6 +114,21 @@ class ChatWebSocketHandlerTest {
         ArgumentCaptor<WebSocketMessage<?>> captor = ArgumentCaptor.forClass(WebSocketMessage.class);
         verify(session).sendMessage(captor.capture());
         assertTrue(captor.getValue().getPayload().toString().contains("Rate limit exceeded"));
+    }
+
+    @Test
+    @DisplayName("익명 WebSocket 세션은 토큰 없이 메시지 저장 경로를 탄다")
+    void handleMessage_anonymousSessionWithoutToken_callsIngest() throws Exception {
+        sessionAttributes.put("userId", "anon:browser-123");
+        sessionAttributes.put("nickname", "Guest-123");
+        sessionAttributes.put("anonymous", true);
+        sessionAttributes.remove("token");
+        TextMessage msg = new TextMessage("{\"content\":\"Hello anonymous\",\"clientMessageId\":\"c1\"}");
+
+        handler.handleTextMessage(session, msg);
+
+        verify(chatIngestService).ingest(eq(1L), eq("anon:browser-123"), eq("Guest-123"), anyString(), eq("c1"));
+        verify(jwtProvider, never()).validateToken(anyString());
     }
 
     @Test

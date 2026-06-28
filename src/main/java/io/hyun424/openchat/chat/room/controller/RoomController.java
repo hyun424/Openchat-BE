@@ -1,5 +1,6 @@
 package io.hyun424.openchat.chat.room.controller;
 
+import io.hyun424.openchat.auth.resolver.AuthUserResolver;
 import io.hyun424.openchat.chat.member.service.RoomMemberService;
 import io.hyun424.openchat.chat.member.service.RoomMemberService.JoinResult;
 import io.hyun424.openchat.chat.room.domain.Room;
@@ -38,6 +39,7 @@ public class RoomController {
     private final RoomService roomService;
     private final RoomMemberService roomMemberService;
     private final RoomPartitionRoutingService roomPartitionRoutingService;
+    private final AuthUserResolver authUserResolver;
 
     private static final int DEFAULT_PAGE = 0;
     private static final int MAX_PAGE_SIZE = 50;
@@ -49,9 +51,11 @@ public class RoomController {
     @PostMapping
     public ResponseEntity<RoomResponse> createRoom(
             Authentication authentication,
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @RequestHeader(value = AuthUserResolver.ANONYMOUS_ID_HEADER, required = false) String anonymousId,
             @Valid @RequestBody RoomCreateRequest request
     ) {
-        String userId = authenticatedUserId(authentication);
+        String userId = authUserResolver.resolveUserId(authentication, authorization, anonymousId);
         Room room = roomService.createRoom(userId, request);
 
         return ResponseEntity.ok(RoomResponse.from(room));
@@ -80,9 +84,11 @@ public class RoomController {
     @PostMapping("/{roomId}/enter")
     public ResponseEntity<JoinResponse> enterRoom(
             @PathVariable @Positive Long roomId,
-            Authentication authentication
+            Authentication authentication,
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @RequestHeader(value = AuthUserResolver.ANONYMOUS_ID_HEADER, required = false) String anonymousId
     ) {
-        String userId = authenticatedUserId(authentication);
+        String userId = authUserResolver.resolveUserId(authentication, authorization, anonymousId);
         JoinResult result = roomMemberService.joinIfNotExists(roomId, userId);
 
         return ResponseEntity.ok(new JoinResponse(result.status().name(), result.requiresApproval()));
@@ -117,9 +123,11 @@ public class RoomController {
     @GetMapping("/{roomId}/ws-route")
     public ResponseEntity<?> getWebSocketRoute(
             @PathVariable @Positive Long roomId,
-            Authentication authentication
+            Authentication authentication,
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @RequestHeader(value = AuthUserResolver.ANONYMOUS_ID_HEADER, required = false) String anonymousId
     ) {
-        String userId = authenticatedUserId(authentication);
+        String userId = authUserResolver.resolveUserId(authentication, authorization, anonymousId);
         roomService.getActiveRoomOrThrow(roomId);
         roomMemberService.getJoinedAtOrThrow(roomId, userId);
         try {

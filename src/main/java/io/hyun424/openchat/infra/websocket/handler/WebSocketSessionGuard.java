@@ -38,7 +38,10 @@ class WebSocketSessionGuard {
         }
 
         String token = (String) session.getAttributes().get("token");
-        if (token == null || !jwtProvider.validateToken(token)) {
+        if (token == null) {
+            return Boolean.TRUE.equals(session.getAttributes().get("anonymous"));
+        }
+        if (!jwtProvider.validateToken(token)) {
             return false;
         }
 

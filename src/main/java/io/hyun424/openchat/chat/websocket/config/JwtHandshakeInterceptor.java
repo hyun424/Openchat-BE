@@ -1,6 +1,7 @@
 package io.hyun424.openchat.chat.websocket.config;
 
-import io.hyun424.openchat.auth.jwt.JwtProvider; // ✅ 너 프로젝트의 실제 JwtProvider 클래스명/패키지에 맞춰 바꿔
+import io.hyun424.openchat.auth.jwt.JwtProvider;
+import io.hyun424.openchat.auth.resolver.AuthUserResolver;
 import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -18,7 +19,8 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class JwtHandshakeInterceptor implements HandshakeInterceptor {
 
-    private final JwtProvider jwtProvider; // ✅ 실제 클래스에 맞추기
+    private final JwtProvider jwtProvider;
+    private final AuthUserResolver authUserResolver;
 
     @Override
     public boolean beforeHandshake(
@@ -27,33 +29,27 @@ public class JwtHandshakeInterceptor implements HandshakeInterceptor {
             WebSocketHandler wsHandler,
             Map<String, Object> attributes
     ) {
-        String token = UriComponentsBuilder
+        var queryParams = UriComponentsBuilder
                 .fromUri(request.getURI())
                 .build()
-                .getQueryParams()
-                .getFirst("token");
+                .getQueryParams();
+        String token = queryParams.getFirst("token");
 
         if (token == null || token.isBlank()) {
-            log.warn("WS_HANDSHAKE_REJECT missing token");
-            return false;
+            return allowAnonymousHandshake(queryParams.getFirst("anonymousId"), queryParams.getFirst("nickname"), attributes);
         }
 
         try {
-            Claims claims = jwtProvider.parseToken(token); // ✅ 실제 메서드명에 맞추기 (예: validateAndGetClaims 등)
+            Claims claims = jwtProvider.parseToken(token);
 
-            // ✅ userId
             String userId = claims.getSubject();
             if (userId == null || userId.isBlank()) {
                 log.warn("WS_HANDSHAKE_REJECT missing subject(userId)");
                 return false;
             }
 
-            // ✅ nickname (토큰에 넣어둔 클레임명에 맞추기)
-            // 예: "nickname" / "userName" / "name"
             String nickname = (String) claims.get("nickname");
             if (nickname == null || nickname.isBlank()) {
-                // ✅ 최선: nickname도 JWT에서 반드시 제공되어야 한다.
-                // 토큰에 없다면, 토큰 발급 시점부터 nickname claim을 넣도록 고쳐야 함.
                 log.warn("WS_HANDSHAKE_REJECT missing nickname claim");
                 return false;
             }
@@ -61,10 +57,24 @@ public class JwtHandshakeInterceptor implements HandshakeInterceptor {
             attributes.put("userId", userId);
             attributes.put("nickname", nickname);
             attributes.put("token", token);
+            attributes.put("anonymous", false);
 
             return true;
         } catch (Exception e) {
             log.warn("WS_HANDSHAKE_REJECT invalid token", e);
+            return false;
+        }
+    }
+
+    private boolean allowAnonymousHandshake(String anonymousId, String nickname, Map<String, Object> attributes) {
+        try {
+            String userId = authUserResolver.anonymousUserId(anonymousId);
+            attributes.put("userId", userId);
+            attributes.put("nickname", authUserResolver.anonymousNickname(nickname, anonymousId));
+            attributes.put("anonymous", true);
+            return true;
+        } catch (Exception e) {
+            log.warn("WS_HANDSHAKE_REJECT missing anonymous identity");
             return false;
         }
     }

@@ -1,6 +1,7 @@
 package io.hyun424.openchat.chat.room.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.hyun424.openchat.auth.resolver.AuthUserResolver;
 import io.hyun424.openchat.chat.member.entity.MemberStatus;
 import io.hyun424.openchat.chat.member.service.RoomMemberService;
 import io.hyun424.openchat.chat.room.domain.Room;
@@ -31,6 +32,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import java.util.List;
 
 import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -44,14 +46,71 @@ class RoomControllerTest {
     @Mock private RoomService roomService;
     @Mock private RoomMemberService roomMemberService;
     @Mock private RoomPartitionRoutingService roomPartitionRoutingService;
+    @Mock private AuthUserResolver authUserResolver;
     @InjectMocks private RoomController roomController;
 
     @BeforeEach
     void setUp() {
+        org.mockito.Mockito.lenient().when(authUserResolver.resolveUserId(any(), any(), any())).thenAnswer(invocation -> {
+            Authentication authentication = invocation.getArgument(0);
+            String anonymousId = invocation.getArgument(2);
+            if (authentication != null && authentication.isAuthenticated()) {
+                return authentication.getName();
+            }
+            return "anon:" + anonymousId;
+        });
         mockMvc = MockMvcBuilders
                 .standaloneSetup(roomController)
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
+    }
+
+    @Test
+    @DisplayName("POST /api/rooms - 익명 세션 헤더로 방 생성")
+    void createRoom_anonymousHeader_success() throws Exception {
+        Room room = Room.builder()
+                .id(1L).name("Anonymous Room").ownerId("anon:browser-123")
+                .maxMembers(10).requiresApproval(false).build();
+
+        when(roomService.createRoom(eq("anon:browser-123"), any())).thenReturn(room);
+
+        mockMvc.perform(post("/api/rooms")
+                        .header("X-OpenChat-Anonymous-Id", "browser-123")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Anonymous Room\",\"maxMembers\":10}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(1))
+                .andExpect(jsonPath("$.ownerId").value("anon:browser-123"));
+    }
+
+    @Test
+    @DisplayName("POST /api/rooms/{roomId}/enter - 익명 세션 헤더로 방 입장")
+    void enterRoom_anonymousHeader_success() throws Exception {
+        when(roomMemberService.joinIfNotExists(1L, "anon:browser-123"))
+                .thenReturn(new RoomMemberService.JoinResult(MemberStatus.APPROVED, false));
+
+        mockMvc.perform(post("/api/rooms/1/enter")
+                        .header("X-OpenChat-Anonymous-Id", "browser-123"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("APPROVED"));
+    }
+
+    @Test
+    @DisplayName("GET /api/rooms/{roomId}/ws-route - 익명 세션 헤더로 route 조회")
+    void getWebSocketRoute_anonymousHeader_success() throws Exception {
+        Room room = Room.builder()
+                .id(1L).name("Test Room").ownerId("anon:browser-123")
+                .maxMembers(10).requiresApproval(false).build();
+        when(roomService.getActiveRoomOrThrow(1L)).thenReturn(room);
+        when(roomPartitionRoutingService.route(1L, "anon:browser-123"))
+                .thenReturn(new RoomPartitionRoute(1L, false, 0, 1, "/ws/chat?roomId=1"));
+
+        mockMvc.perform(get("/api/rooms/1/ws-route")
+                        .header("X-OpenChat-Anonymous-Id", "browser-123"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.roomId").value(1));
+
+        verify(roomMemberService).getJoinedAtOrThrow(1L, "anon:browser-123");
     }
 
     @Test
