@@ -60,7 +60,22 @@ jobs:
           echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
 
       - name: Deploy Cloud Run
+        env:
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          KAKAO_CLIENT_ID: ${{ secrets.KAKAO_CLIENT_ID }}
+          KAKAO_CLIENT_SECRET: ${{ secrets.KAKAO_CLIENT_SECRET }}
+          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
         run: |
+          ENV_VARS="SPRING_PROFILES_ACTIVE=dev|APP_ROLE=combined|APP_KAFKA_ENABLED=false|ROOM_SUMMARY_WORKER_ENABLED=false|AI_CHAT_ENABLED=false|OAUTH_SUCCESS_URL=https://openchat-dev.spatia.site/oauth/callback|OAUTH_NICKNAME_URL=https://openchat-dev.spatia.site/nickname-setup|CORS_ALLOWED_ORIGINS=${CORS_ORIGINS}|SPRING_DATASOURCE_URL=jdbc:mysql:///openchat_dev?cloudSqlInstance=${CLOUDSQL_INSTANCE}&socketFactory=com.google.cloud.sql.mysql.SocketFactory&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=UTF-8|SPRING_DATASOURCE_USERNAME=openchat|SPRING_DATA_REDIS_HOST=${REDIS_HOST}|SPRING_DATA_REDIS_PORT=6379|SPRING_JPA_HIBERNATE_DDL_AUTO=update"
+          for oauth_var in GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET KAKAO_CLIENT_ID KAKAO_CLIENT_SECRET NAVER_CLIENT_ID NAVER_CLIENT_SECRET; do
+            oauth_value="${!oauth_var:-}"
+            if [ -n "$oauth_value" ]; then
+              ENV_VARS="${ENV_VARS}|${oauth_var}=${oauth_value}"
+            fi
+          done
+
           gcloud run deploy "$SERVICE" \
             --project="$PROJECT_ID" \
             --region="$REGION" \
@@ -72,6 +87,6 @@ jobs:
             --add-cloudsql-instances="$CLOUDSQL_INSTANCE" \
             --vpc-connector="$VPC_CONNECTOR" \
             --vpc-egress=private-ranges-only \
-            --set-env-vars="^@^SPRING_PROFILES_ACTIVE=dev@APP_ROLE=combined@APP_KAFKA_ENABLED=false@ROOM_SUMMARY_WORKER_ENABLED=false@AI_CHAT_ENABLED=false@OAUTH_SUCCESS_URL=https://openchat-dev.spatia.site/oauth/callback@OAUTH_NICKNAME_URL=https://openchat-dev.spatia.site/nickname-setup@CORS_ALLOWED_ORIGINS=${CORS_ORIGINS}@SPRING_DATASOURCE_URL=jdbc:mysql:///openchat_dev?cloudSqlInstance=${CLOUDSQL_INSTANCE}&socketFactory=com.google.cloud.sql.mysql.SocketFactory&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=UTF-8@SPRING_DATASOURCE_USERNAME=openchat@SPRING_DATA_REDIS_HOST=${REDIS_HOST}@SPRING_DATA_REDIS_PORT=6379@SPRING_JPA_HIBERNATE_DDL_AUTO=update" \
+            --set-env-vars="^|^${ENV_VARS}" \
             --set-secrets="SPRING_DATASOURCE_PASSWORD=openchat-dev-db-password:latest,JWT_SECRET=openchat-dev-jwt-secret:latest" \
             --quiet
