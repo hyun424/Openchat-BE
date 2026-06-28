@@ -37,10 +37,11 @@ public class UserController {
             String id,
             String email,
             String nickname,
-            String profileImage
+            String profileImage,
+            String provider
     ) {
         public UserResponse(User user) {
-            this(user.getId(), user.getEmail(), user.getNickname(), user.getProfileImage());
+            this(user.getId(), user.getEmail(), user.getNickname(), user.getProfileImage(), user.getProvider());
         }
     }
 }

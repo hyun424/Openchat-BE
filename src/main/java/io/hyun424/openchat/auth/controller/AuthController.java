@@ -46,13 +46,14 @@ public class AuthController {
             throw new ApiException(ErrorCode.INVALID_TOKEN);
         }
 
-        // 토큰에서 Google 정보 추출
-        String googleId = jwtProvider.getUserId(tempToken);
+        // 토큰에서 OAuth provider 정보 추출
+        String userId = jwtProvider.getUserId(tempToken);
         String email = jwtProvider.getEmailFromTempToken(tempToken);
         String picture = jwtProvider.getPictureFromTempToken(tempToken);
+        String provider = jwtProvider.getProviderFromTempToken(tempToken);
 
         // 유저 생성
-        User user = userService.createUser(googleId, email, request.getNickname(), picture);
+        User user = userService.createUser(userId, email, request.getNickname(), picture, provider);
 
         // 정식 JWT 발급
         String token = jwtProvider.createToken(user.getId(), user.getNickname());

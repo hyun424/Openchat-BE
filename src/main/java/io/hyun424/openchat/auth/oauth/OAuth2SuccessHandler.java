@@ -9,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
 import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.security.web.authentication.SimpleUrlAuthenticationSuccessHandler;
 import org.springframework.stereotype.Component;
@@ -36,14 +37,12 @@ public class OAuth2SuccessHandler extends SimpleUrlAuthenticationSuccessHandler 
                                         Authentication authentication) throws IOException {
         OAuth2User oauth2User = (OAuth2User) authentication.getPrincipal();
 
-        String googleId = oauth2User.getAttribute("sub");
-        String email = oauth2User.getAttribute("email");
-        String name = oauth2User.getAttribute("name");
-        String picture = oauth2User.getAttribute("picture");
+        String registrationId = ((OAuth2AuthenticationToken) authentication).getAuthorizedClientRegistrationId();
+        OAuth2ProviderProfile profile = OAuth2ProviderProfile.from(registrationId, oauth2User);
 
-        log.info("[OAUTH SUCCESS] googleId={}, email={}", googleId, email);
+        log.info("[OAUTH SUCCESS] provider={}, userId={}, email={}", profile.provider(), profile.userId(), profile.email());
 
-        Optional<User> existingUser = userService.findById(googleId);
+        Optional<User> existingUser = userService.findById(profile.userId());
 
         if (existingUser.isPresent()) {
             // 기존 유저 → 바로 JWT 발급
@@ -58,8 +57,8 @@ public class OAuth2SuccessHandler extends SimpleUrlAuthenticationSuccessHandler 
             getRedirectStrategy().sendRedirect(request, response, redirectUrl);
         } else {
             // 신규 유저 → 닉네임 설정 페이지로
-            String tempToken = jwtProvider.createTempToken(googleId, email, name, picture);
-            log.info("[OAUTH] New user, redirect to nickname setup: {}", email);
+            String tempToken = jwtProvider.createTempToken(profile.userId(), profile.email(), profile.name(), profile.picture(), profile.provider());
+            log.info("[OAUTH] New user, redirect to nickname setup: {}", profile.email());
 
             // Security: Fragment(#)로 임시 토큰 전달
             String redirectUrl = nicknameSetupUrl + "#token=" + tempToken;

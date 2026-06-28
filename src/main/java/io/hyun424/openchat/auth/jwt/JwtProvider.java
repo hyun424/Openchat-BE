@@ -20,6 +20,7 @@ public class JwtProvider {
     private static final String CLAIM_EMAIL = "email";
     private static final String CLAIM_NAME = "name";
     private static final String CLAIM_PICTURE = "picture";
+    private static final String CLAIM_PROVIDER = "provider";
 
     private static final String TYPE_ACCESS = "access";
     private static final String TYPE_TEMP = "temp";
@@ -61,16 +62,21 @@ public class JwtProvider {
     /**
      * 임시 토큰 생성 (닉네임 설정 전, 신규 유저)
      */
-    public String createTempToken(String googleId, String email, String name, String picture) {
+    public String createTempToken(String userId, String email, String name, String picture) {
+        return createTempToken(userId, email, name, picture, "google");
+    }
+
+    public String createTempToken(String userId, String email, String name, String picture, String provider) {
         Date now = new Date();
         Date expiry = new Date(now.getTime() + TEMP_TOKEN_EXPIRATION_MS);
 
         return Jwts.builder()
-                .setSubject(googleId)
+                .setSubject(userId)
                 .claim(CLAIM_TYPE, TYPE_TEMP)
                 .claim(CLAIM_EMAIL, email)
                 .claim(CLAIM_NAME, name)
                 .claim(CLAIM_PICTURE, picture)
+                .claim(CLAIM_PROVIDER, provider)
                 .setIssuedAt(now)
                 .setExpiration(expiry)
                 .signWith(getSigningKey(), SignatureAlgorithm.HS256)
@@ -112,6 +118,11 @@ public class JwtProvider {
      */
     public String getPictureFromTempToken(String token) {
         return parseToken(token).get(CLAIM_PICTURE, String.class);
+    }
+
+    public String getProviderFromTempToken(String token) {
+        String provider = parseToken(token).get(CLAIM_PROVIDER, String.class);
+        return provider == null ? "google" : provider;
     }
 
     /** ✅ 토큰 파싱 */

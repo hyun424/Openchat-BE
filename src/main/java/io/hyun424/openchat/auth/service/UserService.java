@@ -18,10 +18,10 @@ public class UserService {
     private final UserRepository userRepository;
 
     /**
-     * Google ID로 사용자 조회
+     * OAuth provider user ID로 사용자 조회
      */
-    public Optional<User> findById(String googleId) {
-        return userRepository.findById(googleId);
+    public Optional<User> findById(String userId) {
+        return userRepository.findById(userId);
     }
 
     /**
@@ -35,17 +35,22 @@ public class UserService {
      * 신규 유저 생성
      */
     @Transactional
-    public User createUser(String googleId, String email, String nickname, String profileImage) {
+    public User createUser(String userId, String email, String nickname, String profileImage) {
+        return createUser(userId, email, nickname, profileImage, "google");
+    }
+
+    @Transactional
+    public User createUser(String userId, String email, String nickname, String profileImage, String provider) {
         if (userRepository.existsByNickname(nickname)) {
             throw new ApiException(ErrorCode.NICKNAME_ALREADY_EXISTS);
         }
 
         User user = User.builder()
-                .id(googleId)
+                .id(userId)
                 .email(email)
                 .nickname(nickname)
                 .profileImage(profileImage)
-                .provider("google")
+                .provider(provider)
                 .build();
 
         return userRepository.save(user);

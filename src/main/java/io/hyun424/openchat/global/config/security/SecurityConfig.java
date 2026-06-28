@@ -30,6 +30,12 @@ public class SecurityConfig {
     @Value("${spring.security.oauth2.client.registration.google.client-id:}")
     private String googleClientId;
 
+    @Value("${spring.security.oauth2.client.registration.kakao.client-id:}")
+    private String kakaoClientId;
+
+    @Value("${spring.security.oauth2.client.registration.naver.client-id:}")
+    private String naverClientId;
+
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
 
@@ -92,7 +98,7 @@ public class SecurityConfig {
                 );
 
         // OAuth2 로그인 설정 (설정된 경우에만)
-        if (StringUtils.hasText(googleClientId)) {
+        if (StringUtils.hasText(googleClientId) || StringUtils.hasText(kakaoClientId) || StringUtils.hasText(naverClientId)) {
             log.info("[SECURITY] OAuth2 login enabled");
             http.oauth2Login(oauth2 -> oauth2
                     .successHandler(oAuth2SuccessHandler)
@@ -105,7 +111,7 @@ public class SecurityConfig {
                     })
             );
         } else {
-            log.warn("[SECURITY] OAuth2 disabled - google client-id not configured");
+            log.warn("[SECURITY] OAuth2 disabled - no provider client-id configured");
         }
 
         http
